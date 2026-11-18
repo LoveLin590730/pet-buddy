@@ -8,7 +8,7 @@
  * 用法：node tools/smoke.mjs        （退出码 0 = 全通过）
  * ==========================================================================*/
 
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync, existsSync} from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
@@ -52,9 +52,10 @@ sandbox.globalThis = sandbox;
 const probe = `
 ;globalThis.__probe = {
   PB_VERSION, DEFAULTS, DEFAULT_PERSONA, CHAT_MODELS, LS_KEY, ARCHIVE, ARCHIVE_IDS,
-  settings, saveSettings, log, logs, ASSET_DIR,
-  FISH_STICKERS, BEAN, ARCHIVE_ALIAS, normSticker, archiveResolve, stickerEl, renderRich, $new, clamp, nowStr,
+  settings, saveSettings, log, logs, ASSET_DIR, ASSET_SPRITE, ASSET_SKIN_DEFAULT, ASSET_STICKER,
+  FISH_STICKERS, BEAN, ARCHIVE_ALIAS, normSticker, archiveResolve, stickerEl, renderRich, $new, clamp, nowStr, fmtTok,
   isValley, fmtCredits, fmtMoney, perYuanCredits, priceTier, localDateStr,
+  parseGatewayToken, tokenHint, fetchCompanyQuota, quotaLine, fetchCredits, todaySpend,
   buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname,
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
 };`;
@@ -89,7 +90,7 @@ eq('短名（去 deepseek- 前缀）', P.archiveResolve('bixin'), 'deepseek-bixi
 eq('未知名字 → null（不显示破碎标记）', P.archiveResolve('不存在的名字'), null);
 eq('口型/贴纸名归一化', P.normSticker('鱼', '挥手'), {g: 'fish', n: 'wave'});
 ok('fish 元素同时带 桌宠/窗口 两套类名', P.stickerEl('fish', 'wave').className.includes('pb2-st-fish') && P.stickerEl('fish', 'wave').className.includes('fish-st'));
-eq('档案贴纸走资产目录前缀（不再相对路径）', P.stickerEl('stick', 'archive:比心').children[0].src, P.ASSET_DIR + 'st-deepseek-bixin.webp');
+eq('档案贴纸走插件根素材目录（宿主只服务根级文件）', P.stickerEl('stick', 'archive:比心').children[0].src, P.ASSET_STICKER + 'st-deepseek-bixin.webp');
 ok('未知贴纸 → null', P.stickerEl('stick', 'archive:查无此图') === null);
 {
   const box = stubEl('div');
@@ -119,6 +120,72 @@ ok('离线时 apiOK 返回 false（不抛错）', (await P.apiOK()) === false);
 {
   const r = await P.sendViaMock('你好呀', null, null);
   ok('模拟通道能出回复', r && typeof r.text === 'string' && r.text.length > 0, `→ ${JSON.stringify(r).slice(0, 80)}`);
+}
+
+console.log('\n[令牌识别 · v3.1.0]');
+eq('内部通道身份牌 jxai-姓名-设备号', P.parseGatewayToken('jxai-杨镇城-jx-yzc'), {kind: 'inner', valid: true, name: '杨镇城', device: 'jx-yzc', label: '公司内部通道身份牌'});
+eq('网关 API Key（sk- 开头）', P.parseGatewayToken('sk-abc123').kind, 'apikey');
+eq('留空', P.parseGatewayToken('').kind, 'empty');
+eq('其他格式 → 无法识别', P.parseGatewayToken('随便写点什么').kind, 'other');
+ok('身份牌提示含姓名 + 设备号 + 指路助手额度', /杨镇城/.test(P.tokenHint('jxai-杨镇城-jx-yzc')) && /jx-yzc/.test(P.tokenHint('jxai-杨镇城-jx-yzc')) && /助手/.test(P.tokenHint('jxai-杨镇城-jx-yzc')));
+
+console.log('\n[余额来源：内部通道额度 + 缓存命中计价 · v3.1.0]');
+{
+  const today = P.localDateStr(new Date());
+  let quotaUsed = 17067;
+  sandbox.fetch = async (url) => {
+    const u = String(url);
+    if (u.indexOf('/api/models') === 0) {
+      return {ok: true, json: async () => ({companyQuota: {points: 100000, remainPoints: 100000 - quotaUsed, usedPoints: quotaUsed, period: 'monthly', periodText: '每月 1 号', nextAt: '2026-12-01T00:00:00+08:00', asOf: today + ' 17:52:27', status: 1}})};
+    }
+    if (u.indexOf('/api/sessions') === 0) {
+      return {ok: true, json: async () => ({sessions: [
+        {id: 's1', model: 'deepseek-flash', usagePrompt: 1000000, usageCacheHit: 800000, usageOutput: 20000, usageCalls: 5, createdAt: today + ' 09:00:00', updatedAt: today + ' 10:00:00'},
+        {id: 's2', model: 'deepseek-flash', usagePrompt: 99000000, usageCacheHit: 0, usageOutput: 1000000, usageCalls: 500, createdAt: '2026-10-01 09:00:00', updatedAt: today + ' 11:00:00'},
+      ]})};
+    }
+    throw new Error('自检未预料的请求：' + u);
+  };
+  const q = await P.fetchCompanyQuota(true);
+  ok('内部通道额度读得到（不需要任何令牌）', q.ok === true && q.usedPoints === 17067 && q.remainPoints + q.usedPoints === q.points, JSON.stringify(q));
+  ok('额度文案含剩余/月度/刷新日', P.quotaLine(q).indexOf(P.fmtCredits(q.remainPoints)) >= 0 && /100,000/.test(P.quotaLine(q)) && /每月 1 号/.test(P.quotaLine(q)), P.quotaLine(q));
+  const d = await P.todaySpend(true);
+  ok('默认余额来源＝助手额度（不再因缺网关令牌而空手）', d.companyQuota.ok === true && d.credits.ok === false, JSON.stringify(d.credits));
+  eq('令牌留空时的原因文案', d.credits.reason, '未配置网关 API Key');
+  const flash = P.priceTier('deepseek-flash'), k = d.valley ? 0 : 1;
+  const wantCost = Math.round(((200000 / 1e6) * flash.miss[k] + (800000 / 1e6) * flash.hit[k] + (20000 / 1e6) * flash.out[k]) * 10000) / 10000;
+  eq('今日消耗按缓存命中价拆分', d.cost, wantCost);
+  eq('今日消耗折积分', d.costCredits, Math.round(wantCost * P.perYuanCredits()));
+  eq('会话统计带缓存命中 token', d.cacheHit, 800000);
+  eq('今日口径：只算今天新建的会话', d.sessions, 1);
+  eq('跨天会话单独计数（不把历史累计算成今日）', d.staleSessions, 1);
+  ok('今日真实消耗口径可用（额度接口，首次采样从 0 起算）', d.realOk === true && d.realToday === 0, JSON.stringify({realOk: d.realOk, realToday: d.realToday}));
+  eq('token 数简写', P.fmtTok(156347907), '156.35M');
+  quotaUsed = 17400;
+  const d2 = await P.todaySpend(true);
+  eq('今日真实消耗 = 额度接口的当天增量', d2.realToday, 333);
+  P.settings.gatewayKey = 'jxai-杨镇城-jx-yzc';
+  const cr = await P.fetchCredits(true);
+  ok('身份牌不再去打网关账单，且原因说人话', cr.ok === false && /内部通道身份牌/.test(cr.reason), cr.reason);
+  P.settings.gatewayKey = '';
+  ok('素材常量指向插件根（宿主只服务根级文件，素材必须平铺）',
+    P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.png' && P.ASSET_STICKER === P.ASSET_DIR && P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'pet-deepseek.webp',
+    P.ASSET_SPRITE);
+}
+
+console.log('\n[素材清单 · v3.1.0]');
+{
+  const mf = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+  const listed = mf.groups.flatMap((g) => g.files);
+  const onDisk = readdirSync(ROOT).filter((f) => /\.(webp|png)$/i.test(f));
+  ok('清单声明平铺布局（宿主不支持子目录）', mf.layout === 'flat', mf.layout);
+  eq('清单条数 = 磁盘素材条数', listed.length, onDisk.length);
+  ok('清单里的文件都在，磁盘上的素材也都登记了',
+    listed.every((f) => existsSync(path.join(ROOT, f))) && onDisk.every((f) => listed.indexOf(f) >= 0),
+    `listed=${listed.length} disk=${onDisk.length}`);
+  eq('贴纸清单与代码 ARCHIVE 表逐条一致',
+    listed.filter((f) => f.indexOf('st-') === 0).sort(),
+    P.ARCHIVE.map((a) => 'st-' + a.id + '.webp').sort());
 }
 
 console.log(`\n结果：${pass} 项通过，${fail} 项失败`);

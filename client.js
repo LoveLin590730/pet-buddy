@@ -1,5 +1,5 @@
 /* ============================================================
- * pet-buddy v3.0.0 — 余额宠物·大肥鱼（桌宠半边源码）
+ * pet-buddy — 余额宠物·大肥鱼（桌宠半边源码）· 版本号见 src/core/config.js 的 PB_VERSION
  * 本文件是【源码】：产物 client.js 由 build.mjs 生成（注入 src/core/*），不要手改产物。
  * 形象与动作基准：zhouwu97/ds-pet「大肥鱼·鲸鲸娘」（MIT）
  *   官方 v2 精灵图 1536×2288 = 8 列 × 11 行，cell 192×208；
@@ -37,7 +37,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.0.0';
+const PB_VERSION = '3.1.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -45,6 +45,7 @@ const LS_LOG = 'pb2.logs.v2';            // 后台日志（思考过程只进这
 const LS_PSTATE = 'pb2.personaState.v1'; // 人设全量发送状态（按子对话 sid 分别记录）
 const CHAT_LS_SID = 'pb2.chat.sid.v2';   // 统一子对话 id
 const LS_RECENT = 'pb2.stickerRecent.v1';// 最近使用的贴纸（窗口页表情面板）
+const LS_QUOTA_DAILY = 'pb2.quotaDaily.v1'; // 当日额度采样（月度已用积分的当天首见/末见，用来算今日真实消耗）
 
 /** 可选模型列表（provider + model + 显示名） */
 const CHAT_MODELS = [
@@ -104,6 +105,14 @@ const CHAT_MODELS = [
     return el;
   };
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  /** token 数简写：156347907 → 156.3M（气泡宽度有限，长数字挤成一行读不动） */
+  const fmtTok = (n) => {
+    const v = Number(n) || 0;
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e4) return Math.round(v / 1e3) + 'k';
+    return String(v);
+  };
   const nowStr = () => { const d = new Date(); const p = n => String(n).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };
 
@@ -161,6 +170,16 @@ const CHAT_MODELS = [
     } catch (e) { /* 回退 */ }
     return '/_plugins/pet-buddy/';
   })();
+
+  /* ---- 素材位置（v3.1.0 实测：宿主只服务插件根级文件，素材必须平铺） ----
+   * 宿主对 /_plugins/<id>/ 只服务**根级文件**：根级新建文件立刻 200，而 assets/x.png、
+   * assets/sprites/x.png、/./assets/x.png、assets%2Fx.png 全部 404 —— 子目录用不了。
+   * 所以素材平铺在插件根目录，按前缀分组：feiyu-*（桌宠精灵图）、st-*（40 张贴纸）、
+   * pet-deepseek.webp（内置女仆皮肤）、icon.png（插件图标）；清单见 assets.manifest.json。
+   * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
+  const ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  const ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
+  const ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
 
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
@@ -283,7 +302,7 @@ const CHAT_MODELS = [
       const el = $new('span', 'sticker pb2-st-maid maid-st');
       if (n === '1') {
         const img = document.createElement('img');
-        img.src = ASSET_DIR + 'pet-deepseek.webp'; img.alt = 'maid';
+        img.src = ASSET_SKIN_DEFAULT;
         el.appendChild(img);
         return el;
       }
@@ -299,7 +318,7 @@ const CHAT_MODELS = [
       if (kind === 'archive') {
         const rid = archiveResolve(id);
         if (!rid) return null;
-        img.src = ASSET_DIR + 'st-' + rid + '.webp';
+        img.src = ASSET_STICKER + 'st-' + rid + '.webp';
       } else if (kind === 'custom') {
         const idx = Number(id);
         const arr = (JSON.parse(localStorage.getItem('pb2.settings.v2') || '{}').customStickers) || [];
@@ -392,29 +411,59 @@ const CHAT_MODELS = [
   async function todaySpend(force) {
     if (!force && balCache.data && Date.now() - balCache.at < 60000) return balCache.data;
     const valley = isValley(new Date());
-    const out = { date: localDateStr(new Date()), prompt: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, valley, sessions: 0, apiOk: false, gateway: '' };
+    const out = { date: localDateStr(new Date()), prompt: 0, cacheHit: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, companyQuota: null, valley, sessions: 0, staleSessions: 0, apiOk: false, gateway: '' };
     try {
       const r = await fetch('/api/sessions', { headers: { 'Accept': 'application/json' } });
       if (r.ok) {
         const j = await r.json();
         const list = (j && j.sessions) || j || [];
         for (const s of list) {
-          const day = String(s.updatedAt || s.createdAt || '').slice(0, 10);
-          if (day !== out.date) continue;
+          const active = String(s.updatedAt || s.createdAt || '').slice(0, 10);
+          if (active !== out.date) continue; // 今天没活动的会话不算
+          // v3.1.0：会话用量是**累计值**（usagePrompt/usageOutput 从建会话算起），跨天会话里
+          // 昨天的用量也会被算进来——实测把 22 个活跃会话的历史累计当"今日"，能算出接近整月
+          // 额度的虚高数字。所以只统计「今天建的会话」（其累计量全部属于今天），
+          // 更早建的跨天会话单独计数提示，不硬塞进今日（deferred：宿主没有按天用量接口）。
+          if (String(s.createdAt || '').slice(0, 10) !== out.date) { out.staleSessions++; continue; }
           const p = Number(s.usagePrompt) || 0, o = Number(s.usageOutput) || 0, c = Number(s.usageCalls) || 0;
-          out.prompt += p; out.output += o; out.calls += c; out.sessions++;
+          // 会话用量里带 usageCacheHit（命中缓存的输入 token）——命中价便宜一个量级，
+          // 之前整包按未命中价估，会把花费算高；这里拆开计价。
+          const hit = Math.min(p, Math.max(0, Number(s.usageCacheHit) || 0));
+          const miss = Math.max(0, p - hit);
+          out.prompt += p; out.cacheHit += hit; out.output += o; out.calls += c; out.sessions++;
           const tier = priceTier(s.model);
-          // prompt 按未命中价（无命中细分，保守）；输出按输出价
-          out.cost += (p / 1e6) * tier.miss[valley ? 0 : 1] + (o / 1e6) * tier.out[valley ? 0 : 1];
+          const k = valley ? 0 : 1;
+          out.cost += (miss / 1e6) * tier.miss[k] + (hit / 1e6) * tier.hit[k] + (o / 1e6) * tier.out[k];
         }
         out.apiOk = true;
       }
     } catch (e) { log('error', '余额取数失败: ' + e.message); }
     out.gateway = await gatewayBase();
     out.cost = Math.round(out.cost * 10000) / 10000;
-    // v2.2.3 积分制：今日估算折积分 + 网关真实积分（并行）
+    // v2.2.3 积分制：今日估算折积分 + 余额来源（v3.1.0：内部通道额度优先，网关账单仅 sk- Key）
     out.costCredits = Math.round(out.cost * perYuanCredits());
-    out.credits = await fetchCredits(force);
+    const both = await Promise.all([fetchCompanyQuota(force), fetchCredits(force)]);
+    out.companyQuota = both[0];
+    out.credits = both[1];
+    // v3.1.0：额度接口的「月度累计已用」按天取增量＝当日真实消耗（比 token 估算可信得多，
+    // 因为它是后端自己的计价）。插件只在运行期间采样，所以口径是「从今天首次打开插件到现在」。
+    try {
+      const q = out.companyQuota;
+      if (q && q.ok) {
+        const used = Number(q.usedPoints) || 0;
+        const rec = JSON.parse(localStorage.getItem(LS_QUOTA_DAILY) || 'null');
+        if (!rec || rec.date !== out.date || used < Number(rec.last || 0)) {
+          // 新的一天（或跨月重置导致数字回退）：重新起算
+          out.realSince = nowStr().slice(11, 16);
+          out.realToday = 0;
+        } else {
+          out.realSince = rec.since || '';
+          out.realToday = Math.max(0, used - Number(rec.first || 0));
+        }
+        out.realOk = true;
+        localStorage.setItem(LS_QUOTA_DAILY, JSON.stringify({ date: out.date, first: out.realToday > 0 ? Number(rec.first) : used, last: used, since: out.realSince }));
+      }
+    } catch (e) { /* 只是估算，失败不影响余额显示 */ }
     balCache = { at: Date.now(), data: out };
     return out;
   }
@@ -430,6 +479,64 @@ const CHAT_MODELS = [
    *   GET {网关}/v1/dashboard/billing/usage → total_usage（美分，累计；日期参数被网关忽略）
    * 积分 = 美元 × 每元积分（默认 1000，可在聊天设置调整）。
    * 需在聊天设置配置网关地址+令牌；未配置时退回本地 token 估算并折成积分显示。 */
+  /* ================= v3.1.0 令牌识别 + 内部通道额度 =================
+   * 公司内部通道的令牌形如 jxai-<姓名>-<设备号>（例 jxai-杨镇城-jx-yzc）——它是「身份牌」：
+   *   ① 浏览器 fetch 不允许把非 ASCII 字符放进请求头，带中文的令牌根本发不出去；
+   *   ② 公司网关 /v1/* 也不认它（实测返回 Invalid token），它不是 OpenAI 兼容的 API Key。
+   * 所以内部通道的余额**不看令牌**，而是由助手接口 GET /api/models 的 companyQuota 直接给出
+   * （月度额度，单位就是「分」，与插件积分制一致）——这才是内部通道用户看余额的正确来源。
+   * 真正能查网关账单的是 sk- 开头的 API Key（走 OpenAI 兼容 billing 接口，见 fetchCredits）。 */
+  function parseGatewayToken(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (!t) return { kind: 'empty', valid: false, label: '未填写' };
+    if (/^sk-/.test(t)) return { kind: 'apikey', valid: true, label: '网关 API Key' };
+    const m = t.match(/^jxai-([^-]{1,24})-(.+)$/);
+    if (m) return { kind: 'inner', valid: true, name: m[1], device: m[2], label: '公司内部通道身份牌' };
+    return { kind: 'other', valid: false, label: '格式无法识别' };
+  }
+  /** 令牌输入框下方的即时说明（聊天设置里用） */
+  function tokenHint(raw) {
+    const t = parseGatewayToken(raw);
+    if (t.kind === 'inner') return '已识别：公司内部通道身份牌（' + t.name + ' · 设备 ' + t.device + '）。' +
+      '内部通道的真实额度由助手直接给出（剩余/月度总额），不需要填令牌；这个牌子不是网关 API Key。';
+    if (t.kind === 'apikey') return '已识别：网关 API Key（sk- 开头），余额按网关账单（订阅额度 − 累计用量）显示。';
+    if (t.kind === 'empty') return '留空即可：余额显示助手给出的内部通道额度（月度分）＋ 今日估算。只有 sk- 开头的 Key 才去读网关账单。';
+    return '格式无法识别：网关 API Key 形如 sk-xxxx；公司内部通道身份牌形如 jxai-姓名-设备号（例 jxai-杨镇城-jx-yzc）。';
+  }
+
+  let QUOTA_CACHE = { at: 0, data: null };
+  /** 助手接口的内部通道额度：{points, remainPoints, usedPoints, periodText, nextAt, asOf}，单位「分」 */
+  async function fetchCompanyQuota(force) {
+    if (!force && QUOTA_CACHE.data && Date.now() - QUOTA_CACHE.at < 60000) return QUOTA_CACHE.data;
+    const out = { ok: false };
+    try {
+      const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const q = j && j.companyQuota;
+      if (!q || typeof q.remainPoints !== 'number') throw new Error('接口未返回 companyQuota');
+      out.ok = true;
+      out.points = Number(q.points) || 0;
+      out.remainPoints = Number(q.remainPoints) || 0;
+      out.usedPoints = Number(q.usedPoints) || 0;
+      out.periodText = String(q.periodText || '');
+      out.nextAt = String(q.nextAt || '');
+      out.asOf = String(q.asOf || '');
+    } catch (e) {
+      out.reason = e.message;
+      log('error', '内部额度读取失败: ' + e.message);
+    }
+    QUOTA_CACHE = { at: Date.now(), data: out };
+    return out;
+  }
+  /** 内部额度一句话（余额气泡/聊天回复共用；无额度时返回空串） */
+  function quotaLine(q) {
+    if (!q || !q.ok) return '';
+    let s = '剩余积分 ' + fmtCredits(q.remainPoints) + ' 分（月度 ' + fmtCredits(q.points) + '，已用 ' + fmtCredits(q.usedPoints) + '）';
+    if (q.periodText) s += '，' + q.periodText + '刷新';
+    return s;
+  }
+
   let CREDITS_CACHE = { at: 0, data: null };
   function perYuanCredits() { return Number(settings.perYuan) > 0 ? Number(settings.perYuan) : 1000; }
   function fmtCredits(n) { return Math.round(n).toLocaleString('en-US'); }
@@ -437,9 +544,15 @@ const CHAT_MODELS = [
     if (!force && CREDITS_CACHE.data && Date.now() - CREDITS_CACHE.at < 120000) return CREDITS_CACHE.data;
     const base = (settings.gatewayBase || (await gatewayBase())).replace(/\/+$/, '');
     const key = settings.gatewayKey || '';
+    const tk = parseGatewayToken(key);
     const out = { ok: false };
-    if (!base || !key) {
-      out.reason = '未配置网关令牌';
+    if (tk.kind !== 'apikey') {
+      // v3.1.0：非 sk- Key（留空 / 内部通道身份牌 / 其他格式）不去打网关账单接口——
+      // 免得白等一次 401，也让余额气泡改说人话（内部通道看助手额度，见 fetchCompanyQuota）
+      out.reason = tk.kind === 'inner' ? '内部通道身份牌，不查网关账单（余额看助手额度）'
+        : tk.kind === 'empty' ? '未配置网关 API Key' : '令牌不是 sk- 开头的网关 API Key';
+    } else if (!base) {
+      out.reason = '未配置网关地址';
     } else {
       try {
         const hdr = { 'Authorization': 'Bearer ' + key };
@@ -687,6 +800,10 @@ const CHAT_MODELS = [
 
   /* ---- 通道 B：网关令牌（OpenAI 兼容 /chat/completions） ---- */
   async function sendViaGateway(userText, balanceBlock) {
+    // v3.1.0：先认令牌——jxai-姓名-设备号 是内部通道身份牌，浏览器也不允许把中文塞进请求头，
+    // 拿它打网关只会得到一个看不懂的报错，这里直接说清并指路助手通道。
+    const tk = parseGatewayToken(settings.gatewayKey);
+    if (tk.kind === 'inner') throw new Error('填的是公司内部通道身份牌，不是网关 API Key（网关只认 sk- 开头的 Key）；聊天请切回「助手子对话」通道');
     if (!settings.gatewayBase || !settings.gatewayKey) throw new Error('网关未配置（baseURL / 令牌）');
     // v2.1.3：网关通道同样按指纹跟踪（固定键 'gw'），首条全量、后续短消息（人设在 mem 历史里）
     const fpNeed = needPersonaFull('gw');
@@ -717,12 +834,14 @@ const CHAT_MODELS = [
     const t = userText;
     if (balData && BAL_RE.test(t)) {
       const cr = balData.credits || {};
+      const q = balData.companyQuota || {};
       const est = fmtCredits(balData.costCredits || 0);
       let quotaPart;
-      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      if (q.ok) quotaPart = quotaLine(q);
+      else if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
       else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits);
       else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '（额度还没告诉我呢）';
-      reply = '哼、自己干的活自己看啦：今日估算 ' + est + ' 分，' + quotaPart + '。别太浪！';
+      reply = '哼、自己干的活自己看啦：' + quotaPart + '，今日估算 ' + est + ' 分。别太浪！';
     } else if (/你好|您好|hi|hello|在吗|嗨/i.test(t)) {
       reply = '哼，才不是在等你呢……' + periodGreet() + '呀，有事快说！';
     } else if (nick) {
@@ -753,19 +872,30 @@ const CHAT_MODELS = [
     if (BAL_RE.test(userText) || opts2.withBalance) {
       balData = await todaySpend(true);
       const cr = balData.credits || {};
+      const q = balData.companyQuota || {};
       const est = fmtCredits(balData.costCredits || 0);
       let quotaPart;
-      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      if (q.ok) quotaPart = quotaLine(q) + '（助手给出的内部通道额度）';
+      else if (cr.ok && cr.unlimited) quotaPart = '网关账户不限额';
       else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits) + '（网关实时，累计已用 ' + fmtCredits(cr.usedCredits) + ' 分）';
-      else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '未设置（可让用户在聊天设置里自填）';
-      balanceBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】今日(' + balData.date + ')估算消耗 ' + est +
-        ' 分（输入 ' + balData.prompt + ' tok、输出 ' + balData.output + ' tok、' + balData.calls + ' 次调用，按' + (balData.valley ? '谷' : '峰') +
-        '时未命中价保守估算）；' + quotaPart + '。回复用户时请直接用「分」作单位。';
+      else quotaPart = Number(settings.quota) > 0 ? '自填剩余额度 ' + fmtMoney(Number(settings.quota)) : '额度未知（助手额度接口不可用，可在聊天设置里自填）';
+      balanceBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】' +
+        (balData.realOk ? '今日已用 ' + fmtCredits(balData.realToday || 0) + ' 分（来自额度接口的真实计价' + (balData.realSince ? '，自 ' + balData.realSince + ' 起统计' : '') + '）；' : '') +
+        '今日(' + balData.date + ')新建 ' + balData.sessions +
+        ' 个会话，估算消耗 ' + est + ' 分（输入 ' + balData.prompt + ' tok（其中缓存命中 ' + (balData.cacheHit || 0) + '）、输出 ' + balData.output +
+        ' tok、' + balData.calls + ' 次调用，按' + (balData.valley ? '谷' : '峰') + '时价估算' +
+        (balData.staleSessions ? '；另有 ' + balData.staleSessions + ' 个跨天会话的累计用量无法拆到今日，未计入' : '') +
+        '）；' + quotaPart + '。回复用户时请直接用「分」作单位，不要解释算法。';
     }
     const channel = settings.channel || 'assistant';
     if (channel === 'gateway') {
       try { return await sendViaGateway(userText, balanceBlock); }
-      catch (e) { log('error', '网关通道失败: ' + e.message); return sendViaMock(userText, balanceBlock, balData); }
+      catch (e) {
+        log('error', '网关通道失败: ' + e.message);
+        const r = await sendViaMock(userText, balanceBlock, balData);
+        // v3.1.0：不再静默回落——网关失败原因摆在回复开头（与助手通道口径一致）
+        return { text: '（网关通道走不通：' + e.message + '，先用模拟模式陪你～）' + r.text, via: 'mock-fallback' };
+      }
     }
     if (channel === 'mock') return sendViaMock(userText, balanceBlock, balData);
     // assistant：先探活
@@ -857,12 +987,12 @@ const CHAT_MODELS = [
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
       let url = '';
-      if (s === 'maid') url = ASSET_DIR + 'pet-deepseek.webp';
+      if (s === 'maid') url = ASSET_SKIN_DEFAULT;
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
         if (c) url = c.dataUrl;
       }
-      imgSkin.src = url || (ASSET_DIR + 'pet-deepseek.webp');
+      imgSkin.src = url || ASSET_SKIN_DEFAULT;
     }
     applyMonitor();
   }
@@ -1018,15 +1148,24 @@ const CHAT_MODELS = [
   }
 
   /* ---- 单击：余额气泡 ---- */
-  /** v2.2.3 统一余额文案（积分制）：网关真实积分优先，token 估算折分兜底 */
+  /** v3.1.0 统一余额文案（积分制，1000 分 = 1 元）：三级来源
+   *  ① 助手接口的内部通道额度（companyQuota，真实、无需令牌）→ 首选；
+   *  ② sk- 网关 Key 的账单（订阅额度 − 累计用量，OpenAI 兼容 billing）；
+   *  ③ 用户在聊天设置里自填的额度。
+   *  今日消耗给两个口径：额度接口按天增量（真实，口径是今天打开插件起）＋ token 估算（标注估算）。 */
   function balanceLine(d) {
     const c = d.credits || {};
-    const est = fmtCredits(d.costCredits || 0);
-    const detail = (d.valley ? '谷' : '峰') + '时价·' + d.prompt + '+' + d.output + ' tok·' + d.calls + ' 次';
-    if (c.ok && c.unlimited) return '账户不限额 ｜ 今日估算 ' + est + ' 分（' + detail + '）';
-    if (c.ok) return '剩余积分 ' + fmtCredits(c.remainCredits) + ' ｜ 今日估算 ' + est + ' 分（' + detail + '）';
-    const hint = c.reason === '未配置网关令牌' ? '；配网关令牌可看真实余额' : '';
-    return '今日 ≈' + est + ' 分（估算·' + detail + hint + '）';
+    const q = d.companyQuota || {};
+    const detail = (d.valley ? '谷' : '峰') + '价·入 ' + fmtTok(d.prompt) + ' tok（命中 ' + fmtTok(d.cacheHit) + '）·出 ' + fmtTok(d.output) + '·' + d.calls + ' 次';
+    const stale = d.staleSessions ? '；' + d.staleSessions + ' 个跨天会话未计入' : '';
+    const est = '估算 ' + fmtCredits(d.costCredits || 0) + ' 分（' + d.sessions + ' 个新会话·' + detail + stale + '）';
+    const real = d.realOk ? '今日 +' + fmtCredits(d.realToday || 0) + ' 分' + (d.realSince ? '（' + d.realSince + ' 起）' : '') : '';
+    const today = real ? real + '·' + est : est;
+    if (q.ok) return quotaLine(q) + ' ｜ ' + today;
+    if (c.ok && c.unlimited) return '账户不限额 ｜ ' + today;
+    if (c.ok) return '剩余积分 ' + fmtCredits(c.remainCredits) + ' ｜ ' + today;
+    if (Number(settings.quota) > 0) return '自填额度 ' + fmtMoney(Number(settings.quota)) + ' ｜ ' + today;
+    return today;
   }
   function onPetSingleClick() {
     const greet = periodGreet();
@@ -1200,8 +1339,8 @@ const CHAT_MODELS = [
       body.appendChild($new('h4', null, '内置模型'));
       const grid = $new('div', 'pb2-model-grid');
       const builtin = [
-        { id: 'fish', name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', thumb: ASSET_DIR + 'feiyu-spritesheet.png', bgPos: '-192px -208px' },
-        { id: 'maid', name: 'DeepSeek 女仆', desc: 'pet-deepseek.webp · 呼吸动画 · BongoCat 式鼠标/键盘监控', thumb: ASSET_DIR + 'pet-deepseek.webp' },
+        { id: 'fish', name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', thumb: ASSET_SPRITE, bgPos: '-192px -208px' },
+        { id: 'maid', name: 'DeepSeek 女仆', desc: '内置皮肤 pet-deepseek.webp · 呼吸动画 · BongoCat 式鼠标/键盘监控', thumb: ASSET_SKIN_DEFAULT },
       ];
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
@@ -1307,12 +1446,36 @@ const CHAT_MODELS = [
       const py = $new('input'); py.type = 'number'; py.min = '1'; py.step = '1';
       py.value = perYuanCredits();
       body.appendChild(py);
-      body.appendChild($new('label', null, '网关 baseURL（配了地址+令牌后，余额显示网关真实积分）'));
-      const gb = $new('input'); gb.type = 'text'; gb.placeholder = 'https://.../v1'; gb.value = settings.gatewayBase || '';
+      body.appendChild($new('label', null, '网关 baseURL（只有 sk- 开头的 API Key 才需要；内部通道看助手额度，不用填）'));
+      const gb = $new('input'); gb.type = 'text'; gb.placeholder = 'https://.../v1（可留空）'; gb.value = settings.gatewayBase || '';
       body.appendChild(gb);
-      body.appendChild($new('label', null, '网关令牌（只存本浏览器 localStorage，不进日志；也用于读真实积分余额）'));
-      const gk = $new('input'); gk.type = 'password'; gk.value = settings.gatewayKey || '';
+      body.appendChild($new('label', null, '网关令牌（只存本浏览器 localStorage，不进日志）'));
+      const gk = $new('input'); gk.type = 'password';
+      gk.placeholder = '留空即可 ｜ sk-xxxx（网关 API Key）｜ jxai-姓名-设备号（内部通道身份牌）';
+      gk.value = settings.gatewayKey || '';
       body.appendChild(gk);
+      // v3.1.0 令牌格式识别：即时告诉用户填的是什么、余额从哪来
+      const tkHint = $new('div', 'pb2-hint', tokenHint(gk.value));
+      const tkExtra = $new('div', 'pb2-hint');
+      body.appendChild(tkHint); body.appendChild(tkExtra);
+      const refreshTokenHint = () => {
+        const t = parseGatewayToken(gk.value);
+        tkHint.textContent = tokenHint(gk.value);
+        tkExtra.textContent = '';
+        if (t.kind === 'inner') {
+          const used = settings.nickname === t.name;
+          const b = $new('button', null, used ? '昵称已是「' + t.name + '」' : '用「' + t.name + '」当昵称');
+          b.type = 'button'; b.style.marginTop = '6px';
+          b.addEventListener('click', () => {
+            settings.nickname = t.name; saveSettings();
+            b.textContent = '昵称已是「' + t.name + '」';
+            bubbleSay('身份牌收到！以后叫你 ' + t.name + '～', 2800);
+          });
+          tkExtra.appendChild(b);
+        }
+      };
+      gk.addEventListener('input', refreshTokenHint);
+      refreshTokenHint();
       body.appendChild($new('label', null, '网关模型名'));
       const gm = $new('input'); gm.type = 'text'; gm.placeholder = 'deepseek-chat'; gm.value = settings.gatewayModel || '';
       body.appendChild(gm);
@@ -1324,7 +1487,7 @@ const CHAT_MODELS = [
         mon.appendChild(op);
       });
       body.appendChild(mon);
-      body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元，网关地址+令牌配好后余额气泡显示真实积分（剩余/累计已用）。'));
+      body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
       openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon };
     }, [
       { label: '取消' },
@@ -1367,9 +1530,11 @@ const CHAT_MODELS = [
     });
   }
 
-  /* ---- 窗口化聊天 ---- */
+  /* ---- 窗口化聊天 ----
+   * v3.1.0：不再硬编码 '/_plugins/pet-buddy/chat.html'——用素材目录推导（与该页同目录），
+   * 插件改名 / 换宿主 / 被人拿去装到自己宿主里都仍然找得到。 */
   function openChatWindow() {
-    window.open('/_plugins/pet-buddy/chat.html', 'pb2-chat', 'width=470,height=720');
+    window.open(ASSET_DIR + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
   /* ================= 启动问候 ================= */

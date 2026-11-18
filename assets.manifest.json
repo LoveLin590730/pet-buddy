@@ -1,0 +1,100 @@
+{
+  "version": "3.1.0",
+  "layout": "flat",
+  "note": "插件素材清单。为什么必须平铺：宿主对 /_plugins/<id>/ 只服务插件根目录下的文件，子目录一律 404（v3.1.0 实测：assets/x.png、assets/sprites/x.png、/./assets/x.png、assets%2Fx.png 全部 404，根级新建文件立即 200），所以素材不能放进 assets/ 之类的子目录。本清单是素材的唯一索引：tools/install.ps1 -WithAssets 与 tools/pack.ps1 按它复制，tools/smoke.mjs 校验齐全。",
+  "groups": [
+    {
+      "id": "sprite",
+      "prefix": "feiyu-",
+      "count": 1,
+      "files": [
+        "feiyu-spritesheet.png"
+      ],
+      "use": "桌宠精灵图：8 列 × 11 行 = 88 格，每格 192×208（含 57 动作帧 + 16 方向帧）",
+      "source": "zhouwu97/ds-pet 官方 v2 精灵图",
+      "license": "MIT（见 LICENSE-dspet.txt）"
+    },
+    {
+      "id": "skin",
+      "prefix": "pet-",
+      "count": 1,
+      "files": [
+        "pet-deepseek.webp"
+      ],
+      "use": "内置女仆皮肤（静态图 + CSS 呼吸动画 + BongoCat 式键鼠监控）",
+      "source": "上游 ds-pet 素材",
+      "license": "MIT（见 LICENSE-dspet.txt）"
+    },
+    {
+      "id": "icon",
+      "prefix": "icon",
+      "count": 1,
+      "files": [
+        "icon.png"
+      ],
+      "use": "插件图标（manifest.json 的 icon 字段指向它，必须在根目录）",
+      "source": "自有",
+      "license": "MIT（见 LICENSE）"
+    },
+    {
+      "id": "sticker-archive",
+      "prefix": "st-",
+      "count": 16,
+      "files": [
+        "st-deepseek-bao-bi-jujue.webp",
+        "st-deepseek-bao-jing-shui-jiao.webp",
+        "st-deepseek-bao-xigua.webp",
+        "st-deepseek-bao-tou-wei-qu.webp",
+        "st-deepseek-baozhe-weiba.webp",
+        "st-deepseek-baozhe-beizi-kan-token.webp",
+        "st-deepseek-bao-shoubing.webp",
+        "st-deepseek-bao-glm-wanou-bash.webp",
+        "st-deepseek-bao-zhe-pangyu.webp",
+        "st-deepseek-baobi-zuo-zai-pingguan-jian.webp",
+        "st-deepseek-bei-baozhu-jingxia.webp",
+        "st-deepseek-bao-xi-chuang-bian.webp",
+        "st-chatgpt-renwu-jieshao.webp",
+        "st-deepseek-bixin.webp",
+        "st-deepseek-baozhe-saozhou.webp",
+        "st-deepseek-chashou-shengqi.webp"
+      ],
+      "use": "蓝色大肥鱼档案馆贴纸：聊天标记 [stick:archive:中文名] / [stick:archive:<id>]；中文语义键见 src/core/stickers.js 的 ARCHIVE 表",
+      "source": "蓝色大肥鱼档案馆 fisharchive.cc + 微信表情包 640.wxpic 解码裁切",
+      "license": "CC BY-NC-SA 4.0 / 微信二创非商用（见 README 素材表）"
+    },
+    {
+      "id": "sticker-wx",
+      "prefix": "st-wx-",
+      "count": 24,
+      "files": [
+        "st-wx-01.webp",
+        "st-wx-02.webp",
+        "st-wx-03.webp",
+        "st-wx-04.webp",
+        "st-wx-05.webp",
+        "st-wx-06.webp",
+        "st-wx-07.webp",
+        "st-wx-08.webp",
+        "st-wx-09.webp",
+        "st-wx-10.webp",
+        "st-wx-11.webp",
+        "st-wx-12.webp",
+        "st-wx-13.webp",
+        "st-wx-14.webp",
+        "st-wx-15.webp",
+        "st-wx-16.webp",
+        "st-wx-17.webp",
+        "st-wx-18.webp",
+        "st-wx-19.webp",
+        "st-wx-20.webp",
+        "st-wx-21.webp",
+        "st-wx-22.webp",
+        "st-wx-23.webp",
+        "st-wx-24.webp"
+      ],
+      "use": "微信表情包 24 张（wxgf/HEVC 解码后 6×4 网格裁切），同样走 [stick:archive:wxN] 标记",
+      "source": "微信表情包 640.wxpic",
+      "license": "二创，非商用"
+    }
+  ]
+}

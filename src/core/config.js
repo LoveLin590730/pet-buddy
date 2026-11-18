@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.0.0';
+const PB_VERSION = '3.1.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -17,6 +17,7 @@ const LS_LOG = 'pb2.logs.v2';            // 后台日志（思考过程只进这
 const LS_PSTATE = 'pb2.personaState.v1'; // 人设全量发送状态（按子对话 sid 分别记录）
 const CHAT_LS_SID = 'pb2.chat.sid.v2';   // 统一子对话 id
 const LS_RECENT = 'pb2.stickerRecent.v1';// 最近使用的贴纸（窗口页表情面板）
+const LS_QUOTA_DAILY = 'pb2.quotaDaily.v1'; // 当日额度采样（月度已用积分的当天首见/末见，用来算今日真实消耗）
 
 /** 可选模型列表（provider + model + 显示名） */
 const CHAT_MODELS = [

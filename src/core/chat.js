@@ -213,6 +213,10 @@
 
   /* ---- 通道 B：网关令牌（OpenAI 兼容 /chat/completions） ---- */
   async function sendViaGateway(userText, balanceBlock) {
+    // v3.1.0：先认令牌——jxai-姓名-设备号 是内部通道身份牌，浏览器也不允许把中文塞进请求头，
+    // 拿它打网关只会得到一个看不懂的报错，这里直接说清并指路助手通道。
+    const tk = parseGatewayToken(settings.gatewayKey);
+    if (tk.kind === 'inner') throw new Error('填的是公司内部通道身份牌，不是网关 API Key（网关只认 sk- 开头的 Key）；聊天请切回「助手子对话」通道');
     if (!settings.gatewayBase || !settings.gatewayKey) throw new Error('网关未配置（baseURL / 令牌）');
     // v2.1.3：网关通道同样按指纹跟踪（固定键 'gw'），首条全量、后续短消息（人设在 mem 历史里）
     const fpNeed = needPersonaFull('gw');
@@ -243,12 +247,14 @@
     const t = userText;
     if (balData && BAL_RE.test(t)) {
       const cr = balData.credits || {};
+      const q = balData.companyQuota || {};
       const est = fmtCredits(balData.costCredits || 0);
       let quotaPart;
-      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      if (q.ok) quotaPart = quotaLine(q);
+      else if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
       else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits);
       else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '（额度还没告诉我呢）';
-      reply = '哼、自己干的活自己看啦：今日估算 ' + est + ' 分，' + quotaPart + '。别太浪！';
+      reply = '哼、自己干的活自己看啦：' + quotaPart + '，今日估算 ' + est + ' 分。别太浪！';
     } else if (/你好|您好|hi|hello|在吗|嗨/i.test(t)) {
       reply = '哼，才不是在等你呢……' + periodGreet() + '呀，有事快说！';
     } else if (nick) {
@@ -279,19 +285,30 @@
     if (BAL_RE.test(userText) || opts2.withBalance) {
       balData = await todaySpend(true);
       const cr = balData.credits || {};
+      const q = balData.companyQuota || {};
       const est = fmtCredits(balData.costCredits || 0);
       let quotaPart;
-      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      if (q.ok) quotaPart = quotaLine(q) + '（助手给出的内部通道额度）';
+      else if (cr.ok && cr.unlimited) quotaPart = '网关账户不限额';
       else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits) + '（网关实时，累计已用 ' + fmtCredits(cr.usedCredits) + ' 分）';
-      else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '未设置（可让用户在聊天设置里自填）';
-      balanceBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】今日(' + balData.date + ')估算消耗 ' + est +
-        ' 分（输入 ' + balData.prompt + ' tok、输出 ' + balData.output + ' tok、' + balData.calls + ' 次调用，按' + (balData.valley ? '谷' : '峰') +
-        '时未命中价保守估算）；' + quotaPart + '。回复用户时请直接用「分」作单位。';
+      else quotaPart = Number(settings.quota) > 0 ? '自填剩余额度 ' + fmtMoney(Number(settings.quota)) : '额度未知（助手额度接口不可用，可在聊天设置里自填）';
+      balanceBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】' +
+        (balData.realOk ? '今日已用 ' + fmtCredits(balData.realToday || 0) + ' 分（来自额度接口的真实计价' + (balData.realSince ? '，自 ' + balData.realSince + ' 起统计' : '') + '）；' : '') +
+        '今日(' + balData.date + ')新建 ' + balData.sessions +
+        ' 个会话，估算消耗 ' + est + ' 分（输入 ' + balData.prompt + ' tok（其中缓存命中 ' + (balData.cacheHit || 0) + '）、输出 ' + balData.output +
+        ' tok、' + balData.calls + ' 次调用，按' + (balData.valley ? '谷' : '峰') + '时价估算' +
+        (balData.staleSessions ? '；另有 ' + balData.staleSessions + ' 个跨天会话的累计用量无法拆到今日，未计入' : '') +
+        '）；' + quotaPart + '。回复用户时请直接用「分」作单位，不要解释算法。';
     }
     const channel = settings.channel || 'assistant';
     if (channel === 'gateway') {
       try { return await sendViaGateway(userText, balanceBlock); }
-      catch (e) { log('error', '网关通道失败: ' + e.message); return sendViaMock(userText, balanceBlock, balData); }
+      catch (e) {
+        log('error', '网关通道失败: ' + e.message);
+        const r = await sendViaMock(userText, balanceBlock, balData);
+        // v3.1.0：不再静默回落——网关失败原因摆在回复开头（与助手通道口径一致）
+        return { text: '（网关通道走不通：' + e.message + '，先用模拟模式陪你～）' + r.text, via: 'mock-fallback' };
+      }
     }
     if (channel === 'mock') return sendViaMock(userText, balanceBlock, balData);
     // assistant：先探活

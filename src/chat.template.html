@@ -198,7 +198,7 @@
       }
       if (stickerTab === 'archive' && el) {
         const img = document.createElement('img'); img.className = 'arc'; img.alt = '';
-        img.src = ASSET_DIR + 'st-' + it.n.slice('archive:'.length) + '.webp';
+        img.src = ASSET_STICKER + 'st-' + it.n.slice('archive:'.length) + '.webp';
         cell.textContent = ''; cell.appendChild(img);
         cell.title = (it.name || '') + '（' + stickerMark(it.g, it.n) + '）';
       }

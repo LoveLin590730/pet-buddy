@@ -16,5 +16,13 @@
     return el;
   };
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  /** token 数简写：156347907 → 156.3M（气泡宽度有限，长数字挤成一行读不动） */
+  const fmtTok = (n) => {
+    const v = Number(n) || 0;
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e4) return Math.round(v / 1e3) + 'k';
+    return String(v);
+  };
   const nowStr = () => { const d = new Date(); const p = n => String(n).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };

@@ -51,29 +51,59 @@
   async function todaySpend(force) {
     if (!force && balCache.data && Date.now() - balCache.at < 60000) return balCache.data;
     const valley = isValley(new Date());
-    const out = { date: localDateStr(new Date()), prompt: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, valley, sessions: 0, apiOk: false, gateway: '' };
+    const out = { date: localDateStr(new Date()), prompt: 0, cacheHit: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, companyQuota: null, valley, sessions: 0, staleSessions: 0, apiOk: false, gateway: '' };
     try {
       const r = await fetch('/api/sessions', { headers: { 'Accept': 'application/json' } });
       if (r.ok) {
         const j = await r.json();
         const list = (j && j.sessions) || j || [];
         for (const s of list) {
-          const day = String(s.updatedAt || s.createdAt || '').slice(0, 10);
-          if (day !== out.date) continue;
+          const active = String(s.updatedAt || s.createdAt || '').slice(0, 10);
+          if (active !== out.date) continue; // 今天没活动的会话不算
+          // v3.1.0：会话用量是**累计值**（usagePrompt/usageOutput 从建会话算起），跨天会话里
+          // 昨天的用量也会被算进来——实测把 22 个活跃会话的历史累计当"今日"，能算出接近整月
+          // 额度的虚高数字。所以只统计「今天建的会话」（其累计量全部属于今天），
+          // 更早建的跨天会话单独计数提示，不硬塞进今日（deferred：宿主没有按天用量接口）。
+          if (String(s.createdAt || '').slice(0, 10) !== out.date) { out.staleSessions++; continue; }
           const p = Number(s.usagePrompt) || 0, o = Number(s.usageOutput) || 0, c = Number(s.usageCalls) || 0;
-          out.prompt += p; out.output += o; out.calls += c; out.sessions++;
+          // 会话用量里带 usageCacheHit（命中缓存的输入 token）——命中价便宜一个量级，
+          // 之前整包按未命中价估，会把花费算高；这里拆开计价。
+          const hit = Math.min(p, Math.max(0, Number(s.usageCacheHit) || 0));
+          const miss = Math.max(0, p - hit);
+          out.prompt += p; out.cacheHit += hit; out.output += o; out.calls += c; out.sessions++;
           const tier = priceTier(s.model);
-          // prompt 按未命中价（无命中细分，保守）；输出按输出价
-          out.cost += (p / 1e6) * tier.miss[valley ? 0 : 1] + (o / 1e6) * tier.out[valley ? 0 : 1];
+          const k = valley ? 0 : 1;
+          out.cost += (miss / 1e6) * tier.miss[k] + (hit / 1e6) * tier.hit[k] + (o / 1e6) * tier.out[k];
         }
         out.apiOk = true;
       }
     } catch (e) { log('error', '余额取数失败: ' + e.message); }
     out.gateway = await gatewayBase();
     out.cost = Math.round(out.cost * 10000) / 10000;
-    // v2.2.3 积分制：今日估算折积分 + 网关真实积分（并行）
+    // v2.2.3 积分制：今日估算折积分 + 余额来源（v3.1.0：内部通道额度优先，网关账单仅 sk- Key）
     out.costCredits = Math.round(out.cost * perYuanCredits());
-    out.credits = await fetchCredits(force);
+    const both = await Promise.all([fetchCompanyQuota(force), fetchCredits(force)]);
+    out.companyQuota = both[0];
+    out.credits = both[1];
+    // v3.1.0：额度接口的「月度累计已用」按天取增量＝当日真实消耗（比 token 估算可信得多，
+    // 因为它是后端自己的计价）。插件只在运行期间采样，所以口径是「从今天首次打开插件到现在」。
+    try {
+      const q = out.companyQuota;
+      if (q && q.ok) {
+        const used = Number(q.usedPoints) || 0;
+        const rec = JSON.parse(localStorage.getItem(LS_QUOTA_DAILY) || 'null');
+        if (!rec || rec.date !== out.date || used < Number(rec.last || 0)) {
+          // 新的一天（或跨月重置导致数字回退）：重新起算
+          out.realSince = nowStr().slice(11, 16);
+          out.realToday = 0;
+        } else {
+          out.realSince = rec.since || '';
+          out.realToday = Math.max(0, used - Number(rec.first || 0));
+        }
+        out.realOk = true;
+        localStorage.setItem(LS_QUOTA_DAILY, JSON.stringify({ date: out.date, first: out.realToday > 0 ? Number(rec.first) : used, last: used, since: out.realSince }));
+      }
+    } catch (e) { /* 只是估算，失败不影响余额显示 */ }
     balCache = { at: Date.now(), data: out };
     return out;
   }
@@ -89,6 +119,64 @@
    *   GET {网关}/v1/dashboard/billing/usage → total_usage（美分，累计；日期参数被网关忽略）
    * 积分 = 美元 × 每元积分（默认 1000，可在聊天设置调整）。
    * 需在聊天设置配置网关地址+令牌；未配置时退回本地 token 估算并折成积分显示。 */
+  /* ================= v3.1.0 令牌识别 + 内部通道额度 =================
+   * 公司内部通道的令牌形如 jxai-<姓名>-<设备号>（例 jxai-杨镇城-jx-yzc）——它是「身份牌」：
+   *   ① 浏览器 fetch 不允许把非 ASCII 字符放进请求头，带中文的令牌根本发不出去；
+   *   ② 公司网关 /v1/* 也不认它（实测返回 Invalid token），它不是 OpenAI 兼容的 API Key。
+   * 所以内部通道的余额**不看令牌**，而是由助手接口 GET /api/models 的 companyQuota 直接给出
+   * （月度额度，单位就是「分」，与插件积分制一致）——这才是内部通道用户看余额的正确来源。
+   * 真正能查网关账单的是 sk- 开头的 API Key（走 OpenAI 兼容 billing 接口，见 fetchCredits）。 */
+  function parseGatewayToken(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (!t) return { kind: 'empty', valid: false, label: '未填写' };
+    if (/^sk-/.test(t)) return { kind: 'apikey', valid: true, label: '网关 API Key' };
+    const m = t.match(/^jxai-([^-]{1,24})-(.+)$/);
+    if (m) return { kind: 'inner', valid: true, name: m[1], device: m[2], label: '公司内部通道身份牌' };
+    return { kind: 'other', valid: false, label: '格式无法识别' };
+  }
+  /** 令牌输入框下方的即时说明（聊天设置里用） */
+  function tokenHint(raw) {
+    const t = parseGatewayToken(raw);
+    if (t.kind === 'inner') return '已识别：公司内部通道身份牌（' + t.name + ' · 设备 ' + t.device + '）。' +
+      '内部通道的真实额度由助手直接给出（剩余/月度总额），不需要填令牌；这个牌子不是网关 API Key。';
+    if (t.kind === 'apikey') return '已识别：网关 API Key（sk- 开头），余额按网关账单（订阅额度 − 累计用量）显示。';
+    if (t.kind === 'empty') return '留空即可：余额显示助手给出的内部通道额度（月度分）＋ 今日估算。只有 sk- 开头的 Key 才去读网关账单。';
+    return '格式无法识别：网关 API Key 形如 sk-xxxx；公司内部通道身份牌形如 jxai-姓名-设备号（例 jxai-杨镇城-jx-yzc）。';
+  }
+
+  let QUOTA_CACHE = { at: 0, data: null };
+  /** 助手接口的内部通道额度：{points, remainPoints, usedPoints, periodText, nextAt, asOf}，单位「分」 */
+  async function fetchCompanyQuota(force) {
+    if (!force && QUOTA_CACHE.data && Date.now() - QUOTA_CACHE.at < 60000) return QUOTA_CACHE.data;
+    const out = { ok: false };
+    try {
+      const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const q = j && j.companyQuota;
+      if (!q || typeof q.remainPoints !== 'number') throw new Error('接口未返回 companyQuota');
+      out.ok = true;
+      out.points = Number(q.points) || 0;
+      out.remainPoints = Number(q.remainPoints) || 0;
+      out.usedPoints = Number(q.usedPoints) || 0;
+      out.periodText = String(q.periodText || '');
+      out.nextAt = String(q.nextAt || '');
+      out.asOf = String(q.asOf || '');
+    } catch (e) {
+      out.reason = e.message;
+      log('error', '内部额度读取失败: ' + e.message);
+    }
+    QUOTA_CACHE = { at: Date.now(), data: out };
+    return out;
+  }
+  /** 内部额度一句话（余额气泡/聊天回复共用；无额度时返回空串） */
+  function quotaLine(q) {
+    if (!q || !q.ok) return '';
+    let s = '剩余积分 ' + fmtCredits(q.remainPoints) + ' 分（月度 ' + fmtCredits(q.points) + '，已用 ' + fmtCredits(q.usedPoints) + '）';
+    if (q.periodText) s += '，' + q.periodText + '刷新';
+    return s;
+  }
+
   let CREDITS_CACHE = { at: 0, data: null };
   function perYuanCredits() { return Number(settings.perYuan) > 0 ? Number(settings.perYuan) : 1000; }
   function fmtCredits(n) { return Math.round(n).toLocaleString('en-US'); }
@@ -96,9 +184,15 @@
     if (!force && CREDITS_CACHE.data && Date.now() - CREDITS_CACHE.at < 120000) return CREDITS_CACHE.data;
     const base = (settings.gatewayBase || (await gatewayBase())).replace(/\/+$/, '');
     const key = settings.gatewayKey || '';
+    const tk = parseGatewayToken(key);
     const out = { ok: false };
-    if (!base || !key) {
-      out.reason = '未配置网关令牌';
+    if (tk.kind !== 'apikey') {
+      // v3.1.0：非 sk- Key（留空 / 内部通道身份牌 / 其他格式）不去打网关账单接口——
+      // 免得白等一次 401，也让余额气泡改说人话（内部通道看助手额度，见 fetchCompanyQuota）
+      out.reason = tk.kind === 'inner' ? '内部通道身份牌，不查网关账单（余额看助手额度）'
+        : tk.kind === 'empty' ? '未配置网关 API Key' : '令牌不是 sk- 开头的网关 API Key';
+    } else if (!base) {
+      out.reason = '未配置网关地址';
     } else {
       try {
         const hdr = { 'Authorization': 'Bearer ' + key };

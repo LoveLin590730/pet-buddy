@@ -24,6 +24,16 @@
     return '/_plugins/pet-buddy/';
   })();
 
+  /* ---- 素材位置（v3.1.0 实测：宿主只服务插件根级文件，素材必须平铺） ----
+   * 宿主对 /_plugins/<id>/ 只服务**根级文件**：根级新建文件立刻 200，而 assets/x.png、
+   * assets/sprites/x.png、/./assets/x.png、assets%2Fx.png 全部 404 —— 子目录用不了。
+   * 所以素材平铺在插件根目录，按前缀分组：feiyu-*（桌宠精灵图）、st-*（40 张贴纸）、
+   * pet-deepseek.webp（内置女仆皮肤）、icon.png（插件图标）；清单见 assets.manifest.json。
+   * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
+  const ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  const ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
+  const ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
     wave:  { row: 3, col: 1 }, wave2: { row: 3, col: 3 },
@@ -145,7 +155,7 @@
       const el = $new('span', 'sticker pb2-st-maid maid-st');
       if (n === '1') {
         const img = document.createElement('img');
-        img.src = ASSET_DIR + 'pet-deepseek.webp'; img.alt = 'maid';
+        img.src = ASSET_SKIN_DEFAULT;
         el.appendChild(img);
         return el;
       }
@@ -161,7 +171,7 @@
       if (kind === 'archive') {
         const rid = archiveResolve(id);
         if (!rid) return null;
-        img.src = ASSET_DIR + 'st-' + rid + '.webp';
+        img.src = ASSET_STICKER + 'st-' + rid + '.webp';
       } else if (kind === 'custom') {
         const idx = Number(id);
         const arr = (JSON.parse(localStorage.getItem('pb2.settings.v2') || '{}').customStickers) || [];
