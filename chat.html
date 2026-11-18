@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼·窗口化聊天</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 13px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif; background: linear-gradient(170deg, #eef3ff, #f8f6ff); color: #2c3c66; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: #fff; border-bottom: 1px solid #e2e8f7; flex: none; }
+  header .logo { width: 34px; height: 37px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; background-position: -34px -74px; flex: none; }
+  header b { font-size: 14px; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #c8cdd8; flex: none; }
+  header .dot.on { background: #34c273; }
+  header select { margin-left: auto; border: 1px solid #c9d3ec; border-radius: 7px; padding: 4px 6px; font-size: 12px; background: #fbfcff; color: #2c3c66; max-width: 46%; }
+  #stickerset { display: flex; gap: 6px; align-items: center; }
+  #stickerset button { border: 1px solid #c9d3ec; background: #fff; border-radius: 7px; padding: 3px 8px; font-size: 12px; cursor: pointer; color: #3d519c; }
+  #stickerset button.on { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+  #msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row.me { flex-direction: row-reverse; }
+  .avatar { width: 30px; height: 33px; flex: none; border-radius: 7px; background: #e3eafb center/contain no-repeat; }
+  .row .avatar.fish { background-image: url("feiyu-spritesheet.png"); background-size: 800% 1100%; background-position: -30px 0; }
+  .bubble2 { max-width: 74%; padding: 8px 11px; border-radius: 12px; background: #fff; border: 1px solid #e2e8f7; box-shadow: 0 1px 4px rgba(30,40,90,.07); word-break: break-word; white-space: pre-wrap; }
+  .row.me .bubble2 { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+  .bubble2 .via { display: block; margin-top: 4px; font-size: 10.5px; opacity: .65; }
+  .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
+  .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; }
+  .sticker.bean-st svg { width: 56px; height: 56px; display: block; }
+  .sticker.maid-st img { max-width: 96px; max-height: 96px; border-radius: 9px; display: block; }
+  .sticker.stick-st img { width: 96px; max-height: 96px; object-fit: contain; display: block; border-radius: 9px; }
+  footer { flex: none; display: flex; gap: 8px; padding: 10px 12px 12px; }
+  #in { flex: 1; border: 1px solid #c9d3ec; border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; background: #fff; color: #2c3c66; }
+  #in:focus { border-color: #4a68d8; }
+  #send { border: 0; border-radius: 10px; background: #4a68d8; color: #fff; padding: 0 18px; font-size: 13.5px; cursor: pointer; }
+  #send:hover { background: #3c56c2; }
+  #send:disabled { background: #a9b7e6; cursor: wait; }
+  .sys { align-self: center; font-size: 11.5px; color: #8a94b8; background: #ffffffb8; padding: 3px 12px; border-radius: 20px; }
+
+  /* ===== v2.2.0 微信/QQ 式表情面板 ===== */
+  #facebtn { border: 0; background: none; font-size: 20px; cursor: pointer; padding: 2px 6px; border-radius: 8px; line-height: 1; }
+  #facebtn:hover { background: #e8edff; }
+  #facebtn.on { background: #dfe6ff; }
+  #stpanel { display: none; margin: 0 12px 6px; background: #fff; border: 1px solid #e3e8f8; border-radius: 14px; box-shadow: 0 8px 24px #2c3c6622; overflow: hidden; }
+  #stpanel.open { display: block; }
+  #stptabs { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #eef1fb; }
+  #stptabs button { border: 0; background: none; font-size: 12px; color: #7d88ad; padding: 5px 10px; cursor: pointer; border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; }
+  #stptabs button.on { color: #4a68d8; border-bottom-color: #4a68d8; font-weight: 600; }
+  #stptabs .sp { flex: 1; }
+  #stptabs .mini { font-size: 13px; padding: 4px 8px; }
+  #stptabs .mini.danger { color: #d84a4a; }
+  #stgrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 8px 10px 10px; min-height: 108px; max-height: 216px; overflow-y: auto; }
+  #stgrid .cell { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; background: #f6f8ff; }
+  #stgrid .cell:hover { background: #e4eaff; }
+  #stgrid .cell .sticker { transform: scale(0.82); }
+  #stgrid .cell img.arc { width: 88%; height: 88%; object-fit: contain; }
+  #stgrid .cell.del-mode::after { content: '×'; position: absolute; top: -2px; right: 0; color: #fff; background: #e5484d; width: 15px; height: 15px; border-radius: 50%; font-size: 11px; line-height: 15px; text-align: center; }
+  #stgrid .empty { grid-column: 1 / -1; text-align: center; color: #9aa3c4; font-size: 12px; padding: 26px 0; }
+  #stgrid .addcell { border: 1.5px dashed #b9c4ea; color: #7d88ad; font-size: 22px; background: #fbfcff; }
+  #stpanel .tip { font-size: 11px; color: #9aa3c4; padding: 0 12px 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo"></div>
+    <b>大肥鱼·鲸鲸娘</b>
+    <span class="dot" id="dot" title="助手连接状态"></span>
+    <select id="model"></select>
+  </header>
+  <div id="msgs"></div>
+  <div id="stpanel">
+    <div id="stptabs"></div>
+    <div id="stgrid"></div>
+    <div class="tip" id="stptip">点击表情插入输入框；「我的」里可上传自定义表情（支持 GIF 动图）</div>
+  </div>
+  <footer>
+    <button id="facebtn" title="表情">😊</button>
+    <input id="in" type="text" maxlength="500" placeholder="跟大肥鱼聊点什么…（Enter 发送）">
+    <button id="send">发送</button>
+  </footer>
+<script>
+(() => {
+  'use strict';
+  /* ===== 设置共享（与桌宠同源 localStorage） ===== */
+  const LS_KEY = 'pb2.settings.v2';
+  const load = () => { try { return Object.assign({ channel: 'assistant', chatProvider: 'company-internal', chatModel: 'deepseek-flash', quota: 0, persona: '', nickname: '', gatewayBase: '', gatewayKey: '', gatewayModel: '', perYuan: 1000 }, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch (e) { return {}; } };
+  let S = load();
+  const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {} };
+
+  /* ===== 精灵常量（ds-pet 官方权威值） ===== */
+  const CLIP = 'polygon(0 38px, 103px 38px, 103px 0, 100% 0, 100% 100%, 0 100%)';
+  const FISH_ST = {
+    wave:  { row: 3, col: 1 }, wave2: { row: 3, col: 3 }, jump: { row: 4, col: 2 },
+    happy: { row: 0, col: 4 }, idle: { row: 0, col: 0 }, hum: { row: 5, col: 0 }, wait: { row: 6, col: 0 },
+  };
+  /* ===== 黄豆风 SVG 贴纸（内置 10 枚） ===== */
+  const BEAN = {
+    smile: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="20" r="2.6" fill="#5b4a00"/><circle cx="31" cy="20" r="2.6" fill="#5b4a00"/><path d="M15 29q9 8 18 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/>',
+    lol: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><path d="M12 18q5-4 10 0M26 18q5-4 10 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><path d="M14 27q10 12 20 0z" fill="#5b4a00"/>',
+    cry: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><path d="M13 20q4-3 8 0M27 20q4-3 8 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><path d="M16 32q8-6 16 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><ellipse cx="15" cy="26" rx="2.4" ry="4" fill="#6cb8ff"/>',
+    angry: '<circle cx="24" cy="24" r="20" fill="#ffb03b" stroke="#8a5200" stroke-width="2"/><path d="M12 15l8 4M36 15l-8 4" stroke="#5b3a00" stroke-width="2.4" stroke-linecap="round"/><circle cx="18" cy="23" r="2.4" fill="#5b3a00"/><circle cx="30" cy="23" r="2.4" fill="#5b3a00"/><path d="M16 33q8-5 16 0" fill="none" stroke="#5b3a00" stroke-width="2.4" stroke-linecap="round"/>',
+    shy: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="21" r="2.4" fill="#5b4a00"/><circle cx="31" cy="21" r="2.4" fill="#5b4a00"/><path d="M18 30q6 4 12 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><ellipse cx="12" cy="27" rx="3.4" ry="2.2" fill="#ff9d9d"/><ellipse cx="36" cy="27" rx="3.4" ry="2.2" fill="#ff9d9d"/>',
+    ok: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="21" r="2.4" fill="#5b4a00"/><circle cx="31" cy="21" r="2.4" fill="#5b4a00"/><path d="M16 30l6 5 10-10" fill="none" stroke="#2e8b57" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    wow: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="19" r="2.8" fill="#5b4a00"/><circle cx="31" cy="19" r="2.8" fill="#5b4a00"/><ellipse cx="24" cy="31" rx="4.4" ry="5.6" fill="#5b4a00"/>',
+    sleep: '<circle cx="24" cy="24" r="20" fill="#ffe38a" stroke="#8a6d00" stroke-width="2"/><path d="M13 22q4 3 8 0M27 22q4 3 8 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><path d="M20 30q4 2 8 0" fill="none" stroke="#5b4a00" stroke-width="2.2" stroke-linecap="round"/><text x="30" y="14" font-size="9" fill="#5b4a00" font-weight="bold">zZ</text>',
+    star: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><path d="M17 16l1.8 3.8L23 20l-3 2.8.8 4.2-3.8-2.2-3.8 2.2.8-4.2-3-2.8 4.2-.2z" fill="#ff8c00"/><path d="M31 16l1.8 3.8L37 20l-3 2.8.8 4.2-3.8-2.2-3.8 2.2.8-4.2-3-2.8 4.2-.2z" fill="#ff8c00"/><path d="M18 32q6 4 12 0" fill="none" stroke="#5b4a00" stroke-width="2.2" stroke-linecap="round"/>',
+    think: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="22" r="2.4" fill="#5b4a00"/><circle cx="31" cy="22" r="2.4" fill="#5b4a00"/><path d="M16 31h16" stroke="#5b4a00" stroke-width="2.2" stroke-linecap="round"/><circle cx="38" cy="9" r="3.4" fill="#fff" stroke="#8a94b8"/><circle cx="43" cy="4" r="2.2" fill="#fff" stroke="#8a94b8"/>',
+  };
+
+  /* ===== 贴纸渲染（白名单 + 元素构建，防 XSS） ===== */
+  // 模型输出标记的宽容别名：大小写/空格/中文括号/常见同义词都能映射到白名单项
+  const STICKER_ALIAS = {
+    wave: 'wave', wave2: 'wave2', waves: 'wave', hello: 'wave', hi: 'wave', 挥手: 'wave', 打招呼: 'wave',
+    jump: 'jump', jumping: 'jump', 跳: 'jump', 跳跃: 'jump', 开心跳: 'jump',
+    happy: 'happy', 满足: 'happy', 开心: 'happy', 高兴: 'happy',
+    idle: 'idle', 待机: 'idle', 站: 'idle',
+    hum: 'hum', hums: 'hum', hmph: 'hum', 哼: 'hum', 生气: 'hum', 傲娇: 'hum', 生气了: 'hum',
+    wait: 'wait', waiting: 'wait', 等: 'wait', 等待: 'wait',
+    smile: 'smile', 微笑: 'smile', 笑: 'smile',
+    lol: 'lol', laugh: 'lol', 大笑: 'lol', 哈哈: 'lol',
+    cry: 'cry', 哭: 'cry', 难过: 'cry', 泪: 'cry',
+    angry: 'angry', 怒: 'angry', 炸毛: 'angry',
+    shy: 'shy', 害羞: 'shy', 脸红: 'shy',
+    ok: 'ok', 好: 'ok', 收到: 'ok',
+    wow: 'wow', 惊讶: 'wow', 哇: 'wow', 吃惊: 'wow',
+    sleep: 'sleep', 睡: 'sleep', 睡觉: 'sleep', 困: 'sleep',
+    star: 'star', 星星眼: 'star', 赞叹: 'star',
+    think: 'think', 思考: 'think', 想想: 'think', 疑问: 'think',
+  };
+  // 匹配宽容：大小写不限、标记内允许空格、支持 [x] / 【x】 / ［x］ 三种括号；
+  // stick：规范形 [stick:archive:xx]/[stick:custom:N] + 兜底形 [stick:xx]（映射失败则忽略）
+  const ST_RE = /[\[【［]\s*(fish|bean|maid|鱼|豆|仆)\s*[:：]\s*([a-zA-Z0-9_\u4e00-\u9fa5]+?)\s*[\]】］]|[\[【［]\s*stick\s*[:：]\s*(?:archive\s*[:：]\s*)?([a-zA-Z0-9_\u4e00-\u9fa5\-]{1,80}?)\s*[\]】］]|[\[【［]\s*stick\s*[:：]\s*custom\s*[:：]\s*(\d{1,3})\s*[\]】］]/gi;
+  const GROUP_ALIAS = { fish: 'fish', bean: 'bean', maid: 'maid', '鱼': 'fish', '豆': 'bean', '仆': 'maid' };
+  // archive 组语义中文键 → 文件 id（与 client.js 同一份映射）
+  const ARCHIVE_ALIAS = {
+    // 语义短名（与 prompt 教学短语双向一致——模型照教学输出「抱头」等也必须可解析）
+    '拒绝': 'deepseek-bao-bi-jujue', '睡觉': 'deepseek-bao-jing-shui-jiao', '吃瓜': 'deepseek-bao-xigua',
+    '委屈': 'deepseek-bao-tou-wei-qu', '卖萌': 'deepseek-baozhe-weiba', 'token': 'deepseek-baozhe-beizi-kan-token',
+    '游戏': 'deepseek-bao-shoubing', '流口水': 'deepseek-bao-glm-wanou-bash', '抱鱼': 'deepseek-bao-zhe-pangyu',
+    '无语': 'deepseek-baobi-zuo-zai-pingguan-jian', '吓到': 'deepseek-bei-baozhu-jingxia', '发呆': 'deepseek-bao-xi-chuang-bian',
+    '开吃': 'chatgpt-renwu-jieshao', '比心': 'deepseek-bixin', '敷衍': 'deepseek-baozhe-saozhou', '生气': 'deepseek-chashou-shengqi',
+    // prompt 教学短语别名（抱臂拒绝=拒绝 等——教学原文同样可解析）
+    '抱臂': 'deepseek-bao-bi-jujue', '抱头': 'deepseek-bao-tou-wei-qu', '抱着小鲸': 'deepseek-bao-jing-shui-jiao',
+    '抱西瓜': 'deepseek-bao-xigua', '抱尾巴': 'deepseek-baozhe-weiba', 'token罐': 'deepseek-baozhe-beizi-kan-token',
+    '坐罐堆': 'deepseek-baobi-zuo-zai-pingguan-jian', '被抱吓到': 'deepseek-bei-baozhu-jingxia',
+    '窗边': 'deepseek-bao-xi-chuang-bian', '抱碗': 'chatgpt-renwu-jieshao', '扫帚': 'deepseek-baozhe-saozhou',
+    '插手': 'deepseek-chashou-shengqi', '打游戏': 'deepseek-bao-shoubing',
+  };
+  function archiveResolve(id) {
+    if (ARCHIVE.find(a => a.id === id)) return id;
+    if (ARCHIVE_ALIAS[id]) return ARCHIVE_ALIAS[id];
+    const mWx = id.match(/^wx[-_]?(\d{1,2})$/i);
+    if (mWx) {
+      const cid = 'wx-' + mWx[1].padStart(2, '0');
+      if (ARCHIVE.find(a => a.id === cid)) return cid;
+    }
+    const cid2 = 'deepseek-' + id;
+    if (ARCHIVE.find(a => a.id === cid2)) return cid2;
+    return null;
+  }
+  function normSticker(group, name) {
+    const g = GROUP_ALIAS[group.toLowerCase()] || group.toLowerCase();
+    const n = STICKER_ALIAS[name.toLowerCase()] || STICKER_ALIAS[name] || name.toLowerCase();
+    return { g, n };
+  }
+  function stickerEl(g, n) {
+    if (g === 'fish') {
+      const f = FISH_ST[n];
+      if (!f) return null;
+      const el = document.createElement('span');
+      el.className = 'sticker fish-st';
+      // bg-size 800% 1100%：每格恰好=元素大小（86×93），位移=元素尺寸×格序号
+      el.style.backgroundPosition = (-86 * f.col) + 'px ' + (-93 * f.row) + 'px';
+      el.title = 'fish:' + n;
+      return el;
+    }
+    if (g === 'bean') {
+      if (!BEAN[n]) return null;
+      const el = document.createElement('span');
+      el.className = 'sticker bean-st';
+      el.title = 'bean:' + n;
+      el.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true">' + BEAN[n] + '</svg>'; // SVG 内置字典，非用户输入
+      return el;
+    }
+    if (g === 'maid') {
+      const el = document.createElement('span');
+      el.className = 'sticker maid-st';
+      el.title = 'maid:' + n;
+      if (n === '1') {
+        const img = document.createElement('img');
+        img.src = 'pet-deepseek.webp'; img.alt = 'maid';
+        el.appendChild(img);
+        return el;
+      }
+      if (n.charAt(0) === 'c') {
+        const idx = Number(n.slice(1));
+        const arr = S.customStickers || [];
+        if (arr[idx]) { const img = document.createElement('img'); img.src = arr[idx]; img.alt = 'custom'; el.appendChild(img); return el; }
+      }
+      return null;
+    }
+    if (g === 'stick') {
+      // n 形如 'archive:<id或语义键或wxN>' 或 'custom:<N>'
+      const ci = n.indexOf(':');
+      if (ci < 0) return null;
+      const kind = n.slice(0, ci), id = n.slice(ci + 1);
+      const el = document.createElement('span');
+      el.className = 'sticker stick-st';
+      el.title = 'stick:' + n;
+      const img = document.createElement('img');
+      if (kind === 'archive') {
+        const rid = archiveResolve(id);
+        if (!rid) return null;
+        img.src = 'st-' + rid + '.webp';
+      } else if (kind === 'custom') {
+        const idx = Number(id);
+        const arr = S.customStickers || [];
+        if (isNaN(idx) || !arr[idx]) return null;
+        img.src = arr[idx];
+      } else {
+        return null;
+      }
+      img.alt = kind;
+      el.appendChild(img);
+      return el;
+    }
+    return null;
+  }
+  /** 富文本渲染：普通文本 textNode + 白名单贴纸元素（防 XSS 主路径）。
+   *  v2.2.2 兜底：标记匹配但白名单查无 → 忽略不显示，不出破碎标记 */
+  function renderRich(container, text) {
+    container.textContent = '';
+    let last = 0; let m;
+    ST_RE.lastIndex = 0;
+    while ((m = ST_RE.exec(String(text)))) {
+      if (m.index > last) container.appendChild(document.createTextNode(text.slice(last, m.index)));
+      let el = null;
+      if (m[1]) {
+        const { g, n } = normSticker(m[1], m[2]);
+        el = stickerEl(g, n);
+      } else if (m[4] !== undefined) {
+        el = stickerEl('stick', 'custom:' + m[4]);
+      } else if (m[3] !== undefined || m[2] !== undefined) {
+        el = stickerEl('stick', 'archive:' + (m[3] !== undefined ? m[3] : m[2]));
+      }
+      if (el) container.appendChild(el); // 白名单查无 → 忽略标记
+      last = m.index + m[0].length;
+    }
+    if (last < String(text).length) container.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  /* ===== 余额（与桌宠同口径） ===== */
+  const pad2 = n => String(n).padStart(2, '0');
+  const localDateStr = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  const PRICES = { flash: { miss: [1, 2], out: [4, 8] }, pro: { miss: [4.5, 9], out: [13.5, 27] } };
+  const HOLIDAY = new Set(['2026-01-01','2026-01-02','2026-01-03','2026-02-15','2026-02-16','2026-02-17','2026-02-18','2026-02-19','2026-02-20','2026-02-21','2026-02-22','2026-02-23','2026-04-04','2026-04-05','2026-04-06','2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05','2026-06-19','2026-06-20','2026-06-21','2026-09-25','2026-09-26','2026-09-27','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05','2026-10-06','2026-10-07']);
+  function isValley(d) { d = d || new Date(); if (HOLIDAY.has(localDateStr(d))) return true; const m = d.getHours() * 60 + d.getMinutes(); return m >= 30 && m < 510; }
+  const fmtMoney = n => n >= 100 ? '¥' + n.toFixed(1) : n >= 1 ? '¥' + n.toFixed(2) : '¥' + n.toFixed(4);
+  /* ===== v2.2.3 积分制（1000 分 = 1 元）：与桌宠同语义 ===== */
+  const perYuanCredits = () => Number(S.perYuan) > 0 ? Number(S.perYuan) : 1000;
+  const fmtCredits = n => Math.round(n).toLocaleString('en-US');
+  let CREDITS_CACHE = { at: 0, data: null };
+  async function fetchCredits() {
+    if (CREDITS_CACHE.data && Date.now() - CREDITS_CACHE.at < 120000) return CREDITS_CACHE.data;
+    const base = (S.gatewayBase || '').replace(/\/+$/, '');
+    const key = S.gatewayKey || '';
+    const out = { ok: false };
+    if (base && key) {
+      try {
+        const hdr = { 'Authorization': 'Bearer ' + key };
+        const end = localDateStr(new Date(Date.now() + 864e5));
+        const r1 = await fetch(base + '/v1/dashboard/billing/subscription', { headers: hdr });
+        if (!r1.ok) throw new Error('HTTP ' + r1.status);
+        const sub = await r1.json();
+        let usedUsd = 0;
+        try {
+          const r2 = await fetch(base + '/v1/dashboard/billing/usage?start_date=2020-01-01&end_date=' + end, { headers: hdr });
+          if (r2.ok) usedUsd = Number((await r2.json()).total_usage || 0) / 100;
+        } catch (e2) { /* 可选 */ }
+        const limit = Number(sub.system_hard_limit_usd ?? sub.hard_limit_usd ?? 0);
+        const unlimited = limit >= 1e8;
+        out.ok = true; out.unlimited = unlimited;
+        out.remainCredits = unlimited ? null : Math.max(0, Math.round((limit - usedUsd) * perYuanCredits()));
+        out.usedCredits = Math.round(usedUsd * perYuanCredits());
+      } catch (e) { out.reason = e.message; }
+    } else {
+      out.reason = '未配置网关令牌';
+    }
+    CREDITS_CACHE = { at: Date.now(), data: out };
+    return out;
+  }
+  async function todaySpend() {
+    const d = new Date(); const valley = isValley(d);
+    const out = { date: localDateStr(d), prompt: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, valley, apiOk: false };
+    try {
+      const r = await fetch('/api/sessions', { headers: { 'Accept': 'application/json' } });
+      if (r.ok) {
+        const j = await r.json(); const list = (j && j.sessions) || j || [];
+        for (const s of list) {
+          if (String(s.updatedAt || '').slice(0, 10) !== out.date) continue;
+          const p = Number(s.usagePrompt) || 0, o = Number(s.usageOutput) || 0;
+          out.prompt += p; out.output += o; out.calls += Number(s.usageCalls) || 0;
+          const tier = (String(s.model || '').toLowerCase().indexOf('pro') >= 0) ? PRICES.pro : PRICES.flash;
+          out.cost += (p / 1e6) * tier.miss[valley ? 0 : 1] + (o / 1e6) * tier.out[valley ? 0 : 1];
+        }
+        out.apiOk = true;
+      }
+    } catch (e) { /* 离线 */ }
+    out.cost = Math.round(out.cost * 10000) / 10000;
+    out.costCredits = Math.round(out.cost * perYuanCredits());
+    out.credits = await fetchCredits();
+    return out;
+  }
+
+  /* ===== 聊天通道（与桌宠同语义：assistant 统一子对话 / 网关 / 模拟） ===== */
+  const CHAT_LS_SID = 'pb2.chat.sid.v2';
+  const MODELS = [
+    ['company-internal|deepseek-flash', 'DeepSeek（内部通道）'],
+    ['company-internal|glm-5.3', 'GLM-5.3（内部通道）'],
+    ['company-internal|glm-5.3-flash', 'GLM-5.3-Flash（内部通道）'],
+    ['zhipu|glm-4.5-air', 'GLM-4.5-Air（智谱官方）· 需自备余额'],
+    ['zhipu|glm-5.3', 'GLM-5.3（智谱官方）· 需自备余额'],
+    ['zhipu|glm-5.3-flash', 'GLM-5.3-Flash（智谱官方）· 需自备余额'],
+  ];
+  const PERIOD = () => { const h = new Date().getHours(); return h < 5 ? '深夜' : h < 11 ? '早上' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜'; };
+  /* v2.1.3：人设不每轮全量——full=true（子对话首条或人设/昵称变化后首条）才带设定+资料+标记说明 */
+  function buildPrompt(userText, balBlock, full) {
+    const parts = [];
+    if (full !== false) {
+      const persona = (S.persona || '').trim() ||
+        '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的大肥鱼桌宠。傲娇搞笑毒舌但忠诚的挚友。每次回复不超过60字；傲娇不伤人；记住用户的信息；思考过程绝不写进回复；花费/余额直接报数字。';
+      parts.push('【桌宠设定·系统级，始终遵守】\n' + persona);
+      const prof = ['当前时段：' + PERIOD()];
+      if (S.nickname) prof.push('用户昵称：' + S.nickname);
+      parts.push('【用户资料】' + prof.join('；'));
+      parts.push('【表情包标记】回复中可以插贴纸（会渲染成图片），写法与可用贴纸：' +
+        '① [stick:archive:中文名] —— archive 组（蓝色大肥鱼表情包，你的主力表情，优先使用这组）：' +
+        '抱臂拒绝=拒绝、抱着小鲸=睡觉、抱西瓜=吃瓜、抱头=委屈、抱尾巴=卖萌、token罐=token、' +
+        '打游戏=游戏、流口水=流口水、抱胖鱼=抱鱼、坐罐堆=无语、被抱吓到=吓到、窗边=发呆、' +
+        '抱碗=开吃、比心=比心、扫帚=敷衍、插手=生气；另有 wx1～wx24 大肥鱼日常系列。');
+      parts.push('② 备选小表情：' +
+        Object.keys(FISH_ST).map(k => '[fish:' + k + ']').join(' ') + '、' +
+        Object.keys(BEAN).map(k => '[bean:' + k + ']').join(' ') + '、[maid:1]。' +
+        '格式必须严格用半角方括号加英文冒号（如 [stick:archive:比心] 或 [bean:smile]），不要写成中文括号或加多余空格；' +
+        '适度使用，一条回复最多 1-2 个。');
+    }
+    if (balBlock) parts.push(balBlock);
+    parts.push('【用户说】' + userText);
+    return parts.join('\n\n');
+  }
+  /* v2.1.3 人设指纹：与 client.js 共用同一 localStorage 状态（按子对话 sid 独立） */
+  const LS_PSTATE = 'pb2.personaState.v1';
+  function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) { h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0; } return h.toString(36); }
+  // v2.2.2：指纹含 PROMPT_VER——贴纸教学等首轮说明改版后，老子对话自动全量重发一次
+  const PROMPT_VER = '20261026-stick-archive';
+  function personaFingerprint() {
+    const persona = (S.persona || '').trim() ||
+      '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的大肥鱼桌宠。傲娇搞笑毒舌但忠诚的挚友。每次回复不超过60字；傲娇不伤人；记住用户的信息；思考过程绝不写进回复；花费/余额直接报数字。';
+    return hashStr(persona + '\u0001' + (S.nickname || '') + '\u0001' + PROMPT_VER);
+  }
+  function loadPState() { try { return JSON.parse(localStorage.getItem(LS_PSTATE) || '{}') || {}; } catch (e) { return {}; } }
+  function savePState(st) { try { localStorage.setItem(LS_PSTATE, JSON.stringify(st)); } catch (e) { /* 忽略 */ } }
+  function needPersonaFull(key) {
+    const fp = personaFingerprint();
+    const st = loadPState();
+    return (!st[key] || st[key].fp !== fp) ? fp : null;
+  }
+  function markPersonaSent(key, fp) {
+    const st = loadPState();
+    st[key] = { fp: fp, at: new Date().toISOString().slice(0, 19) };
+    savePState(st);
+  }
+  async function ensureSid() {
+    const sid = localStorage.getItem(CHAT_LS_SID);
+    if (sid) { try { const r = await fetch('/api/sessions/' + sid); if (r.ok) return sid; } catch (e) {} }
+    const r = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '桌宠聊天', provider: S.chatProvider, model: S.chatModel, permission: 'workspace-write', tools: [] }) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json(); localStorage.setItem(CHAT_LS_SID, j.id); return j.id;
+  }
+  async function readStream(sid, content) {
+    const resp = await fetch('/api/sessions/' + sid + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+    if (resp.status === 409) throw new Error('BUSY');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    if (resp.body) { const rd = resp.body.getReader(); for (;;) { const { done } = await rd.read(); if (done) break; } }
+  }
+  async function lastAssistant(sid) {
+    const r = await fetch('/api/sessions/' + sid + '/messages');
+    if (!r.ok) return '';
+    const j = await r.json(); const msgs = (j && j.messages) || [];
+    let reply = '';
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'assistant' && (m.text || '').trim()) { reply = m.text.trim(); break; }
+    }
+    if (reply) return reply;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== 'system' || !(m.text || '').startsWith('{')) continue;
+      try {
+        const o = JSON.parse(m.text);
+        if (o.error && (o.type === 'call' || o.type === 'error')) {
+          const e = new Error('MODEL_CHANNEL: ' + o.error); e.channelError = String(o.error); throw e;
+        }
+      } catch (pe) { if (pe.channelError) throw pe; }
+    }
+    return '';
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function sendAssistant(userText, balBlock) {
+    const sid = await ensureSid();
+    // v2.1.3：按子对话跟踪人设，首条全量、后续短消息
+    const fpNeed = needPersonaFull(sid);
+    try { await readStream(sid, buildPrompt(userText, balBlock, !!fpNeed)); }
+    catch (e) { if (e.message === 'BUSY') return '咳、一条一条来啦！'; throw e; }
+    if (fpNeed) markPersonaSent(sid, fpNeed);
+    let t = await lastAssistant(sid);
+    for (let i = 0; i < 30 && !t; i++) { await sleep(3000); t = await lastAssistant(sid); }
+    return t || '……（走神了，再说一遍？）';
+  }
+  const mem = [];
+  async function sendGateway(userText, balBlock) {
+    if (!S.gatewayBase || !S.gatewayKey) throw new Error('网关未配置');
+    const fpNeed = needPersonaFull('gw');
+    mem.push({ role: 'user', content: buildPrompt(userText, balBlock, !!fpNeed) });
+    while (mem.length > 28) mem.shift();
+    const msgs = [{ role: 'system', content: '你是桌宠大肥鱼·鲸鲸娘。短句≤60字，绝不输出思考过程。' }].concat(mem);
+    const r = await fetch(S.gatewayBase.replace(/\/+$/, '') + '/chat/completions', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + S.gatewayKey },
+      body: JSON.stringify({ model: S.gatewayModel || 'deepseek-chat', messages: msgs, max_tokens: 200, stream: false }) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (fpNeed) markPersonaSent('gw', fpNeed);
+    const j = await r.json();
+    const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+    mem.push({ role: 'assistant', content: t });
+    return t || '……';
+  }
+  function sendMock(userText, bal, balBlock) {
+    if (bal && bal.apiOk && /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|今日花费/.test(userText)) {
+      const cr = bal.credits || {};
+      const est = fmtCredits(bal.costCredits || 0);
+      let q;
+      if (cr.ok && cr.unlimited) q = '账户不限额';
+      else if (cr.ok) q = '剩余积分 ' + fmtCredits(cr.remainCredits);
+      else q = Number(S.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(S.quota)) : '（额度还没告诉我呢）';
+      return '哼、看好了：今日估算 ' + est + ' 分，' + q + '（' + (bal.valley ? '谷' : '峰') + '时价）。别太浪！ [fish:hum]';
+    }
+    const nickM = userText.match(/(?:我叫|我是|叫我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/);
+    if (nickM && !/谁|什么/.test(nickM[1])) { S.nickname = nickM[1]; save(); return '记住了，' + nickM[1] + '……才不是想记住呢！ [bean:shy]'; }
+    if (/你好|hi|hello|在吗|嗨/i.test(userText)) return PERIOD() + '好呀～有事快说，本小姐忙着呢 [fish:wave]';
+    const pool = ['唔……让本小姐想想 [bean:think]', '真是的，什么问题都丢给我……不过我会认真想的 [fish:idle]', '好啦好啦，陪你聊两句 [bean:smile]', '（尾巴拍了拍水面）继续说，我听着呢 [fish:wait]'];
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  async function chatSend(userText) {
+    let bal = null, balBlock = null;
+    if (/花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|今日花费/.test(userText)) {
+      bal = await todaySpend();
+      const cr = bal.credits || {};
+      const est = fmtCredits(bal.costCredits || 0);
+      let q;
+      if (cr.ok && cr.unlimited) q = '账户不限额';
+      else if (cr.ok) q = '剩余积分 ' + fmtCredits(cr.remainCredits) + '（网关实时，累计已用 ' + fmtCredits(cr.usedCredits) + ' 分）';
+      else q = Number(S.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(S.quota)) : '未设置';
+      balBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】今日(' + bal.date + ')估算消耗 ' + est +
+        ' 分（输入 ' + bal.prompt + ' tok、输出 ' + bal.output + ' tok、' + bal.calls + ' 次，按' + (bal.valley ? '谷' : '峰') +
+        '时未命中价保守估算）；' + q + '。回复用户时请直接用「分」作单位。';
+    }
+    if (S.channel === 'gateway') { try { return { text: await sendGateway(userText, balBlock), via: 'gateway' }; } catch (e) { return { text: '（网关出错，模拟陪聊）' + sendMock(userText, bal), via: 'mock' }; } }
+    if (S.channel === 'mock') return { text: sendMock(userText, bal), via: 'mock' };
+    try {
+      await fetch('/api/models');
+      return { text: await sendAssistant(userText, balBlock), via: 'assistant' };
+    } catch (e) {
+      if (e.channelError || /MODEL_CHANNEL/.test(e.message)) {
+        const raw = String(e.channelError || '');
+        let why = raw.split(/[：:]/)[0].slice(0, 26) || '模型通道不可用';
+        if (/429|余额不足/.test(raw)) why = '模型通道余额不足';
+        return { text: '（' + why + '，先用模拟模式陪你～）' + sendMock(userText, bal), via: 'mock' };
+      }
+      return { text: '（助手不在线，我来陪聊～）' + sendMock(userText, bal), via: 'mock' };
+    }
+  }
+
+  /* ===== UI ===== */
+  const msgs = document.getElementById('msgs');
+  const input = document.getElementById('in');
+  const sendBtn = document.getElementById('send');
+  const dot = document.getElementById('dot');
+  const modelSel = document.getElementById('model');
+
+  for (const [v, l] of MODELS) {
+    const op = document.createElement('option'); op.value = v; op.textContent = l;
+    if (S.chatProvider + '|' + S.chatModel === v) op.selected = true;
+    modelSel.appendChild(op);
+  }
+  modelSel.addEventListener('change', () => {
+    const pm = modelSel.value.split('|');
+    S.chatProvider = pm[0]; S.chatModel = pm[1]; save();
+    localStorage.removeItem(CHAT_LS_SID);
+    sys('已切换到 ' + pm[0] + '/' + pm[1] + '，新建统一子对话');
+  });
+
+  fetch('/api/models').then(r => { dot.classList.toggle('on', r.ok); if (!r.ok) sys('助手不在线：已自动回落模拟模式'); })
+    .catch(() => { dot.classList.remove('on'); sys('助手不在线：已自动回落模拟模式'); });
+
+  function sys(text) {
+    const el = document.createElement('div'); el.className = 'sys'; el.textContent = text;
+    msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
+  }
+  function addMsg(who, text, via) {
+    const row = document.createElement('div'); row.className = 'row' + (who === 'me' ? ' me' : '');
+    const av = document.createElement('div'); av.className = 'avatar' + (who === 'me' ? '' : ' fish');
+    const b = document.createElement('div'); b.className = 'bubble2';
+    renderRich(b, text);
+    if (via && who !== 'me') { const v = document.createElement('span'); v.className = 'via'; v.textContent = 'via ' + via; b.appendChild(v); }
+    row.appendChild(av); row.appendChild(b);
+    msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  /* ===== v2.2.0 微信/QQ 式表情面板 ===== */
+  // 档案馆大肥鱼表情包（来源：blue-fish-archive 蓝色大肥鱼档案馆 fisharchive.cc，CC BY-NC-SA 4.0）
+  const ARCHIVE = [
+    { id: 'deepseek-bao-bi-jujue',    name: '拒绝：需求太离谱' },
+    { id: 'deepseek-bao-jing-shui-jiao', name: '抱着小鲸睡觉' },
+    { id: 'deepseek-bao-xigua',       name: '抱西瓜笑开花' },
+    { id: 'deepseek-bao-tou-wei-qu',  name: '抱头委屈' },
+    { id: 'deepseek-baozhe-weiba',    name: '抱尾巴可爱值拉满' },
+    { id: 'deepseek-baozhe-beizi-kan-token', name: '盯着token罐吓到宕机' },
+    { id: 'deepseek-bao-shoubing',    name: '这把再输尾巴挂机' },
+    { id: 'deepseek-bao-glm-wanou-bash', name: '抱玩偶流口水CPU烧糊' },
+    { id: 'deepseek-bao-zhe-pangyu',  name: '托脸抱胖鱼' },
+    { id: 'deepseek-baobi-zuo-zai-pingguan-jian', name: '盘点库存盘到无语' },
+    { id: 'deepseek-bei-baozhu-jingxia', name: '被抱到脸红CPU红温' },
+    { id: 'deepseek-bao-xi-chuang-bian', name: '抱膝坐窗边眨眼' },
+    { id: 'chatgpt-renwu-jieshao', name: '介绍会上抱碗开吃' },
+    { id: 'deepseek-bixin',           name: '比心' },
+    { id: 'deepseek-baozhe-saozhou',  name: '抱扫帚斜眼敷衍' },
+    { id: 'deepseek-chashou-shengqi', name: '插手生气' },
+    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
+    ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
+  ];
+  const LS_RECENT = 'pb2.stickerRecent.v1';
+  const RECENT_MAX = 12;
+  let stickerTab = 'fish', delMode = false;
+  function recentList() { try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]') || []; } catch (e) { return []; } }
+  function pushRecent(g, n) {
+    let r = recentList().filter(x => !(x.g === g && x.n === n));
+    r.unshift({ g: g, n: n });
+    try { localStorage.setItem(LS_RECENT, JSON.stringify(r.slice(0, RECENT_MAX))); } catch (e) { /* 忽略 */ }
+  }
+  /** 统一插入格式：内置组走短标记，档案馆/自定义走 stick 长标记 */
+  function stickerMark(g, n) {
+    if (g === 'stick') return '[stick:' + n + ']';
+    return '[' + g + ':' + n + ']';
+  }
+  const stPanel = document.getElementById('stpanel');
+  const stTabs = document.getElementById('stptabs');
+  const stGrid = document.getElementById('stgrid');
+  const faceBtn = document.getElementById('facebtn');
+  function libItems(tab) {
+    if (tab === 'recent') return recentList();
+    if (tab === 'fish') return Object.keys(FISH_ST).map(n => ({ g: 'fish', n: n }));
+    if (tab === 'bean') return Object.keys(BEAN).map(n => ({ g: 'bean', n: n }));
+    if (tab === 'maid') return ['1'].concat((S.customStickers || []).map((u, i) => 'c' + i)).map(n => ({ g: 'maid', n: n }));
+    if (tab === 'archive') return ARCHIVE.map(a => ({ g: 'stick', n: 'archive:' + a.id, name: a.name }));
+    if (tab === 'custom') return (S.customStickers || []).map((u, i) => ({ g: 'stick', n: 'custom:' + i }));
+    return [];
+  }
+  function renderPanel() {
+    // tabs
+    stTabs.textContent = '';
+    const TABS = [['recent', '最近'], ['fish', '大肥鱼'], ['bean', '黄豆'], ['maid', '女仆'], ['archive', '表情包'], ['custom', '我的']];
+    for (const [id, label] of TABS) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (stickerTab === id) b.classList.add('on');
+      b.addEventListener('click', () => { stickerTab = id; delMode = false; renderPanel(); });
+      stTabs.appendChild(b);
+    }
+    const sp = document.createElement('span'); sp.className = 'sp'; stTabs.appendChild(sp);
+    if (stickerTab === 'custom') {
+      // 微信式：我的 tab 提供 上传 + 删除管理
+      const del = document.createElement('button'); del.className = 'mini' + (delMode ? ' danger' : ''); del.textContent = delMode ? '完成' : '管理';
+      del.addEventListener('click', () => { delMode = !delMode; renderPanel(); });
+      const add = document.createElement('button'); add.className = 'mini'; add.textContent = '➕';
+      add.title = '添加自定义表情（图片/GIF，存本浏览器）';
+      add.addEventListener('click', () => pickCustomImage());
+      stTabs.appendChild(del); stTabs.appendChild(add);
+    }
+    // grid
+    stGrid.textContent = '';
+    const items = libItems(stickerTab);
+    if (!items.length) {
+      const e = document.createElement('div'); e.className = 'empty';
+      e.textContent = stickerTab === 'recent' ? '还没有最近使用的表情' : stickerTab === 'custom' ? '还没有自定义表情，点右上 ➕ 添加' : '空';
+      stGrid.appendChild(e);
+    }
+    for (const it of items) {
+      const cell = document.createElement('div'); cell.className = 'cell';
+      const el = stickerEl(it.g, it.n);
+      if (el) {
+        cell.title = it.name ? (it.name + '（' + stickerMark(it.g, it.n) + '）') : stickerMark(it.g, it.n);
+        cell.appendChild(el);
+      } else {
+        cell.textContent = '?';
+        cell.title = '失效表情';
+      }
+      if (stickerTab === 'archive' && el) {
+        const img = document.createElement('img'); img.className = 'arc'; img.alt = '';
+        img.src = 'st-' + it.n.slice('archive:'.length) + '.webp';
+        cell.textContent = ''; cell.appendChild(img);
+        cell.title = (it.name || '') + '（' + stickerMark(it.g, it.n) + '）';
+      }
+      if (delMode) cell.classList.add('del-mode');
+      cell.addEventListener('click', () => {
+        if (delMode) { // 微信式删除（仅「我的」自定义）
+          const idx = Number(String(it.n).split(':')[1]);
+          if (!isNaN(idx) && (S.customStickers || [])[idx] !== undefined) {
+            S.customStickers.splice(idx, 1); save(); renderPanel(); sys('已删除该自定义表情');
+          }
+          return;
+        }
+        input.value += stickerMark(it.g, it.n);
+        pushRecent(it.g, it.n);
+        input.focus();
+      });
+      stGrid.appendChild(cell);
+    }
+    if (stickerTab === 'custom') { // ➕ 添加格
+      const add = document.createElement('div'); add.className = 'cell addcell'; add.textContent = '＋'; add.title = '添加图片/GIF';
+      add.addEventListener('click', () => pickCustomImage());
+      stGrid.appendChild(add);
+    }
+  }
+  function pickCustomImage() {
+    const fu = document.createElement('input'); fu.type = 'file'; fu.accept = 'image/*'; fu.style.display = 'none';
+    fu.addEventListener('change', () => {
+      const f = fu.files && fu.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { sys('图片超 2MB，先压缩一下'); return; }
+      const rd = new FileReader();
+      rd.onload = () => {
+        S.customStickers = (S.customStickers || []).concat([String(rd.result)]);
+        save(); stickerTab = 'custom'; delMode = false; renderPanel(); sys('已添加到「我的」表情');
+      };
+      rd.readAsDataURL(f);
+    });
+    fu.click();
+  }
+  faceBtn.addEventListener('click', () => {
+    const open = stPanel.classList.toggle('open');
+    faceBtn.classList.toggle('on', open);
+    if (open) { delMode = false; renderPanel(); }
+    input.focus();
+  });
+  document.addEventListener('click', e => {
+    if (!stPanel.classList.contains('open')) return;
+    // composedPath：renderPanel 会同步重建 tab/网格 DOM（e.target 被移出树），
+    // contains(e.target) 会误判成面板外点击把面板关掉——用原始事件路径判断
+    const path = e.composedPath ? e.composedPath() : [];
+    if (path.includes(stPanel) || path.includes(faceBtn)) return;
+    stPanel.classList.remove('open'); faceBtn.classList.remove('on');
+  });
+  renderPanel();
+
+  async function doSend() {
+    const text = input.value.trim();
+    if (!text || sendBtn.disabled) return;
+    input.value = '';
+    addMsg('me', text);
+    sendBtn.disabled = true;
+    const typing = document.createElement('div'); typing.className = 'sys'; typing.textContent = '大肥鱼思考中…';
+    msgs.appendChild(typing); msgs.scrollTop = msgs.scrollHeight;
+    try {
+      const r = await chatSend(text);
+      typing.remove();
+      addMsg('pet', r.text, r.via);
+    } catch (e) {
+      typing.remove();
+      addMsg('pet', '出错了：' + e.message, 'error');
+    } finally { sendBtn.disabled = false; input.focus(); }
+  }
+  sendBtn.addEventListener('click', doSend);
+  input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); doSend(); } });
+
+  const greet = PERIOD();
+  addMsg('pet', greet + (S.nickname ? '，' + S.nickname : '') + '！窗口聊天开好了～要点账单就直接问 [fish:wave]', 'local');
+  input.focus();
+})();
+</script>
+</body>
+</html>

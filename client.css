@@ -1,0 +1,138 @@
+/* pet-buddy v2.0.0 — 余额宠物·大肥鱼（全新架构，全部样式以 pb2- 前缀隔离） */
+
+/* ---------- BongoCat 式鼠标/键盘监控图层（女仆/自定义皮肤可用） ---------- */
+.pb2-paws { position: absolute; inset: -14px -10px -2px; pointer-events: none; display: none; z-index: 2;
+  transform: rotate(0deg); transition: transform .08s ease-out; }
+.pb2-pet-wrap.pb2-monitor-on .pb2-paws { display: block; }
+.pb2-paw { position: absolute; bottom: 4px; width: 30px; height: 26px; transition: transform .07s ease-out; }
+.pb2-paw.pb2-paw-l { left: -6px; transform-origin: 70% 90%; }
+.pb2-paw.pb2-paw-r { right: -6px; transform-origin: 30% 90%; }
+.pb2-paw.pb2-down { transform: translateY(5px) rotate(-14deg); }
+.pb2-paw.pb2-paw-r.pb2-down { transform: translateY(5px) rotate(14deg); }
+.pb2-keycap { position: absolute; top: -30px; left: 50%; transform: translateX(-50%) scale(.6); min-width: 30px; height: 26px;
+  padding: 0 7px; border-radius: 6px; background: linear-gradient(180deg, #ffffff, #dfe7fb); border: 1.5px solid #9db4e8;
+  box-shadow: 0 3px 0 #9db4e8, 0 5px 10px rgba(40,60,140,.25); color: #3d519c; font-size: 13px; font-weight: 700;
+  display: none; align-items: center; justify-content: center; font-family: Consolas, "Courier New", monospace; pointer-events: none; z-index: 3; }
+.pb2-keycap.pb2-show { display: flex; animation: pb2-keypop .55s ease-out; }
+@keyframes pb2-keypop { 0% { transform: translateX(-50%) scale(.5); opacity: .4; } 45% { transform: translateX(-50%) scale(1.12); opacity: 1; } 100% { transform: translateX(-50%) scale(1); opacity: 1; } }
+
+/* ---------- 气泡内贴纸 ---------- */
+.pb2-bubble .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
+/* v2.2.0：档案馆/自定义贴纸（[stick:…]） */
+.pb2-bubble .sticker.pb2-st-stick img { width: 96px; max-height: 96px; object-fit: contain; display: block; border-radius: 9px; }
+/* 贴纸=完整格子（含头顶「哦鲸鲸」气泡=官方形象）。公式：bg-size 800% 1100%
+   （整图=元素 8×11 倍 → 每格恰好=元素大小）+ 位移=元素尺寸×格序号（JS 内联）。
+   不可用「原图像素位移」配百分比尺寸（v2.1.0 错位根因），也不可用「原图尺寸+小窗口」
+   （那只是格子左上裁切窗，v2.2.0 初版翻车根因） */
+.pb2-bubble .sticker.pb2-st-fish { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat;
+  background-size: 800% 1100%; }
+.pb2-bubble .sticker svg { width: 52px; height: 52px; display: block; }
+.pb2-bubble .sticker.pb2-st-maid img { max-width: 84px; max-height: 84px; border-radius: 8px; display: block; }
+
+/* ---------- 根容器：不拦截页面交互 ---------- */
+.pb2-root { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; }
+.pb2-root.pb2-hidden-mode .pb2-pet-wrap, .pb2-root.pb2-hidden-mode .pb2-menu { display: none !important; }
+
+/* ---------- 桌宠本体 ---------- */
+.pb2-pet-wrap { position: absolute; pointer-events: auto; width: 96px; height: 104px; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; transition: left .18s ease; }
+.pb2-pet-wrap.pb2-dragging { cursor: grabbing; transition: none; }
+.pb2-pet-wrap:active { cursor: grabbing; }
+
+/* 大肥鱼皮肤：精灵图（官方 v2）
+   渲染方式：viewport 是单格窗口（overflow:hidden）；v2.2.0 起不再对气泡 clip——
+   「哦鲸鲸」头顶气泡是 ds-pet 官方形象的一部分（实际约占格子 60%×30%），裁掉只会留半截；
+   内层 sprite 是整张 1536×2288 大图，用 translate3d+scale 移动——纯 GPU 合成层，
+   不触发重绘，消除动作切换时的闪烁 */
+.pb2-viewport { position: relative; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.pb2-sprite { position: absolute; left: 0; top: 0; width: 1536px; height: 2288px; transform-origin: 0 0;
+  background-repeat: no-repeat; background-size: 1536px 2288px; will-change: transform; backface-visibility: hidden; }
+.pb2-pet-wrap.pb2-skin-fish .pb2-sprite { background-image: url("feiyu-spritesheet.png"); }
+
+/* 静态皮肤（DeepSeek 女仆图 / 自定义上传）：CSS 呼吸 */
+.pb2-img-skin { display: none; width: 100%; height: 100%; object-fit: contain; pointer-events: none;
+  animation: pb2-breathe 3.2s ease-in-out infinite; transform-origin: bottom center; filter: drop-shadow(0 3px 6px rgba(20,20,60,.25)); }
+.pb2-pet-wrap.pb2-skin-img .pb2-img-skin { display: block; }
+.pb2-pet-wrap.pb2-skin-img .pb2-sprite { display: none; }
+@keyframes pb2-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.045, .96); } }
+
+/* 拖动中的轻微放大 */
+.pb2-pet-wrap.pb2-dragging .pb2-sprite, .pb2-pet-wrap.pb2-dragging .pb2-img-skin { filter: drop-shadow(0 6px 12px rgba(20,20,60,.35)); }
+
+/* 隐藏模式的复活小鱼标 */
+.pb2-restore-dot { position: absolute; right: 10px; bottom: 10px; width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(160deg, #b9d2ff, #86a6ef); border: 2px solid #fff; box-shadow: 0 2px 10px rgba(60,80,180,.4);
+  pointer-events: auto; cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 16px; }
+.pb2-root.pb2-hidden-mode .pb2-restore-dot { display: flex; }
+
+/* ---------- 气泡 ---------- */
+.pb2-bubble { position: absolute; max-width: 252px; min-width: 90px; padding: 8px 12px; box-sizing: border-box;
+  border: 2px solid #859bd4; border-radius: 14px; background: #f2f6ff; color: #2c3c66;
+  font-size: 13px; line-height: 1.55; text-align: left; word-break: break-word; pointer-events: auto;
+  box-shadow: 0 3px 14px rgba(16,16,33,.14); z-index: 3; }
+.pb2-bubble::after { content: ''; position: absolute; width: 8px; height: 8px; border: 2px solid #859bd4;
+  border-radius: 50%; background: #f2f6ff; bottom: -13px; left: var(--pb2-tail, 46px); }
+.pb2-bubble.pb2-bubble-input { padding: 6px 8px; }
+.pb2-bubble .pb2-bubble-text { display: block; max-height: 168px; overflow-y: auto; white-space: pre-wrap; }
+.pb2-bubble .pb2-bubble-cost { display: block; margin-top: 4px; font-size: 11px; color: #6b7ba8; }
+.pb2-bubble input.pb2-bubble-in { width: 100%; box-sizing: border-box; border: 1px solid #9db4e8; border-radius: 8px;
+  padding: 5px 8px; font-size: 13px; font-family: inherit; outline: none; }
+.pb2-bubble input.pb2-bubble-in:focus { border-color: #5f7fe8; }
+.pb2-bubble .pb2-bubble-send { margin-top: 6px; display: flex; gap: 6px; justify-content: flex-end; }
+.pb2-bubble button { border: 1px solid #9db4e8; background: #fff; color: #3d519c; border-radius: 7px;
+  padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.pb2-bubble button:hover { background: #e8efff; }
+
+/* ---------- 右键菜单 ---------- */
+.pb2-menu { position: absolute; min-width: 176px; background: #fff; border: 1px solid #d7def2; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(30,40,90,.18); padding: 5px; pointer-events: auto; z-index: 5; }
+.pb2-menu .pb2-mi { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px;
+  font-size: 13px; color: #2c3c66; cursor: pointer; white-space: nowrap; }
+.pb2-menu .pb2-mi:hover { background: #ecf1ff; }
+.pb2-menu .pb2-mi.pb2-danger { color: #b04848; }
+.pb2-menu .pb2-msep { height: 1px; background: #e7ecf8; margin: 4px 6px; }
+
+/* ---------- 弹窗（模型选择/角色设定/日志/聊天设置 通用） ---------- */
+.pb2-mask { position: absolute; inset: 0; background: rgba(24,28,48,.32); pointer-events: auto; z-index: 8;
+  display: flex; align-items: center; justify-content: center; }
+.pb2-dialog { width: min(520px, calc(100vw - 48px)); max-height: min(72vh, 560px); background: #fff; border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(20,26,60,.3); display: flex; flex-direction: column; overflow: hidden; }
+.pb2-dtitle { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+  border-bottom: 1px solid #edf0f9; font-size: 14px; font-weight: 650; color: #243055; }
+.pb2-dtitle .pb2-dclose { border: 0; background: none; font-size: 17px; cursor: pointer; color: #8892b0; line-height: 1; }
+.pb2-dtitle .pb2-dclose:hover { color: #43507c; }
+.pb2-dbody { padding: 12px 16px; overflow-y: auto; font-size: 13px; color: #333c58; line-height: 1.6; }
+.pb2-dbody h4 { margin: 10px 0 6px; font-size: 12.5px; color: #55628e; }
+.pb2-dbody label { display: block; margin: 8px 0 3px; font-size: 12px; color: #55628e; }
+.pb2-dbody input[type=text], .pb2-dbody input[type=number], .pb2-dbody input[type=password], .pb2-dbody select, .pb2-dbody textarea {
+  width: 100%; box-sizing: border-box; border: 1px solid #c9d3ec; border-radius: 8px; padding: 7px 9px;
+  font-size: 13px; font-family: inherit; outline: none; background: #fbfcff; color: #2c3c66; }
+.pb2-dbody input:focus, .pb2-dbody select:focus, .pb2-dbody textarea:focus { border-color: #5f7fe8; }
+.pb2-dbody textarea { resize: vertical; min-height: 108px; }
+.pb2-dfoot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px 14px; }
+.pb2-dfoot button { border: 1px solid #c9d3ec; background: #fff; color: #3d519c; border-radius: 8px;
+  padding: 6px 16px; font-size: 13px; cursor: pointer; font-family: inherit; }
+.pb2-dfoot button.pb2-primary { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+.pb2-dfoot button.pb2-primary:hover { background: #3c56c2; }
+.pb2-dfoot button:hover { background: #eef2fd; }
+
+/* 模型选择器卡片 */
+.pb2-model-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.pb2-model-card { display: flex; align-items: center; gap: 12px; border: 1.5px solid #dfe6f7; border-radius: 10px;
+  padding: 9px 12px; cursor: pointer; background: #fbfcff; }
+.pb2-model-card:hover { border-color: #9db4e8; }
+.pb2-model-card.pb2-selected { border-color: #4a68d8; background: #eff3ff; }
+.pb2-model-thumb { width: 52px; height: 52px; border-radius: 9px; background: #eef1fb center/contain no-repeat; flex: none; }
+.pb2-model-name { font-size: 13px; font-weight: 600; color: #2c3c66; }
+.pb2-model-desc { font-size: 11.5px; color: #7c88ad; margin-top: 2px; }
+.pb2-model-del { margin-left: auto; border: 0; background: none; color: #b04848; cursor: pointer; font-size: 12px; flex: none; }
+
+/* 日志查看器 */
+.pb2-loglist { font-family: Consolas, "Courier New", monospace; font-size: 11.5px; line-height: 1.5; }
+.pb2-logrow { padding: 5px 8px; border-bottom: 1px dashed #e7ecf8; white-space: pre-wrap; word-break: break-all; }
+.pb2-logrow .pb2-loghead { color: #7c88ad; font-size: 10.5px; }
+.pb2-logrow.pb2-t-error .pb2-loghead { color: #c25050; font-weight: 650; }
+.pb2-logrow.pb2-t-reasoning .pb2-loghead { color: #8a5fc2; font-weight: 650; }
+
+/* 贴纸/角色设定提示等小字 */
+.pb2-hint { font-size: 11.5px; color: #8a94b8; margin-top: 4px; }
+.pb2-ok { color: #2e8b57; }
