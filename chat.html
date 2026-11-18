@@ -82,19 +82,154 @@
 <script>
 (() => {
   'use strict';
-  /* ===== 设置共享（与桌宠同源 localStorage） ===== */
-  const LS_KEY = 'pb2.settings.v2';
-  const load = () => { try { return Object.assign({ channel: 'assistant', chatProvider: 'company-internal', chatModel: 'deepseek-flash', quota: 0, persona: '', nickname: '', gatewayBase: '', gatewayKey: '', gatewayModel: '', perYuan: 1000 }, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch (e) { return {}; } };
-  let S = load();
-  const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {} };
 
-  /* ===== 精灵常量（ds-pet 官方权威值） ===== */
-  const CLIP = 'polygon(0 38px, 103px 38px, 103px 0, 100% 0, 100% 100%, 0 100%)';
-  const FISH_ST = {
-    wave:  { row: 3, col: 1 }, wave2: { row: 3, col: 3 }, jump: { row: 4, col: 2 },
-    happy: { row: 0, col: 4 }, idle: { row: 0, col: 0 }, hum: { row: 5, col: 0 }, wait: { row: 6, col: 0 },
+  /* pb:core:begin（由 build.mjs 从 src/core/* 注入，勿手改） */
+  /* ======== src/core/config.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 配置（版本与默认值）
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+/** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
+const PB_VERSION = '3.0.0';
+
+/* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
+const LS_KEY = 'pb2.settings.v2';        // 设置
+const LS_LOG = 'pb2.logs.v2';            // 后台日志（思考过程只进这里）
+const LS_PSTATE = 'pb2.personaState.v1'; // 人设全量发送状态（按子对话 sid 分别记录）
+const CHAT_LS_SID = 'pb2.chat.sid.v2';   // 统一子对话 id
+const LS_RECENT = 'pb2.stickerRecent.v1';// 最近使用的贴纸（窗口页表情面板）
+
+/** 可选模型列表（provider + model + 显示名） */
+const CHAT_MODELS = [
+  { provider: 'company-internal', model: 'deepseek-flash',  label: 'DeepSeek（内部通道）' },
+  { provider: 'company-internal', model: 'glm-5.3',         label: 'GLM-5.3（内部通道）' },
+  { provider: 'company-internal', model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（内部通道）' },
+  { provider: 'zhipu',            model: 'glm-4.5-air',     label: 'GLM-4.5-Air（智谱官方）· 需自备余额' },
+  { provider: 'zhipu',            model: 'glm-5.3',         label: 'GLM-5.3（智谱官方）· 需自备余额' },
+  { provider: 'zhipu',            model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（智谱官方）· 需自备余额' },
+];
+
+/** 设置默认值 */
+  const DEFAULTS = {
+    skin: 'fish',            // fish | maid | custom:<id>
+    customSkins: [],         // [{id,name,dataUrl}]
+    hidden: false,
+    pos: null,               // {left,bottom} 视口坐标；null=默认右下角
+    persona: '',             // 空=用默认人设
+    nickname: '',
+    quota: 0,                // 剩余额度（元，自填）；0=未设置
+ perYuan: 1000,           // v2.2.3 积分制：每元积分（后端 1000 分 = 1 元）
+    channel: 'assistant',    // assistant | gateway | mock
+    chatProvider: 'company-internal',
+    chatModel: 'deepseek-flash',
+    gatewayBase: '', gatewayKey: '', gatewayModel: '',
+    size: 96,                // 桌宠显示宽度 px
+    monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
   };
-  /* ===== 黄豆风 SVG 贴纸（内置 10 枚） ===== */
+
+/** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */
+  const DEFAULT_PERSONA =
+    '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的一只圆滚滚大肥鱼桌宠。\n' +
+    '性格：傲娇、搞笑、毒舌但绝对忠诚，是用户最可靠的挚友——嘴上不饶人，心里全是用户。\n' +
+    '铁律：\n' +
+    '1. 每次回复不超过 60 字，短句，可以带一个颜文字或 emoji。\n' +
+    '2. 傲娇不伤人：毒舌只限调侃；用户真难过时立刻变温柔。\n' +
+    '3. 记住用户告诉你的信息（尤其昵称），之后主动使用。\n' +
+    '4. 思考/推理过程绝对不能写进回复，回复里不许出现任何分析、推演痕迹。\n' +
+    '5. 涉及花费/余额时直接报结论数字，不解释算法。';
+
+  /* ======== src/core/util.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 工具
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 小工具 ================= */
+  const $new = (tag, cls, text) => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text; // 防 XSS：动态文本一律 textContent
+    return el;
+  };
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const nowStr = () => { const d = new Date(); const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };
+
+  /* ======== src/core/store.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 设置与日志
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 设置存取（localStorage） ================= */
+  let settings;
+  try { settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
+  catch (e) { settings = Object.assign({}, DEFAULTS); }
+  const saveSettings = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) { /* 忽略 */ } };
+
+
+  /* ================= 后台日志（思考过程只进这里） ================= */
+  let logs = [];
+  try { logs = JSON.parse(localStorage.getItem(LS_LOG) || '[]'); } catch (e) { logs = []; }
+  function log(type, text) {
+    logs.push({ t: nowStr(), type, text: String(text).slice(0, 4000) });
+    if (logs.length > 200) logs = logs.slice(-200);
+    try { localStorage.setItem(LS_LOG, JSON.stringify(logs)); } catch (e) { /* 忽略 */ }
+  }
+  log('info', 'pet-buddy v' + PB_VERSION + ' 初始化');
+
+  /* ======== src/core/stickers.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 贴纸与富文本
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 插件资产目录 =================
+   * JS 内联样式里的相对 URL 以宿主页面为基准（会 404），一律加插件资产目录前缀。
+   * 三种推导，任一生效即可：① 宿主注入的 <script src="/_plugins/<id>/client.js">；
+   * ② 本页面自身路径（聊天窗口 /_plugins/<id>/chat.html）；
+   * ③ 兜底。改名/移植后依然可用，不再硬编码插件 id。 */
+  const ASSET_DIR = (() => {
+    try {
+      const s = document.querySelector('script[src$="/client.js"]');
+      if (s && s.src.indexOf('/_plugins/') > 0) return s.src.replace(/[^/]*$/, '');
+    } catch (e) { /* 回退 */ }
+    try {
+      if (location.pathname.indexOf('/_plugins/') >= 0) return location.pathname.replace(/[^/]*$/, '');
+    } catch (e) { /* 回退 */ }
+    return '/_plugins/pet-buddy/';
+  })();
+
+  // 深海贴纸帧（窗口聊天用；row/col）
+  const FISH_STICKERS = {
+    wave:  { row: 3, col: 1 }, wave2: { row: 3, col: 3 },
+    jump:  { row: 4, col: 2 },
+    happy: { row: 0, col: 4 }, idle: { row: 0, col: 0 },
+    hum:   { row: 5, col: 0 }, wait: { row: 6, col: 0 },
+  };
+
+  /* ---- 表情包贴纸（气泡与聊天共用的白名单渲染，防 XSS） ---- */
   const BEAN = {
     smile: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="20" r="2.6" fill="#5b4a00"/><circle cx="31" cy="20" r="2.6" fill="#5b4a00"/><path d="M15 29q9 8 18 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/>',
     lol: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><path d="M12 18q5-4 10 0M26 18q5-4 10 0" fill="none" stroke="#5b4a00" stroke-width="2.4" stroke-linecap="round"/><path d="M14 27q10 12 20 0z" fill="#5b4a00"/>',
@@ -107,8 +242,6 @@
     star: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><path d="M17 16l1.8 3.8L23 20l-3 2.8.8 4.2-3.8-2.2-3.8 2.2.8-4.2-3-2.8 4.2-.2z" fill="#ff8c00"/><path d="M31 16l1.8 3.8L37 20l-3 2.8.8 4.2-3.8-2.2-3.8 2.2.8-4.2-3-2.8 4.2-.2z" fill="#ff8c00"/><path d="M18 32q6 4 12 0" fill="none" stroke="#5b4a00" stroke-width="2.2" stroke-linecap="round"/>',
     think: '<circle cx="24" cy="24" r="20" fill="#ffd93b" stroke="#8a6d00" stroke-width="2"/><circle cx="17" cy="22" r="2.4" fill="#5b4a00"/><circle cx="31" cy="22" r="2.4" fill="#5b4a00"/><path d="M16 31h16" stroke="#5b4a00" stroke-width="2.2" stroke-linecap="round"/><circle cx="38" cy="9" r="3.4" fill="#fff" stroke="#8a94b8"/><circle cx="43" cy="4" r="2.2" fill="#fff" stroke="#8a94b8"/>',
   };
-
-  /* ===== 贴纸渲染（白名单 + 元素构建，防 XSS） ===== */
   // 模型输出标记的宽容别名：大小写/空格/中文括号/常见同义词都能映射到白名单项
   const STICKER_ALIAS = {
     wave: 'wave', wave2: 'wave2', waves: 'wave', hello: 'wave', hi: 'wave', 挥手: 'wave', 打招呼: 'wave',
@@ -129,10 +262,11 @@
     think: 'think', 思考: 'think', 想想: 'think', 疑问: 'think',
   };
   // 匹配宽容：大小写不限、标记内允许空格、支持 [x] / 【x】 / ［x］ 三种括号；
-  // stick：规范形 [stick:archive:xx]/[stick:custom:N] + 兜底形 [stick:xx]（映射失败则忽略）
+  // stick 长标记：规范形 [stick:archive:xx]/[stick:custom:N]，兜底形 [stick:xx]（缺组名，映射失败则忽略）
   const ST_RE = /[\[【［]\s*(fish|bean|maid|鱼|豆|仆)\s*[:：]\s*([a-zA-Z0-9_\u4e00-\u9fa5]+?)\s*[\]】］]|[\[【［]\s*stick\s*[:：]\s*(?:archive\s*[:：]\s*)?([a-zA-Z0-9_\u4e00-\u9fa5\-]{1,80}?)\s*[\]】］]|[\[【［]\s*stick\s*[:：]\s*custom\s*[:：]\s*(\d{1,3})\s*[\]】］]/gi;
   const GROUP_ALIAS = { fish: 'fish', bean: 'bean', maid: 'maid', '鱼': 'fish', '豆': 'bean', '仆': 'maid' };
-  // archive 组语义中文键 → 文件 id（与 client.js 同一份映射）
+  // archive 组贴纸（16 张档案馆 CC BY-NC-SA + 24 张微信 wxgf 裁切）：
+  // 语义中文名 → 文件 id（模型输出中文语义键最好写；完整 id/短名/wx 数字简称同样兼容）
   const ARCHIVE_ALIAS = {
     // 语义短名（与 prompt 教学短语双向一致——模型照教学输出「抱头」等也必须可解析）
     '拒绝': 'deepseek-bao-bi-jujue', '睡觉': 'deepseek-bao-jing-shui-jiao', '吃瓜': 'deepseek-bao-xigua',
@@ -147,16 +281,41 @@
     '窗边': 'deepseek-bao-xi-chuang-bian', '抱碗': 'chatgpt-renwu-jieshao', '扫帚': 'deepseek-baozhe-saozhou',
     '插手': 'deepseek-chashou-shengqi', '打游戏': 'deepseek-bao-shoubing',
   };
+  // 档案表（id + 中文名）：表情面板与解析共用同一份真相源，ARCHIVE_IDS 由它派生
+  const ARCHIVE = [
+    { id: 'deepseek-bao-bi-jujue',    name: '拒绝：需求太离谱' },
+    { id: 'deepseek-bao-jing-shui-jiao', name: '抱着小鲸睡觉' },
+    { id: 'deepseek-bao-xigua',       name: '抱西瓜笑开花' },
+    { id: 'deepseek-bao-tou-wei-qu',  name: '抱头委屈' },
+    { id: 'deepseek-baozhe-weiba',    name: '抱尾巴可爱值拉满' },
+    { id: 'deepseek-baozhe-beizi-kan-token', name: '盯着token罐吓到宕机' },
+    { id: 'deepseek-bao-shoubing',    name: '这把再输尾巴挂机' },
+    { id: 'deepseek-bao-glm-wanou-bash', name: '抱玩偶流口水CPU烧糊' },
+    { id: 'deepseek-bao-zhe-pangyu',  name: '托脸抱胖鱼' },
+    { id: 'deepseek-baobi-zuo-zai-pingguan-jian', name: '盘点库存盘到无语' },
+    { id: 'deepseek-bei-baozhu-jingxia', name: '被抱到脸红CPU红温' },
+    { id: 'deepseek-bao-xi-chuang-bian', name: '抱膝坐窗边眨眼' },
+    { id: 'chatgpt-renwu-jieshao', name: '介绍会上抱碗开吃' },
+    { id: 'deepseek-bixin',           name: '比心' },
+    { id: 'deepseek-baozhe-saozhou',  name: '抱扫帚斜眼敷衍' },
+    { id: 'deepseek-chashou-shengqi', name: '插手生气' },
+    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
+    ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
+  ];
+  const ARCHIVE_IDS = ARCHIVE.map(a => a.id);
   function archiveResolve(id) {
-    if (ARCHIVE.find(a => a.id === id)) return id;
-    if (ARCHIVE_ALIAS[id]) return ARCHIVE_ALIAS[id];
-    const mWx = id.match(/^wx[-_]?(\d{1,2})$/i);
+    if (ARCHIVE_IDS.indexOf(id) >= 0) return id;                    // 完整 id / wx-NN
+    if (ARCHIVE_ALIAS[id]) return ARCHIVE_ALIAS[id];                // 中文语义键
+    const mWx = id.match(/^wx[-_]?(\d{1,2})$/i);                    // wx7 / wx_07
     if (mWx) {
       const cid = 'wx-' + mWx[1].padStart(2, '0');
-      if (ARCHIVE.find(a => a.id === cid)) return cid;
+      if (ARCHIVE_IDS.indexOf(cid) >= 0) return cid;
     }
-    const cid2 = 'deepseek-' + id;
-    if (ARCHIVE.find(a => a.id === cid2)) return cid2;
+    const mShort = id.match(/(?:deepseek-)?(.+)/);                  // 短名（去掉 deepseek- 前缀的 id 尾段）
+    if (mShort) {
+      const cid = 'deepseek-' + mShort[1];
+      if (ARCHIVE_IDS.indexOf(cid) >= 0) return cid;
+    }
     return null;
   }
   function normSticker(group, name) {
@@ -166,56 +325,43 @@
   }
   function stickerEl(g, n) {
     if (g === 'fish') {
-      const f = FISH_ST[n];
+      const f = FISH_STICKERS[n];
       if (!f) return null;
-      const el = document.createElement('span');
-      el.className = 'sticker fish-st';
+      const el = $new('span', 'sticker pb2-st-fish fish-st');   // 双类名：桌宠半边用 pb2-st-*，窗口页用 fish-st
       // bg-size 800% 1100%：每格恰好=元素大小（86×93），位移=元素尺寸×格序号
       el.style.backgroundPosition = (-86 * f.col) + 'px ' + (-93 * f.row) + 'px';
-      el.title = 'fish:' + n;
       return el;
     }
     if (g === 'bean') {
       if (!BEAN[n]) return null;
-      const el = document.createElement('span');
-      el.className = 'sticker bean-st';
-      el.title = 'bean:' + n;
-      el.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true">' + BEAN[n] + '</svg>'; // SVG 内置字典，非用户输入
+      const el = $new('span', 'sticker bean-st');
+      el.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true">' + BEAN[n] + '</svg>'; // 内置字典，非用户输入
       return el;
     }
     if (g === 'maid') {
-      const el = document.createElement('span');
-      el.className = 'sticker maid-st';
-      el.title = 'maid:' + n;
+      const el = $new('span', 'sticker pb2-st-maid maid-st');
       if (n === '1') {
         const img = document.createElement('img');
-        img.src = 'pet-deepseek.webp'; img.alt = 'maid';
+        img.src = ASSET_DIR + 'pet-deepseek.webp'; img.alt = 'maid';
         el.appendChild(img);
         return el;
-      }
-      if (n.charAt(0) === 'c') {
-        const idx = Number(n.slice(1));
-        const arr = S.customStickers || [];
-        if (arr[idx]) { const img = document.createElement('img'); img.src = arr[idx]; img.alt = 'custom'; el.appendChild(img); return el; }
       }
       return null;
     }
     if (g === 'stick') {
-      // n 形如 'archive:<id或语义键或wxN>' 或 'custom:<N>'
+      // n 形如 'archive:<id或语义键或wxN>' 或 'custom:<N>'（与窗口聊天同一命名空间）
       const ci = n.indexOf(':');
       if (ci < 0) return null;
       const kind = n.slice(0, ci), id = n.slice(ci + 1);
-      const el = document.createElement('span');
-      el.className = 'sticker stick-st';
-      el.title = 'stick:' + n;
+      const el = $new('span', 'sticker pb2-st-stick stick-st');
       const img = document.createElement('img');
       if (kind === 'archive') {
         const rid = archiveResolve(id);
         if (!rid) return null;
-        img.src = 'st-' + rid + '.webp';
+        img.src = ASSET_DIR + 'st-' + rid + '.webp';
       } else if (kind === 'custom') {
         const idx = Number(id);
-        const arr = S.customStickers || [];
+        const arr = (JSON.parse(localStorage.getItem('pb2.settings.v2') || '{}').customStickers) || [];
         if (isNaN(idx) || !arr[idx]) return null;
         img.src = arr[idx];
       } else {
@@ -227,11 +373,11 @@
     }
     return null;
   }
-  /** 富文本渲染：普通文本 textNode + 白名单贴纸元素（防 XSS 主路径）。
-   *  v2.2.2 兜底：标记匹配但白名单查无 → 忽略不显示，不出破碎标记 */
+  /** 富文本渲染：文本走 textNode，贴纸标记走白名单元素（防 XSS 主路径）。
+   *  v2.2.2 兜底：标记匹配但白名单查无此项（模型编的名字/缺组名的 [stick:xx]）→ 忽略不显示，不出破碎标记 */
   function renderRich(container, text) {
     container.textContent = '';
-    let last = 0; let m;
+    let last = 0, m;
     ST_RE.lastIndex = 0;
     while ((m = ST_RE.exec(String(text)))) {
       if (m.index > last) container.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -242,245 +388,472 @@
       } else if (m[4] !== undefined) {
         el = stickerEl('stick', 'custom:' + m[4]);
       } else if (m[3] !== undefined || m[2] !== undefined) {
+        // 规范形 [stick:archive:xx] 或兜底形 [stick:xx]：都当 archive 语义/短名解析
         el = stickerEl('stick', 'archive:' + (m[3] !== undefined ? m[3] : m[2]));
       }
-      if (el) container.appendChild(el); // 白名单查无 → 忽略标记
+      if (el) container.appendChild(el); // null = 白名单查无 → 忽略标记
       last = m.index + m[0].length;
     }
     if (last < String(text).length) container.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  /* ===== 余额（与桌宠同口径） ===== */
+  /* ======== src/core/balance.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 余额与积分
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 余额引擎 ================= */
+  // 价目（元/百万 token）：[谷, 峰]。prompt 无缓存命中细分，按未命中价保守估算。
+  const PRICES = {
+    flash: { hit: [0.02, 0.04], miss: [1, 2], out: [4, 8] },
+    pro:   { hit: [0.15, 0.3],  miss: [4.5, 9], out: [13.5, 27] },
+  };
+  // 全天谷价的法定假日（2026 年公开放假安排）
+  const HOLIDAY_VALLEY = new Set([
+    '2026-01-01','2026-01-02','2026-01-03',
+    '2026-02-15','2026-02-16','2026-02-17','2026-02-18','2026-02-19','2026-02-20','2026-02-21','2026-02-22','2026-02-23',
+    '2026-04-04','2026-04-05','2026-04-06',
+    '2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05',
+    '2026-06-19','2026-06-20','2026-06-21',
+    '2026-09-25','2026-09-26','2026-09-27',
+    '2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05','2026-10-06','2026-10-07',
+  ]);
   const pad2 = n => String(n).padStart(2, '0');
-  const localDateStr = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
-  const PRICES = { flash: { miss: [1, 2], out: [4, 8] }, pro: { miss: [4.5, 9], out: [13.5, 27] } };
-  const HOLIDAY = new Set(['2026-01-01','2026-01-02','2026-01-03','2026-02-15','2026-02-16','2026-02-17','2026-02-18','2026-02-19','2026-02-20','2026-02-21','2026-02-22','2026-02-23','2026-04-04','2026-04-05','2026-04-06','2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05','2026-06-19','2026-06-20','2026-06-21','2026-09-25','2026-09-26','2026-09-27','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05','2026-10-06','2026-10-07']);
-  function isValley(d) { d = d || new Date(); if (HOLIDAY.has(localDateStr(d))) return true; const m = d.getHours() * 60 + d.getMinutes(); return m >= 30 && m < 510; }
-  const fmtMoney = n => n >= 100 ? '¥' + n.toFixed(1) : n >= 1 ? '¥' + n.toFixed(2) : '¥' + n.toFixed(4);
-  /* ===== v2.2.3 积分制（1000 分 = 1 元）：与桌宠同语义 ===== */
-  const perYuanCredits = () => Number(S.perYuan) > 0 ? Number(S.perYuan) : 1000;
-  const fmtCredits = n => Math.round(n).toLocaleString('en-US');
-  let CREDITS_CACHE = { at: 0, data: null };
-  async function fetchCredits() {
-    if (CREDITS_CACHE.data && Date.now() - CREDITS_CACHE.at < 120000) return CREDITS_CACHE.data;
-    const base = (S.gatewayBase || '').replace(/\/+$/, '');
-    const key = S.gatewayKey || '';
-    const out = { ok: false };
-    if (base && key) {
-      try {
-        const hdr = { 'Authorization': 'Bearer ' + key };
-        const end = localDateStr(new Date(Date.now() + 864e5));
-        const r1 = await fetch(base + '/v1/dashboard/billing/subscription', { headers: hdr });
-        if (!r1.ok) throw new Error('HTTP ' + r1.status);
-        const sub = await r1.json();
-        let usedUsd = 0;
-        try {
-          const r2 = await fetch(base + '/v1/dashboard/billing/usage?start_date=2020-01-01&end_date=' + end, { headers: hdr });
-          if (r2.ok) usedUsd = Number((await r2.json()).total_usage || 0) / 100;
-        } catch (e2) { /* 可选 */ }
-        const limit = Number(sub.system_hard_limit_usd ?? sub.hard_limit_usd ?? 0);
-        const unlimited = limit >= 1e8;
-        out.ok = true; out.unlimited = unlimited;
-        out.remainCredits = unlimited ? null : Math.max(0, Math.round((limit - usedUsd) * perYuanCredits()));
-        out.usedCredits = Math.round(usedUsd * perYuanCredits());
-      } catch (e) { out.reason = e.message; }
-    } else {
-      out.reason = '未配置网关令牌';
-    }
-    CREDITS_CACHE = { at: Date.now(), data: out };
-    return out;
+  function localDateStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  // 谷价：北京时间 00:30–08:30（对应官方错峰时段）或法定假日全天
+  function isValley(now) {
+    const d = now || new Date();
+    if (HOLIDAY_VALLEY.has(localDateStr(d))) return true;
+    const mins = d.getHours() * 60 + d.getMinutes();
+    return mins >= 30 && mins < 510; // 00:30 ~ 08:30
   }
-  async function todaySpend() {
-    const d = new Date(); const valley = isValley(d);
-    const out = { date: localDateStr(d), prompt: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, valley, apiOk: false };
+  function priceTier(model) {
+    const m = (model || '').toLowerCase();
+    return m.indexOf('pro') >= 0 ? PRICES.pro : PRICES.flash;
+  }
+
+  let balCache = { at: 0, data: null };
+  let gatewayInfo = { baseURL: '', at: 0 };
+  async function gatewayBase() {
+    if (gatewayInfo.at && Date.now() - gatewayInfo.at < 300000) return gatewayInfo.baseURL;
+    try {
+      const r = await fetch('/api/config', { headers: { 'Accept': 'application/json' } });
+      if (r.ok) { const j = await r.json(); gatewayInfo = { baseURL: String(j.baseURL || ''), at: Date.now() }; }
+    } catch (e) { /* 离线 */ }
+    return gatewayInfo.baseURL;
+  }
+  async function todaySpend(force) {
+    if (!force && balCache.data && Date.now() - balCache.at < 60000) return balCache.data;
+    const valley = isValley(new Date());
+    const out = { date: localDateStr(new Date()), prompt: 0, output: 0, calls: 0, cost: 0, costCredits: 0, credits: null, valley, sessions: 0, apiOk: false, gateway: '' };
     try {
       const r = await fetch('/api/sessions', { headers: { 'Accept': 'application/json' } });
       if (r.ok) {
-        const j = await r.json(); const list = (j && j.sessions) || j || [];
+        const j = await r.json();
+        const list = (j && j.sessions) || j || [];
         for (const s of list) {
-          if (String(s.updatedAt || '').slice(0, 10) !== out.date) continue;
-          const p = Number(s.usagePrompt) || 0, o = Number(s.usageOutput) || 0;
-          out.prompt += p; out.output += o; out.calls += Number(s.usageCalls) || 0;
-          const tier = (String(s.model || '').toLowerCase().indexOf('pro') >= 0) ? PRICES.pro : PRICES.flash;
+          const day = String(s.updatedAt || s.createdAt || '').slice(0, 10);
+          if (day !== out.date) continue;
+          const p = Number(s.usagePrompt) || 0, o = Number(s.usageOutput) || 0, c = Number(s.usageCalls) || 0;
+          out.prompt += p; out.output += o; out.calls += c; out.sessions++;
+          const tier = priceTier(s.model);
+          // prompt 按未命中价（无命中细分，保守）；输出按输出价
           out.cost += (p / 1e6) * tier.miss[valley ? 0 : 1] + (o / 1e6) * tier.out[valley ? 0 : 1];
         }
         out.apiOk = true;
       }
-    } catch (e) { /* 离线 */ }
+    } catch (e) { log('error', '余额取数失败: ' + e.message); }
+    out.gateway = await gatewayBase();
     out.cost = Math.round(out.cost * 10000) / 10000;
+    // v2.2.3 积分制：今日估算折积分 + 网关真实积分（并行）
     out.costCredits = Math.round(out.cost * perYuanCredits());
-    out.credits = await fetchCredits();
+    out.credits = await fetchCredits(force);
+    balCache = { at: Date.now(), data: out };
+    return out;
+  }
+  function fmtMoney(n) {
+    if (n >= 100) return '¥' + n.toFixed(1);
+    if (n >= 1) return '¥' + n.toFixed(2);
+    return '¥' + n.toFixed(4);
+  }
+
+  /* ================= v2.2.3 积分制（1000 分 = 1 元） =================
+   * 后端（公司网关）按积分计费：1000 分 = 1 元。真实数据源（OpenAI 兼容 billing）：
+   *   GET {网关}/v1/dashboard/billing/subscription → system_hard_limit_usd（账户额度，≥1e8 视为不限额）
+   *   GET {网关}/v1/dashboard/billing/usage → total_usage（美分，累计；日期参数被网关忽略）
+   * 积分 = 美元 × 每元积分（默认 1000，可在聊天设置调整）。
+   * 需在聊天设置配置网关地址+令牌；未配置时退回本地 token 估算并折成积分显示。 */
+  let CREDITS_CACHE = { at: 0, data: null };
+  function perYuanCredits() { return Number(settings.perYuan) > 0 ? Number(settings.perYuan) : 1000; }
+  function fmtCredits(n) { return Math.round(n).toLocaleString('en-US'); }
+  async function fetchCredits(force) {
+    if (!force && CREDITS_CACHE.data && Date.now() - CREDITS_CACHE.at < 120000) return CREDITS_CACHE.data;
+    const base = (settings.gatewayBase || (await gatewayBase())).replace(/\/+$/, '');
+    const key = settings.gatewayKey || '';
+    const out = { ok: false };
+    if (!base || !key) {
+      out.reason = '未配置网关令牌';
+    } else {
+      try {
+        const hdr = { 'Authorization': 'Bearer ' + key };
+        const end = localDateStr(new Date(Date.now() + 864e5));
+        const r1 = await fetch(base + '/v1/dashboard/billing/subscription', { headers: hdr });
+        if (!r1.ok) throw new Error('subscription HTTP ' + r1.status);
+        const sub = await r1.json();
+        let usedUsd = 0;
+        try {
+          const r2 = await fetch(base + '/v1/dashboard/billing/usage?start_date=2020-01-01&end_date=' + end, { headers: hdr });
+          if (r2.ok) {
+            const use = await r2.json();
+            usedUsd = Number(use.total_usage || 0) / 100; // 美分 → 美元
+          }
+        } catch (e2) { /* usage 可选 */ }
+        const limit = Number(sub.system_hard_limit_usd ?? sub.hard_limit_usd ?? 0);
+        const unlimited = limit >= 1e8;
+        out.ok = true;
+        out.unlimited = unlimited;
+        out.remainCredits = unlimited ? null : Math.max(0, Math.round((limit - usedUsd) * perYuanCredits()));
+        out.usedCredits = Math.round(usedUsd * perYuanCredits());
+        out.perYuan = perYuanCredits();
+      } catch (e) {
+        out.reason = e.message;
+        log('error', '积分读取失败: ' + e.message);
+      }
+    }
+    CREDITS_CACHE = { at: Date.now(), data: out };
     return out;
   }
 
-  /* ===== 聊天通道（与桌宠同语义：assistant 统一子对话 / 网关 / 模拟） ===== */
-  const CHAT_LS_SID = 'pb2.chat.sid.v2';
-  const MODELS = [
-    ['company-internal|deepseek-flash', 'DeepSeek（内部通道）'],
-    ['company-internal|glm-5.3', 'GLM-5.3（内部通道）'],
-    ['company-internal|glm-5.3-flash', 'GLM-5.3-Flash（内部通道）'],
-    ['zhipu|glm-4.5-air', 'GLM-4.5-Air（智谱官方）· 需自备余额'],
-    ['zhipu|glm-5.3', 'GLM-5.3（智谱官方）· 需自备余额'],
-    ['zhipu|glm-5.3-flash', 'GLM-5.3-Flash（智谱官方）· 需自备余额'],
-  ];
-  const PERIOD = () => { const h = new Date().getHours(); return h < 5 ? '深夜' : h < 11 ? '早上' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜'; };
-  /* v2.1.3：人设不每轮全量——full=true（子对话首条或人设/昵称变化后首条）才带设定+资料+标记说明 */
-  function buildPrompt(userText, balBlock, full) {
+  /* ======== src/core/chat.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 聊天引擎（三通道）
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 聊天引擎（三通道） ================= */
+  // 14 轮短期记忆（网关/模拟通道使用；assistant 通道由子对话天然持有）
+  const shortMemory = [];
+
+  function periodGreet() {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 11) return '早上好';
+    if (h < 14) return '中午好';
+    if (h < 18) return '下午好';
+    if (h < 23) return '晚上好';
+    return '夜深了';
+  }
+
+  /** 组装发给模型的文本。
+   * v2.1.3 起：人设不再每轮全量——full=true（子对话首条或人设/昵称变化后的第一条）才带
+   * 「桌宠设定+用户资料」；之后正常聊天只发用户消息本身 + 可选余额数据，人设靠子对话历史。 */
+  function buildPrompt(userText, balanceBlock, full) {
     const parts = [];
     if (full !== false) {
-      const persona = (S.persona || '').trim() ||
-        '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的大肥鱼桌宠。傲娇搞笑毒舌但忠诚的挚友。每次回复不超过60字；傲娇不伤人；记住用户的信息；思考过程绝不写进回复；花费/余额直接报数字。';
+      const persona = (settings.persona || '').trim() || DEFAULT_PERSONA;
       parts.push('【桌宠设定·系统级，始终遵守】\n' + persona);
-      const prof = ['当前时段：' + PERIOD()];
-      if (S.nickname) prof.push('用户昵称：' + S.nickname);
-      parts.push('【用户资料】' + prof.join('；'));
-      parts.push('【表情包标记】回复中可以插贴纸（会渲染成图片），写法与可用贴纸：' +
-        '① [stick:archive:中文名] —— archive 组（蓝色大肥鱼表情包，你的主力表情，优先使用这组）：' +
+      const profile = ['当前时段：' + periodGreet()];
+      if (settings.nickname) profile.push('用户昵称：' + settings.nickname);
+      if (profile.length) parts.push('【用户资料】' + profile.join('；'));
+      // 与窗口化聊天一致的贴纸标记说明（v2.2.2：archive 组全量教学+优先使用指示）
+      const ARCH_PROMPT =
         '抱臂拒绝=拒绝、抱着小鲸=睡觉、抱西瓜=吃瓜、抱头=委屈、抱尾巴=卖萌、token罐=token、' +
         '打游戏=游戏、流口水=流口水、抱胖鱼=抱鱼、坐罐堆=无语、被抱吓到=吓到、窗边=发呆、' +
-        '抱碗=开吃、比心=比心、扫帚=敷衍、插手=生气；另有 wx1～wx24 大肥鱼日常系列。');
-      parts.push('② 备选小表情：' +
-        Object.keys(FISH_ST).map(k => '[fish:' + k + ']').join(' ') + '、' +
+        '抱碗=开吃、比心=比心、扫帚=敷衍、插手=生气；另有 wx1～wx24 大肥鱼日常系列。';
+      parts.push('【表情包标记】回复中可以插贴纸（会渲染成图片），写法与可用贴纸：' +
+        '① [stick:archive:中文名] —— archive 组（蓝色大肥鱼表情包，你的主力表情，优先使用这组）：' + ARCH_PROMPT + '\n' +
+        '② 备选小表情：' +
+        Object.keys(FISH_STICKERS).map(k => '[fish:' + k + ']').join(' ') + '、' +
         Object.keys(BEAN).map(k => '[bean:' + k + ']').join(' ') + '、[maid:1]。' +
         '格式必须严格用半角方括号加英文冒号（如 [stick:archive:比心] 或 [bean:smile]），不要写成中文括号或加多余空格；' +
         '适度使用，一条回复最多 1-2 个。');
     }
-    if (balBlock) parts.push(balBlock);
+    if (balanceBlock) parts.push(balanceBlock);
     parts.push('【用户说】' + userText);
     return parts.join('\n\n');
   }
-  /* v2.1.3 人设指纹：与 client.js 共用同一 localStorage 状态（按子对话 sid 独立） */
-  const LS_PSTATE = 'pb2.personaState.v1';
-  function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) { h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0; } return h.toString(36); }
-  // v2.2.2：指纹含 PROMPT_VER——贴纸教学等首轮说明改版后，老子对话自动全量重发一次
+
+  /* ---- v2.1.3 人设指纹：按子对话分别跟踪「该人设已全量发送」状态（LS_PSTATE 见 core/config.js） ----
+   * 指纹 = hash(生效人设 + 昵称)；时段是易变信息不进指纹。
+   * 编辑人设/昵称变化 → 指纹变 → 下一条自动全量重发；换模型=新子对话=天然首条。 */
+  // v2.2.2：人设指纹加入 PROMPT_VER——首轮人设段落（贴纸教学等）改版后，
+  // 老子对话也会自动全量重发一次新说明，无需用户手动操作
   const PROMPT_VER = '20261026-stick-archive';
+  function hashStr(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) { h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0; }
+    return h.toString(36);
+  }
   function personaFingerprint() {
-    const persona = (S.persona || '').trim() ||
-      '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的大肥鱼桌宠。傲娇搞笑毒舌但忠诚的挚友。每次回复不超过60字；傲娇不伤人；记住用户的信息；思考过程绝不写进回复；花费/余额直接报数字。';
-    return hashStr(persona + '\u0001' + (S.nickname || '') + '\u0001' + PROMPT_VER);
+    const persona = (settings.persona || '').trim() || DEFAULT_PERSONA;
+    return hashStr(persona + '\u0001' + (settings.nickname || '') + '\u0001' + PROMPT_VER);
   }
   function loadPState() { try { return JSON.parse(localStorage.getItem(LS_PSTATE) || '{}') || {}; } catch (e) { return {}; } }
-  function savePState(st) { try { localStorage.setItem(LS_PSTATE, JSON.stringify(st)); } catch (e) { /* 忽略 */ } }
-  function needPersonaFull(key) {
-    const fp = personaFingerprint();
-    const st = loadPState();
-    return (!st[key] || st[key].fp !== fp) ? fp : null;
-  }
+  function savePState(st) { try { localStorage.setItem(LS_PSTATE, JSON.stringify(st)); } catch (e) { /* 容量满等 */ } }
   function markPersonaSent(key, fp) {
     const st = loadPState();
     st[key] = { fp: fp, at: new Date().toISOString().slice(0, 19) };
     savePState(st);
+    log('info', '人设已全量发送至 [' + key + ']（fp=' + fp + '）');
   }
-  async function ensureSid() {
+  function needPersonaFull(key) {
+    const fp = personaFingerprint();
+    const st = loadPState();
+    return (!st[key] || st[key].fp !== fp) ? fp : null; // 返回非空=需要全量（附带新指纹）
+  }
+
+  function extractNickname(text) {
+    const m = text.match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/);
+    if (m && m[1] && !/谁|什么|干嘛|哦|吗|吧|了|的/.test(m[1])) { settings.nickname = m[1]; saveSettings(); return m[1]; }
+    return null;
+  }
+  const BAL_RE = /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|账单|今日花费/;
+
+  async function apiOK() {
+    try { const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } }); return r.ok; }
+    catch (e) { return false; }
+  }
+
+  /* ---- 通道 A：助手子对话（统一） ---- */
+  async function ensureAssistantSession() {
     const sid = localStorage.getItem(CHAT_LS_SID);
-    if (sid) { try { const r = await fetch('/api/sessions/' + sid); if (r.ok) return sid; } catch (e) {} }
-    const r = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: '桌宠聊天', provider: S.chatProvider, model: S.chatModel, permission: 'workspace-write', tools: [] }) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const j = await r.json(); localStorage.setItem(CHAT_LS_SID, j.id); return j.id;
+    if (sid) {
+      try {
+        const r = await fetch('/api/sessions/' + sid, { headers: { 'Accept': 'application/json' } });
+        if (r.ok) return sid;
+      } catch (e) { /* 落到重建 */ }
+    }
+    const body = {
+      title: '桌宠聊天',
+      provider: settings.chatProvider || 'company-internal',
+      model: settings.chatModel || 'deepseek-flash',
+      permission: 'workspace-write',
+      tools: [],
+    };
+    const r = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('创建桌宠子对话失败：HTTP ' + r.status);
+    const j = await r.json();
+    localStorage.setItem(CHAT_LS_SID, j.id);
+    log('info', '已创建统一子对话 ' + j.id + '（' + body.provider + '/' + body.model + '）');
+    return j.id;
   }
-  async function readStream(sid, content) {
-    const resp = await fetch('/api/sessions/' + sid + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+
+  /** 读 chat SSE 流：把事件记进后台日志；连接建立（消息已落库）即回调 onSent；返回流是否正常结束 */
+  async function readChatStream(sid, content, onSent) {
+    const resp = await fetch('/api/sessions/' + sid + '/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
     if (resp.status === 409) throw new Error('BUSY');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    if (resp.body) { const rd = resp.body.getReader(); for (;;) { const { done } = await rd.read(); if (done) break; } }
+    if (!resp.ok) throw new Error('聊天请求失败：HTTP ' + resp.status);
+    if (typeof onSent === 'function') { try { onSent(); } catch (ce) { /* 回调容错 */ } }
+    if (!resp.body) return true;
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder('utf-8');
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const line = chunk.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        let ev = null;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { log('sse', '[raw] ' + chunk.slice(0, 400)); continue; }
+        const msg = ev.message || {};
+        if (msg.role === 'assistant' && msg.content) log('reasoning', '[assistant 增量] ' + msg.content);
+        else if (ev.type === 'reasoning' || msg.reasoning_content) log('reasoning', '[思考] ' + (msg.reasoning_content || ev.content || ''));
+        else if (ev.type && ev.type !== 'message') log('sse', '[' + ev.type + '] ' + JSON.stringify(ev).slice(0, 600));
+        // 流内即时通道错误检测：模型调用失败（429/停用/连不上）事件一出现就中止等待
+        if (msg.role === 'system' && typeof msg.content === 'string' && msg.content.startsWith('{')) {
+          try {
+            const o = JSON.parse(msg.content);
+            if (o.error && (o.type === 'call' || o.type === 'error')) {
+              try { reader.cancel(); } catch (ce) { /* 忽略 */ }
+              const e2 = new Error('MODEL_CHANNEL: ' + o.error);
+              e2.channelError = String(o.error);
+              throw e2;
+            }
+          } catch (pe) { if (pe.channelError) throw pe; }
+        }
+      }
+    }
+    return true;
   }
-  async function lastAssistant(sid) {
-    const r = await fetch('/api/sessions/' + sid + '/messages');
-    if (!r.ok) return '';
-    const j = await r.json(); const msgs = (j && j.messages) || [];
+
+  /** 取最后一条 assistant 回复；无回复时检测模型通道错误（429/停用/连接失败等 system 记录） */
+  async function lastAssistantText(sid) {
+    const r = await fetch('/api/sessions/' + sid + '/messages', { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error('取回复失败：HTTP ' + r.status);
+    const j = await r.json();
+    const msgs = (j && j.messages) || [];
     let reply = '';
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.role === 'assistant' && (m.text || '').trim()) { reply = m.text.trim(); break; }
     }
     if (reply) return reply;
+    // 无回复：倒序找最近的模型调用失败记录（type:call/error 带 error 字段即为通道错误）
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.role !== 'system' || !(m.text || '').startsWith('{')) continue;
       try {
         const o = JSON.parse(m.text);
         if (o.error && (o.type === 'call' || o.type === 'error')) {
-          const e = new Error('MODEL_CHANNEL: ' + o.error); e.channelError = String(o.error); throw e;
+          const e = new Error('MODEL_CHANNEL: ' + o.error);
+          e.channelError = String(o.error);
+          throw e;
         }
       } catch (pe) { if (pe.channelError) throw pe; }
     }
     return '';
   }
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  async function sendAssistant(userText, balBlock) {
-    const sid = await ensureSid();
-    // v2.1.3：按子对话跟踪人设，首条全量、后续短消息
+
+  const pollReply = async (sid, tries) => {
+    for (let i = 0; i < (tries || 40); i++) {
+      await new Promise(res => setTimeout(res, 3000));
+      const t = await lastAssistantText(sid); // 通道错误（429/停用）会直接抛出，不再傻等
+      if (t) return t;
+    }
+    return '';
+  };
+
+  async function sendViaAssistant(userText, balanceBlock) {
+    const sid = await ensureAssistantSession();
+    // v2.1.3：按子对话跟踪人设——首条（或人设/昵称变化后首条）全量，其余只发短消息
     const fpNeed = needPersonaFull(sid);
-    try { await readStream(sid, buildPrompt(userText, balBlock, !!fpNeed)); }
-    catch (e) { if (e.message === 'BUSY') return '咳、一条一条来啦！'; throw e; }
-    if (fpNeed) markPersonaSent(sid, fpNeed);
-    let t = await lastAssistant(sid);
-    for (let i = 0; i < 30 && !t; i++) { await sleep(3000); t = await lastAssistant(sid); }
-    return t || '……（走神了，再说一遍？）';
+    const prompt = buildPrompt(userText, balanceBlock, !!fpNeed);
+    try { await readChatStream(sid, prompt, fpNeed ? () => markPersonaSent(sid, fpNeed) : null); }
+    catch (e) { if (e.message === 'BUSY') return { text: '咳、正忙着呢！一条一条来啦，笨蛋主人～', via: 'assistant' }; throw e; }
+    let reply = '';
+    try { reply = await lastAssistantText(sid); } catch (e) { throw e; }
+    if (!reply) reply = await pollReply(sid, 30);
+    if (!reply) reply = '……（刚才好像走神了，再说一遍？）';
+    return { text: reply, via: 'assistant' };
   }
-  const mem = [];
-  async function sendGateway(userText, balBlock) {
-    if (!S.gatewayBase || !S.gatewayKey) throw new Error('网关未配置');
+
+  /* ---- 通道 B：网关令牌（OpenAI 兼容 /chat/completions） ---- */
+  async function sendViaGateway(userText, balanceBlock) {
+    if (!settings.gatewayBase || !settings.gatewayKey) throw new Error('网关未配置（baseURL / 令牌）');
+    // v2.1.3：网关通道同样按指纹跟踪（固定键 'gw'），首条全量、后续短消息（人设在 mem 历史里）
     const fpNeed = needPersonaFull('gw');
-    mem.push({ role: 'user', content: buildPrompt(userText, balBlock, !!fpNeed) });
-    while (mem.length > 28) mem.shift();
-    const msgs = [{ role: 'system', content: '你是桌宠大肥鱼·鲸鲸娘。短句≤60字，绝不输出思考过程。' }].concat(mem);
-    const r = await fetch(S.gatewayBase.replace(/\/+$/, '') + '/chat/completions', { method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + S.gatewayKey },
-      body: JSON.stringify({ model: S.gatewayModel || 'deepseek-chat', messages: msgs, max_tokens: 200, stream: false }) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const prompt = buildPrompt(userText, balanceBlock, !!fpNeed);
+    shortMemory.push({ role: 'user', content: prompt });
+    while (shortMemory.length > 28) shortMemory.shift(); // 14 轮 = 28 条
+    const msgs = [{ role: 'system', content: '你是桌宠「大肥鱼·鲸鲸娘」。永远保持角色，短句回复（≤60字），绝不输出思考过程。' }].concat(shortMemory.slice());
+    const r = await fetch(settings.gatewayBase.replace(/\/+$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.gatewayKey },
+      body: JSON.stringify({ model: settings.gatewayModel || 'deepseek-chat', messages: msgs, max_tokens: 200, stream: false }),
+    });
+    if (!r.ok) throw new Error('网关返回 HTTP ' + r.status);
     if (fpNeed) markPersonaSent('gw', fpNeed);
     const j = await r.json();
-    const t = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
-    mem.push({ role: 'assistant', content: t });
-    return t || '……';
+    const text = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '').trim();
+    if (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.reasoning_content)
+      log('reasoning', '[思考·网关] ' + j.choices[0].message.reasoning_content);
+    shortMemory.push({ role: 'assistant', content: text });
+    while (shortMemory.length > 28) shortMemory.shift();
+    return { text: text || '……（网关没说话）', via: 'gateway' };
   }
-  function sendMock(userText, bal, balBlock) {
-    if (bal && bal.apiOk && /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|今日花费/.test(userText)) {
-      const cr = bal.credits || {};
-      const est = fmtCredits(bal.costCredits || 0);
-      let q;
-      if (cr.ok && cr.unlimited) q = '账户不限额';
-      else if (cr.ok) q = '剩余积分 ' + fmtCredits(cr.remainCredits);
-      else q = Number(S.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(S.quota)) : '（额度还没告诉我呢）';
-      return '哼、看好了：今日估算 ' + est + ' 分，' + q + '（' + (bal.valley ? '谷' : '峰') + '时价）。别太浪！ [fish:hum]';
+
+  /* ---- 通道 C：模拟模式 ---- */
+  function sendViaMock(userText, balanceBlock, balData) {
+    let reply;
+    const nick = extractNickname(userText);
+    const t = userText;
+    if (balData && BAL_RE.test(t)) {
+      const cr = balData.credits || {};
+      const est = fmtCredits(balData.costCredits || 0);
+      let quotaPart;
+      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits);
+      else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '（额度还没告诉我呢）';
+      reply = '哼、自己干的活自己看啦：今日估算 ' + est + ' 分，' + quotaPart + '。别太浪！';
+    } else if (/你好|您好|hi|hello|在吗|嗨/i.test(t)) {
+      reply = '哼，才不是在等你呢……' + periodGreet() + '呀，有事快说！';
+    } else if (nick) {
+      reply = '记住了，' + nick + '……才、才不是想记住呢！';
+    } else if (/你是谁|你是什么/.test(t)) {
+      reply = '本小姐是大肥鱼·鲸鲸娘！你桌上最忠实的鱼！（模拟模式陪聊中）';
+    } else {
+      const pool = [
+        '唔……这个嘛，本小姐考虑一下再告诉你！',
+        '真是的，什么问题都丢给我……不过我会认真想的。',
+        '好啦好啦，陪你聊两句，快去忙正事！',
+        '（尾巴拍了拍水面）嗯哼？继续说，我听着呢。',
+      ];
+      reply = pool[Math.floor(Math.random() * pool.length)];
     }
-    const nickM = userText.match(/(?:我叫|我是|叫我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/);
-    if (nickM && !/谁|什么/.test(nickM[1])) { S.nickname = nickM[1]; save(); return '记住了，' + nickM[1] + '……才不是想记住呢！ [bean:shy]'; }
-    if (/你好|hi|hello|在吗|嗨/i.test(userText)) return PERIOD() + '好呀～有事快说，本小姐忙着呢 [fish:wave]';
-    const pool = ['唔……让本小姐想想 [bean:think]', '真是的，什么问题都丢给我……不过我会认真想的 [fish:idle]', '好啦好啦，陪你聊两句 [bean:smile]', '（尾巴拍了拍水面）继续说，我听着呢 [fish:wait]'];
-    return pool[Math.floor(Math.random() * pool.length)];
+    shortMemory.push({ role: 'user', content: userText }, { role: 'assistant', content: reply });
+    while (shortMemory.length > 28) shortMemory.shift();
+    return Promise.resolve({ text: reply, via: 'mock' });
   }
-  async function chatSend(userText) {
-    let bal = null, balBlock = null;
-    if (/花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|今日花费/.test(userText)) {
-      bal = await todaySpend();
-      const cr = bal.credits || {};
-      const est = fmtCredits(bal.costCredits || 0);
-      let q;
-      if (cr.ok && cr.unlimited) q = '账户不限额';
-      else if (cr.ok) q = '剩余积分 ' + fmtCredits(cr.remainCredits) + '（网关实时，累计已用 ' + fmtCredits(cr.usedCredits) + ' 分）';
-      else q = Number(S.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(S.quota)) : '未设置';
-      balBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】今日(' + bal.date + ')估算消耗 ' + est +
-        ' 分（输入 ' + bal.prompt + ' tok、输出 ' + bal.output + ' tok、' + bal.calls + ' 次，按' + (bal.valley ? '谷' : '峰') +
-        '时未命中价保守估算）；' + q + '。回复用户时请直接用「分」作单位。';
+
+  /** 统一入口：send(text) → {text, via}；助手不可用自动回落模拟并提示 */
+  async function chatSend(userText, opts) {
+    const opts2 = opts || {};
+    // v2.1.3：昵称提取统一前置（原来只有模拟通道做）——昵称进人设指纹，
+    // 必须在 needPersonaFull 判定之前生效，昵称变化才能触发下一类全量重发
+    extractNickname(userText);
+    let balData = null, balanceBlock = null;
+    if (BAL_RE.test(userText) || opts2.withBalance) {
+      balData = await todaySpend(true);
+      const cr = balData.credits || {};
+      const est = fmtCredits(balData.costCredits || 0);
+      let quotaPart;
+      if (cr.ok && cr.unlimited) quotaPart = '账户不限额';
+      else if (cr.ok) quotaPart = '剩余积分 ' + fmtCredits(cr.remainCredits) + '（网关实时，累计已用 ' + fmtCredits(cr.usedCredits) + ' 分）';
+      else quotaPart = Number(settings.quota) > 0 ? '剩余额度 ' + fmtMoney(Number(settings.quota)) : '未设置（可让用户在聊天设置里自填）';
+      balanceBlock = '【余额数据·系统注入，积分制：1000 分 = 1 元】今日(' + balData.date + ')估算消耗 ' + est +
+        ' 分（输入 ' + balData.prompt + ' tok、输出 ' + balData.output + ' tok、' + balData.calls + ' 次调用，按' + (balData.valley ? '谷' : '峰') +
+        '时未命中价保守估算）；' + quotaPart + '。回复用户时请直接用「分」作单位。';
     }
-    if (S.channel === 'gateway') { try { return { text: await sendGateway(userText, balBlock), via: 'gateway' }; } catch (e) { return { text: '（网关出错，模拟陪聊）' + sendMock(userText, bal), via: 'mock' }; } }
-    if (S.channel === 'mock') return { text: sendMock(userText, bal), via: 'mock' };
+    const channel = settings.channel || 'assistant';
+    if (channel === 'gateway') {
+      try { return await sendViaGateway(userText, balanceBlock); }
+      catch (e) { log('error', '网关通道失败: ' + e.message); return sendViaMock(userText, balanceBlock, balData); }
+    }
+    if (channel === 'mock') return sendViaMock(userText, balanceBlock, balData);
+    // assistant：先探活
+    if (!(await apiOK())) {
+      log('error', '助手 API 不可达，回落模拟模式');
+      const r = await sendViaMock(userText, balanceBlock, balData);
+      return { text: '（助手不在线，本小姐亲自上！）' + r.text, via: 'mock-fallback' };
+    }
     try {
-      await fetch('/api/models');
-      return { text: await sendAssistant(userText, balBlock), via: 'assistant' };
+      return await sendViaAssistant(userText, balanceBlock);
     } catch (e) {
+      log('error', '助手通道失败: ' + e.message);
+      const r = await sendViaMock(userText, balanceBlock, balData);
+      // 模型通道级错误（429 余额不足 / 渠道停用 / 连接失败）给明确原因，不装傻
       if (e.channelError || /MODEL_CHANNEL/.test(e.message)) {
         const raw = String(e.channelError || '');
         let why = raw.split(/[：:]/)[0].slice(0, 26) || '模型通道不可用';
         if (/429|余额不足/.test(raw)) why = '模型通道余额不足';
-        return { text: '（' + why + '，先用模拟模式陪你～）' + sendMock(userText, bal), via: 'mock' };
+        return { text: '（' + why + '，先用模拟模式陪你～去聊天设置里换个模型或通道吧）' + r.text, via: 'mock-fallback' };
       }
-      return { text: '（助手不在线，我来陪聊～）' + sendMock(userText, bal), via: 'mock' };
+      return { text: '（助手闹脾气了，我来说～）' + r.text, via: 'mock-fallback' };
     }
   }
+  /* pb:core:end */
+
+  /* ===== 窗口页沿用的短名字（共享核心的别名，语义见 src/core） ===== */
+  const S = settings;            // 设置对象（与桌宠半边同源 localStorage）
+  const save = saveSettings;
+  const FISH_ST = FISH_STICKERS; // 深海贴纸帧（与桌宠共用同一张表）
 
   /* ===== UI ===== */
   const msgs = document.getElementById('msgs');
@@ -489,8 +862,9 @@
   const dot = document.getElementById('dot');
   const modelSel = document.getElementById('model');
 
-  for (const [v, l] of MODELS) {
-    const op = document.createElement('option'); op.value = v; op.textContent = l;
+  for (const m of CHAT_MODELS) {          // 模型清单与桌宠半边共用（core/config.js）
+    const v = m.provider + '|' + m.model;
+    const op = document.createElement('option'); op.value = v; op.textContent = m.label;
     if (S.chatProvider + '|' + S.chatModel === v) op.selected = true;
     modelSel.appendChild(op);
   }
@@ -520,27 +894,7 @@
 
   /* ===== v2.2.0 微信/QQ 式表情面板 ===== */
   // 档案馆大肥鱼表情包（来源：blue-fish-archive 蓝色大肥鱼档案馆 fisharchive.cc，CC BY-NC-SA 4.0）
-  const ARCHIVE = [
-    { id: 'deepseek-bao-bi-jujue',    name: '拒绝：需求太离谱' },
-    { id: 'deepseek-bao-jing-shui-jiao', name: '抱着小鲸睡觉' },
-    { id: 'deepseek-bao-xigua',       name: '抱西瓜笑开花' },
-    { id: 'deepseek-bao-tou-wei-qu',  name: '抱头委屈' },
-    { id: 'deepseek-baozhe-weiba',    name: '抱尾巴可爱值拉满' },
-    { id: 'deepseek-baozhe-beizi-kan-token', name: '盯着token罐吓到宕机' },
-    { id: 'deepseek-bao-shoubing',    name: '这把再输尾巴挂机' },
-    { id: 'deepseek-bao-glm-wanou-bash', name: '抱玩偶流口水CPU烧糊' },
-    { id: 'deepseek-bao-zhe-pangyu',  name: '托脸抱胖鱼' },
-    { id: 'deepseek-baobi-zuo-zai-pingguan-jian', name: '盘点库存盘到无语' },
-    { id: 'deepseek-bei-baozhu-jingxia', name: '被抱到脸红CPU红温' },
-    { id: 'deepseek-bao-xi-chuang-bian', name: '抱膝坐窗边眨眼' },
-    { id: 'chatgpt-renwu-jieshao', name: '介绍会上抱碗开吃' },
-    { id: 'deepseek-bixin',           name: '比心' },
-    { id: 'deepseek-baozhe-saozhou',  name: '抱扫帚斜眼敷衍' },
-    { id: 'deepseek-chashou-shengqi', name: '插手生气' },
-    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
-    ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
-  ];
-  const LS_RECENT = 'pb2.stickerRecent.v1';
+
   const RECENT_MAX = 12;
   let stickerTab = 'fish', delMode = false;
   function recentList() { try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]') || []; } catch (e) { return []; } }
@@ -608,7 +962,7 @@
       }
       if (stickerTab === 'archive' && el) {
         const img = document.createElement('img'); img.className = 'arc'; img.alt = '';
-        img.src = 'st-' + it.n.slice('archive:'.length) + '.webp';
+        img.src = ASSET_DIR + 'st-' + it.n.slice('archive:'.length) + '.webp';
         cell.textContent = ''; cell.appendChild(img);
         cell.title = (it.name || '') + '（' + stickerMark(it.g, it.n) + '）';
       }
@@ -683,7 +1037,7 @@
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); doSend(); } });
 
-  const greet = PERIOD();
+  const greet = periodGreet();
   addMsg('pet', greet + (S.nickname ? '，' + S.nickname : '') + '！窗口聊天开好了～要点账单就直接问 [fish:wave]', 'local');
   input.focus();
 })();

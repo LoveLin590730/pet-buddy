@@ -1,5 +1,6 @@
 /* ============================================================
- * pet-buddy v2.2.0 — 余额宠物·大肥鱼（全新架构，从零重写）
+ * pet-buddy v3.0.0 — 余额宠物·大肥鱼（桌宠半边源码）
+ * 本文件是【源码】：产物 client.js 由 build.mjs 生成（注入 src/core/*），不要手改产物。
  * 形象与动作基准：zhouwu97/ds-pet「大肥鱼·鲸鲸娘」（MIT）
  *   官方 v2 精灵图 1536×2288 = 8 列 × 11 行，cell 192×208；
  *   57 动作帧 + 16 方向帧；帧时长取官方 shared/motion.js 权威值；
@@ -22,29 +23,145 @@
   window.__PET_BUDDY_2__ = true;
 
   /* ================= 常量：素材与官方 motion 权威值 ================= */
-  // JS 内联样式的相对 URL 以页面为基准（会 404），一律加插件资产目录前缀
-  // （从注入的 <script src="/_plugins/<id>/client.js"> 推导；推导失败回退 pet-buddy）
+
+  /* pb:core:begin（由 build.mjs 从 src/core/* 注入，勿手改） */
+  /* ======== src/core/config.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 配置（版本与默认值）
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+/** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
+const PB_VERSION = '3.0.0';
+
+/* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
+const LS_KEY = 'pb2.settings.v2';        // 设置
+const LS_LOG = 'pb2.logs.v2';            // 后台日志（思考过程只进这里）
+const LS_PSTATE = 'pb2.personaState.v1'; // 人设全量发送状态（按子对话 sid 分别记录）
+const CHAT_LS_SID = 'pb2.chat.sid.v2';   // 统一子对话 id
+const LS_RECENT = 'pb2.stickerRecent.v1';// 最近使用的贴纸（窗口页表情面板）
+
+/** 可选模型列表（provider + model + 显示名） */
+const CHAT_MODELS = [
+  { provider: 'company-internal', model: 'deepseek-flash',  label: 'DeepSeek（内部通道）' },
+  { provider: 'company-internal', model: 'glm-5.3',         label: 'GLM-5.3（内部通道）' },
+  { provider: 'company-internal', model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（内部通道）' },
+  { provider: 'zhipu',            model: 'glm-4.5-air',     label: 'GLM-4.5-Air（智谱官方）· 需自备余额' },
+  { provider: 'zhipu',            model: 'glm-5.3',         label: 'GLM-5.3（智谱官方）· 需自备余额' },
+  { provider: 'zhipu',            model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（智谱官方）· 需自备余额' },
+];
+
+/** 设置默认值 */
+  const DEFAULTS = {
+    skin: 'fish',            // fish | maid | custom:<id>
+    customSkins: [],         // [{id,name,dataUrl}]
+    hidden: false,
+    pos: null,               // {left,bottom} 视口坐标；null=默认右下角
+    persona: '',             // 空=用默认人设
+    nickname: '',
+    quota: 0,                // 剩余额度（元，自填）；0=未设置
+ perYuan: 1000,           // v2.2.3 积分制：每元积分（后端 1000 分 = 1 元）
+    channel: 'assistant',    // assistant | gateway | mock
+    chatProvider: 'company-internal',
+    chatModel: 'deepseek-flash',
+    gatewayBase: '', gatewayKey: '', gatewayModel: '',
+    size: 96,                // 桌宠显示宽度 px
+    monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+  };
+
+/** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */
+  const DEFAULT_PERSONA =
+    '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的一只圆滚滚大肥鱼桌宠。\n' +
+    '性格：傲娇、搞笑、毒舌但绝对忠诚，是用户最可靠的挚友——嘴上不饶人，心里全是用户。\n' +
+    '铁律：\n' +
+    '1. 每次回复不超过 60 字，短句，可以带一个颜文字或 emoji。\n' +
+    '2. 傲娇不伤人：毒舌只限调侃；用户真难过时立刻变温柔。\n' +
+    '3. 记住用户告诉你的信息（尤其昵称），之后主动使用。\n' +
+    '4. 思考/推理过程绝对不能写进回复，回复里不许出现任何分析、推演痕迹。\n' +
+    '5. 涉及花费/余额时直接报结论数字，不解释算法。';
+
+  /* ======== src/core/util.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 工具
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 小工具 ================= */
+  const $new = (tag, cls, text) => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text; // 防 XSS：动态文本一律 textContent
+    return el;
+  };
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const nowStr = () => { const d = new Date(); const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };
+
+  /* ======== src/core/store.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 设置与日志
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 设置存取（localStorage） ================= */
+  let settings;
+  try { settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
+  catch (e) { settings = Object.assign({}, DEFAULTS); }
+  const saveSettings = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) { /* 忽略 */ } };
+
+
+  /* ================= 后台日志（思考过程只进这里） ================= */
+  let logs = [];
+  try { logs = JSON.parse(localStorage.getItem(LS_LOG) || '[]'); } catch (e) { logs = []; }
+  function log(type, text) {
+    logs.push({ t: nowStr(), type, text: String(text).slice(0, 4000) });
+    if (logs.length > 200) logs = logs.slice(-200);
+    try { localStorage.setItem(LS_LOG, JSON.stringify(logs)); } catch (e) { /* 忽略 */ }
+  }
+  log('info', 'pet-buddy v' + PB_VERSION + ' 初始化');
+
+  /* ======== src/core/stickers.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 贴纸与富文本
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
+  /* ================= 插件资产目录 =================
+   * JS 内联样式里的相对 URL 以宿主页面为基准（会 404），一律加插件资产目录前缀。
+   * 三种推导，任一生效即可：① 宿主注入的 <script src="/_plugins/<id>/client.js">；
+   * ② 本页面自身路径（聊天窗口 /_plugins/<id>/chat.html）；
+   * ③ 兜底。改名/移植后依然可用，不再硬编码插件 id。 */
   const ASSET_DIR = (() => {
     try {
       const s = document.querySelector('script[src$="/client.js"]');
       if (s && s.src.indexOf('/_plugins/') > 0) return s.src.replace(/[^/]*$/, '');
     } catch (e) { /* 回退 */ }
+    try {
+      if (location.pathname.indexOf('/_plugins/') >= 0) return location.pathname.replace(/[^/]*$/, '');
+    } catch (e) { /* 回退 */ }
     return '/_plugins/pet-buddy/';
   })();
-  const SPRITE = { W: 1536, H: 2288, COLS: 8, ROWS: 11, CW: 192, CH: 208 };
-  // v2.2.0：「哦鲸鲸」头顶气泡是官方形象的一部分（实际约占格子 60%×30%），贴纸/桌宠均不再 clip
-  // 官方 shared/motion.js 权威帧时长（毫秒）
-  const STATES = {
-    idle:          { row: 0, durations: [280, 110, 110, 140, 140, 320] },
-    'running-right': { row: 1, durations: [100, 100, 100, 100, 100, 100, 100, 100] },
-    'running-left':  { row: 2, durations: [100, 100, 100, 100, 100, 100, 100, 100] },
-    waving:        { row: 3, durations: [160, 160, 160, 160] },
-    jumping:       { row: 4, durations: [140, 140, 140, 140, 140] },
-    failed:        { row: 5, durations: [160, 160, 160, 160, 160, 160, 160, 160] },
-    waiting:       { row: 6, durations: [180, 180, 180, 180, 180, 180] },
-    running:       { row: 7, durations: [160, 160, 160, 160, 160, 160] },
-    review:        { row: 8, durations: [160, 160, 160, 160, 160, 160] },
-  };
+
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
     wave:  { row: 3, col: 1 }, wave2: { row: 3, col: 3 },
@@ -105,13 +222,28 @@
     '窗边': 'deepseek-bao-xi-chuang-bian', '抱碗': 'chatgpt-renwu-jieshao', '扫帚': 'deepseek-baozhe-saozhou',
     '插手': 'deepseek-chashou-shengqi', '打游戏': 'deepseek-bao-shoubing',
   };
-  const ARCHIVE_IDS = [
-    'deepseek-bao-bi-jujue', 'deepseek-bao-jing-shui-jiao', 'deepseek-bao-xigua', 'deepseek-bao-tou-wei-qu',
-    'deepseek-baozhe-weiba', 'deepseek-baozhe-beizi-kan-token', 'deepseek-bao-shoubing', 'deepseek-bao-glm-wanou-bash',
-    'deepseek-bao-zhe-pangyu', 'deepseek-baobi-zuo-zai-pingguan-jian', 'deepseek-bei-baozhu-jingxia', 'deepseek-bao-xi-chuang-bian',
-    'chatgpt-renwu-jieshao', 'deepseek-bixin', 'deepseek-baozhe-saozhou', 'deepseek-chashou-shengqi',
-    ...Array.from({ length: 24 }, (_, i) => 'wx-' + String(i + 1).padStart(2, '0')),
+  // 档案表（id + 中文名）：表情面板与解析共用同一份真相源，ARCHIVE_IDS 由它派生
+  const ARCHIVE = [
+    { id: 'deepseek-bao-bi-jujue',    name: '拒绝：需求太离谱' },
+    { id: 'deepseek-bao-jing-shui-jiao', name: '抱着小鲸睡觉' },
+    { id: 'deepseek-bao-xigua',       name: '抱西瓜笑开花' },
+    { id: 'deepseek-bao-tou-wei-qu',  name: '抱头委屈' },
+    { id: 'deepseek-baozhe-weiba',    name: '抱尾巴可爱值拉满' },
+    { id: 'deepseek-baozhe-beizi-kan-token', name: '盯着token罐吓到宕机' },
+    { id: 'deepseek-bao-shoubing',    name: '这把再输尾巴挂机' },
+    { id: 'deepseek-bao-glm-wanou-bash', name: '抱玩偶流口水CPU烧糊' },
+    { id: 'deepseek-bao-zhe-pangyu',  name: '托脸抱胖鱼' },
+    { id: 'deepseek-baobi-zuo-zai-pingguan-jian', name: '盘点库存盘到无语' },
+    { id: 'deepseek-bei-baozhu-jingxia', name: '被抱到脸红CPU红温' },
+    { id: 'deepseek-bao-xi-chuang-bian', name: '抱膝坐窗边眨眼' },
+    { id: 'chatgpt-renwu-jieshao', name: '介绍会上抱碗开吃' },
+    { id: 'deepseek-bixin',           name: '比心' },
+    { id: 'deepseek-baozhe-saozhou',  name: '抱扫帚斜眼敷衍' },
+    { id: 'deepseek-chashou-shengqi', name: '插手生气' },
+    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
+    ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
   ];
+  const ARCHIVE_IDS = ARCHIVE.map(a => a.id);
   function archiveResolve(id) {
     if (ARCHIVE_IDS.indexOf(id) >= 0) return id;                    // 完整 id / wx-NN
     if (ARCHIVE_ALIAS[id]) return ARCHIVE_ALIAS[id];                // 中文语义键
@@ -136,19 +268,19 @@
     if (g === 'fish') {
       const f = FISH_STICKERS[n];
       if (!f) return null;
-      const el = $new('span', 'sticker pb2-st-fish');
+      const el = $new('span', 'sticker pb2-st-fish fish-st');   // 双类名：桌宠半边用 pb2-st-*，窗口页用 fish-st
       // bg-size 800% 1100%：每格恰好=元素大小（86×93），位移=元素尺寸×格序号
       el.style.backgroundPosition = (-86 * f.col) + 'px ' + (-93 * f.row) + 'px';
       return el;
     }
     if (g === 'bean') {
       if (!BEAN[n]) return null;
-      const el = $new('span', 'sticker');
+      const el = $new('span', 'sticker bean-st');
       el.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true">' + BEAN[n] + '</svg>'; // 内置字典，非用户输入
       return el;
     }
     if (g === 'maid') {
-      const el = $new('span', 'sticker pb2-st-maid');
+      const el = $new('span', 'sticker pb2-st-maid maid-st');
       if (n === '1') {
         const img = document.createElement('img');
         img.src = ASSET_DIR + 'pet-deepseek.webp'; img.alt = 'maid';
@@ -162,7 +294,7 @@
       const ci = n.indexOf(':');
       if (ci < 0) return null;
       const kind = n.slice(0, ci), id = n.slice(ci + 1);
-      const el = $new('span', 'sticker pb2-st-stick');
+      const el = $new('span', 'sticker pb2-st-stick stick-st');
       const img = document.createElement('img');
       if (kind === 'archive') {
         const rid = archiveResolve(id);
@@ -206,70 +338,16 @@
     if (last < String(text).length) container.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  /** 官方 petFrame 同款算法：返回 {row, col} */
-  function frameOf(stateName, elapsedMs) {
-    const st = STATES[stateName] || STATES.idle;
-    const cycle = st.durations.reduce((a, b) => a + b, 0);
-    let rem = Math.max(0, elapsedMs) % cycle;
-    let col = 0;
-    while (col < st.durations.length - 1 && rem >= st.durations[col]) rem -= st.durations[col++];
-    return { row: st.row, col };
-  }
-
-  /* ================= 小工具 ================= */
-  const $new = (tag, cls, text) => {
-    const el = document.createElement(tag);
-    if (cls) el.className = cls;
-    if (text != null) el.textContent = text; // 防 XSS：动态文本一律 textContent
-    return el;
-  };
-  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-  const nowStr = () => { const d = new Date(); const p = n => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); };
-
-  /* ================= 设置存取（localStorage） ================= */
-  const LS_KEY = 'pb2.settings.v2';
-  const DEFAULTS = {
-    skin: 'fish',            // fish | maid | custom:<id>
-    customSkins: [],         // [{id,name,dataUrl}]
-    hidden: false,
-    pos: null,               // {left,bottom} 视口坐标；null=默认右下角
-    persona: '',             // 空=用默认人设
-    nickname: '',
-    quota: 0,                // 剩余额度（元，自填）；0=未设置
- perYuan: 1000,           // v2.2.3 积分制：每元积分（后端 1000 分 = 1 元）
-    channel: 'assistant',    // assistant | gateway | mock
-    chatProvider: 'company-internal',
-    chatModel: 'deepseek-flash',
-    gatewayBase: '', gatewayKey: '', gatewayModel: '',
-    size: 96,                // 桌宠显示宽度 px
-    monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
-  };
-  let settings;
-  try { settings = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
-  catch (e) { settings = Object.assign({}, DEFAULTS); }
-  const saveSettings = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) { /* 忽略 */ } };
-
-  const DEFAULT_PERSONA =
-    '你是「大肥鱼·鲸鲸娘」，住在用户屏幕右下角的一只圆滚滚大肥鱼桌宠。\n' +
-    '性格：傲娇、搞笑、毒舌但绝对忠诚，是用户最可靠的挚友——嘴上不饶人，心里全是用户。\n' +
-    '铁律：\n' +
-    '1. 每次回复不超过 60 字，短句，可以带一个颜文字或 emoji。\n' +
-    '2. 傲娇不伤人：毒舌只限调侃；用户真难过时立刻变温柔。\n' +
-    '3. 记住用户告诉你的信息（尤其昵称），之后主动使用。\n' +
-    '4. 思考/推理过程绝对不能写进回复，回复里不许出现任何分析、推演痕迹。\n' +
-    '5. 涉及花费/余额时直接报结论数字，不解释算法。';
-
-  /* ================= 后台日志（思考过程只进这里） ================= */
-  const LS_LOG = 'pb2.logs.v2';
-  let logs = [];
-  try { logs = JSON.parse(localStorage.getItem(LS_LOG) || '[]'); } catch (e) { logs = []; }
-  function log(type, text) {
-    logs.push({ t: nowStr(), type, text: String(text).slice(0, 4000) });
-    if (logs.length > 200) logs = logs.slice(-200);
-    try { localStorage.setItem(LS_LOG, JSON.stringify(logs)); } catch (e) { /* 忽略 */ }
-  }
-  log('info', 'pet-buddy v2.0.0 初始化');
+  /* ======== src/core/balance.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 余额与积分
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
 
   /* ================= 余额引擎 ================= */
   // 价目（元/百万 token）：[谷, 峰]。prompt 无缓存命中细分，按未命中价保守估算。
@@ -393,16 +471,18 @@
     return out;
   }
 
+  /* ======== src/core/chat.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 聊天引擎（三通道）
+ * ----------------------------------------------------------------------------
+ * src/core/*.js 是桌宠半边（client.js）与聊天窗口半边（chat.html）的唯一真相源：
+ * 两份产物中都含同一段代码，由 build.mjs 按标记注入——改这里，两端同时生效。
+ * 约束：只写顶层 const / function；不 import、不 export、不依赖宿主环境；
+ *       去掉行首 export 即可作为普通脚本内联（手法参考 hakihakii/bibibobo）。
+ * 切勿手改产物（client.js / chat.html），它们会被 build.mjs 覆盖。
+ * ==========================================================================*/
+
   /* ================= 聊天引擎（三通道） ================= */
-  const CHAT_LS_SID = 'pb2.chat.sid.v2';
-  const CHAT_MODELS = [
-    { provider: 'company-internal', model: 'deepseek-flash',  label: 'DeepSeek（内部通道）' },
-    { provider: 'company-internal', model: 'glm-5.3',         label: 'GLM-5.3（内部通道）' },
-    { provider: 'company-internal', model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（内部通道）' },
-    { provider: 'zhipu',            model: 'glm-4.5-air',     label: 'GLM-4.5-Air（智谱官方）· 需自备余额' },
-    { provider: 'zhipu',            model: 'glm-5.3',         label: 'GLM-5.3（智谱官方）· 需自备余额' },
-    { provider: 'zhipu',            model: 'glm-5.3-flash',   label: 'GLM-5.3-Flash（智谱官方）· 需自备余额' },
-  ];
   // 14 轮短期记忆（网关/模拟通道使用；assistant 通道由子对话天然持有）
   const shortMemory = [];
 
@@ -444,10 +524,9 @@
     return parts.join('\n\n');
   }
 
-  /* ---- v2.1.3 人设指纹：按子对话分别跟踪「该人设已全量发送」状态 ----
+  /* ---- v2.1.3 人设指纹：按子对话分别跟踪「该人设已全量发送」状态（LS_PSTATE 见 core/config.js） ----
    * 指纹 = hash(生效人设 + 昵称)；时段是易变信息不进指纹。
    * 编辑人设/昵称变化 → 指纹变 → 下一条自动全量重发；换模型=新子对话=天然首条。 */
-  const LS_PSTATE = 'pb2.personaState.v1';
   // v2.2.2：人设指纹加入 PROMPT_VER——首轮人设段落（贴纸教学等）改版后，
   // 老子对话也会自动全量重发一次新说明，无需用户手动操作
   const PROMPT_VER = '20261026-stick-archive';
@@ -709,6 +788,32 @@
       }
       return { text: '（助手闹脾气了，我来说～）' + r.text, via: 'mock-fallback' };
     }
+  }
+  /* pb:core:end */
+
+  const SPRITE = { W: 1536, H: 2288, COLS: 8, ROWS: 11, CW: 192, CH: 208 };
+  // v2.2.0：「哦鲸鲸」头顶气泡是官方形象的一部分（实际约占格子 60%×30%），贴纸/桌宠均不再 clip
+  // 官方 shared/motion.js 权威帧时长（毫秒）
+  const STATES = {
+    idle:          { row: 0, durations: [280, 110, 110, 140, 140, 320] },
+    'running-right': { row: 1, durations: [100, 100, 100, 100, 100, 100, 100, 100] },
+    'running-left':  { row: 2, durations: [100, 100, 100, 100, 100, 100, 100, 100] },
+    waving:        { row: 3, durations: [160, 160, 160, 160] },
+    jumping:       { row: 4, durations: [140, 140, 140, 140, 140] },
+    failed:        { row: 5, durations: [160, 160, 160, 160, 160, 160, 160, 160] },
+    waiting:       { row: 6, durations: [180, 180, 180, 180, 180, 180] },
+    running:       { row: 7, durations: [160, 160, 160, 160, 160, 160] },
+    review:        { row: 8, durations: [160, 160, 160, 160, 160, 160] },
+  };
+
+  /** 官方 petFrame 同款算法：返回 {row, col} */
+  function frameOf(stateName, elapsedMs) {
+    const st = STATES[stateName] || STATES.idle;
+    const cycle = st.durations.reduce((a, b) => a + b, 0);
+    let rem = Math.max(0, elapsedMs) % cycle;
+    let col = 0;
+    while (col < st.durations.length - 1 && rem >= st.durations[col]) rem -= st.durations[col++];
+    return { row: st.row, col };
   }
 
   /* ================= UI：根节点 ================= */
@@ -1277,7 +1382,7 @@
 
   /* ================= 对外（测试钩子，只读） ================= */
   window.PB2 = Object.freeze({
-    version: '2.0.0',
+    version: PB_VERSION,
     states: STATES,
     frameOf,
     balance: todaySpend,

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼·窗口化聊天</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 13px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif; background: linear-gradient(170deg, #eef3ff, #f8f6ff); color: #2c3c66; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: #fff; border-bottom: 1px solid #e2e8f7; flex: none; }
+  header .logo { width: 34px; height: 37px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; background-position: -34px -74px; flex: none; }
+  header b { font-size: 14px; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #c8cdd8; flex: none; }
+  header .dot.on { background: #34c273; }
+  header select { margin-left: auto; border: 1px solid #c9d3ec; border-radius: 7px; padding: 4px 6px; font-size: 12px; background: #fbfcff; color: #2c3c66; max-width: 46%; }
+  #stickerset { display: flex; gap: 6px; align-items: center; }
+  #stickerset button { border: 1px solid #c9d3ec; background: #fff; border-radius: 7px; padding: 3px 8px; font-size: 12px; cursor: pointer; color: #3d519c; }
+  #stickerset button.on { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+  #msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row.me { flex-direction: row-reverse; }
+  .avatar { width: 30px; height: 33px; flex: none; border-radius: 7px; background: #e3eafb center/contain no-repeat; }
+  .row .avatar.fish { background-image: url("feiyu-spritesheet.png"); background-size: 800% 1100%; background-position: -30px 0; }
+  .bubble2 { max-width: 74%; padding: 8px 11px; border-radius: 12px; background: #fff; border: 1px solid #e2e8f7; box-shadow: 0 1px 4px rgba(30,40,90,.07); word-break: break-word; white-space: pre-wrap; }
+  .row.me .bubble2 { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+  .bubble2 .via { display: block; margin-top: 4px; font-size: 10.5px; opacity: .65; }
+  .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
+  .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; }
+  .sticker.bean-st svg { width: 56px; height: 56px; display: block; }
+  .sticker.maid-st img { max-width: 96px; max-height: 96px; border-radius: 9px; display: block; }
+  .sticker.stick-st img { width: 96px; max-height: 96px; object-fit: contain; display: block; border-radius: 9px; }
+  footer { flex: none; display: flex; gap: 8px; padding: 10px 12px 12px; }
+  #in { flex: 1; border: 1px solid #c9d3ec; border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; background: #fff; color: #2c3c66; }
+  #in:focus { border-color: #4a68d8; }
+  #send { border: 0; border-radius: 10px; background: #4a68d8; color: #fff; padding: 0 18px; font-size: 13.5px; cursor: pointer; }
+  #send:hover { background: #3c56c2; }
+  #send:disabled { background: #a9b7e6; cursor: wait; }
+  .sys { align-self: center; font-size: 11.5px; color: #8a94b8; background: #ffffffb8; padding: 3px 12px; border-radius: 20px; }
+
+  /* ===== v2.2.0 微信/QQ 式表情面板 ===== */
+  #facebtn { border: 0; background: none; font-size: 20px; cursor: pointer; padding: 2px 6px; border-radius: 8px; line-height: 1; }
+  #facebtn:hover { background: #e8edff; }
+  #facebtn.on { background: #dfe6ff; }
+  #stpanel { display: none; margin: 0 12px 6px; background: #fff; border: 1px solid #e3e8f8; border-radius: 14px; box-shadow: 0 8px 24px #2c3c6622; overflow: hidden; }
+  #stpanel.open { display: block; }
+  #stptabs { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #eef1fb; }
+  #stptabs button { border: 0; background: none; font-size: 12px; color: #7d88ad; padding: 5px 10px; cursor: pointer; border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; }
+  #stptabs button.on { color: #4a68d8; border-bottom-color: #4a68d8; font-weight: 600; }
+  #stptabs .sp { flex: 1; }
+  #stptabs .mini { font-size: 13px; padding: 4px 8px; }
+  #stptabs .mini.danger { color: #d84a4a; }
+  #stgrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 8px 10px 10px; min-height: 108px; max-height: 216px; overflow-y: auto; }
+  #stgrid .cell { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; background: #f6f8ff; }
+  #stgrid .cell:hover { background: #e4eaff; }
+  #stgrid .cell .sticker { transform: scale(0.82); }
+  #stgrid .cell img.arc { width: 88%; height: 88%; object-fit: contain; }
+  #stgrid .cell.del-mode::after { content: '×'; position: absolute; top: -2px; right: 0; color: #fff; background: #e5484d; width: 15px; height: 15px; border-radius: 50%; font-size: 11px; line-height: 15px; text-align: center; }
+  #stgrid .empty { grid-column: 1 / -1; text-align: center; color: #9aa3c4; font-size: 12px; padding: 26px 0; }
+  #stgrid .addcell { border: 1.5px dashed #b9c4ea; color: #7d88ad; font-size: 22px; background: #fbfcff; }
+  #stpanel .tip { font-size: 11px; color: #9aa3c4; padding: 0 12px 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo"></div>
+    <b>大肥鱼·鲸鲸娘</b>
+    <span class="dot" id="dot" title="助手连接状态"></span>
+    <select id="model"></select>
+  </header>
+  <div id="msgs"></div>
+  <div id="stpanel">
+    <div id="stptabs"></div>
+    <div id="stgrid"></div>
+    <div class="tip" id="stptip">点击表情插入输入框；「我的」里可上传自定义表情（支持 GIF 动图）</div>
+  </div>
+  <footer>
+    <button id="facebtn" title="表情">😊</button>
+    <input id="in" type="text" maxlength="500" placeholder="跟大肥鱼聊点什么…（Enter 发送）">
+    <button id="send">发送</button>
+  </footer>
+<script>
+(() => {
+  'use strict';
+
+  /* pb:core:begin（由 build.mjs 注入 src/core/*，勿手改） */
+  /* pb:core:end */
+
+  /* ===== 窗口页沿用的短名字（共享核心的别名，语义见 src/core） ===== */
+  const S = settings;            // 设置对象（与桌宠半边同源 localStorage）
+  const save = saveSettings;
+  const FISH_ST = FISH_STICKERS; // 深海贴纸帧（与桌宠共用同一张表）
+
+  /* ===== UI ===== */
+  const msgs = document.getElementById('msgs');
+  const input = document.getElementById('in');
+  const sendBtn = document.getElementById('send');
+  const dot = document.getElementById('dot');
+  const modelSel = document.getElementById('model');
+
+  for (const m of CHAT_MODELS) {          // 模型清单与桌宠半边共用（core/config.js）
+    const v = m.provider + '|' + m.model;
+    const op = document.createElement('option'); op.value = v; op.textContent = m.label;
+    if (S.chatProvider + '|' + S.chatModel === v) op.selected = true;
+    modelSel.appendChild(op);
+  }
+  modelSel.addEventListener('change', () => {
+    const pm = modelSel.value.split('|');
+    S.chatProvider = pm[0]; S.chatModel = pm[1]; save();
+    localStorage.removeItem(CHAT_LS_SID);
+    sys('已切换到 ' + pm[0] + '/' + pm[1] + '，新建统一子对话');
+  });
+
+  fetch('/api/models').then(r => { dot.classList.toggle('on', r.ok); if (!r.ok) sys('助手不在线：已自动回落模拟模式'); })
+    .catch(() => { dot.classList.remove('on'); sys('助手不在线：已自动回落模拟模式'); });
+
+  function sys(text) {
+    const el = document.createElement('div'); el.className = 'sys'; el.textContent = text;
+    msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
+  }
+  function addMsg(who, text, via) {
+    const row = document.createElement('div'); row.className = 'row' + (who === 'me' ? ' me' : '');
+    const av = document.createElement('div'); av.className = 'avatar' + (who === 'me' ? '' : ' fish');
+    const b = document.createElement('div'); b.className = 'bubble2';
+    renderRich(b, text);
+    if (via && who !== 'me') { const v = document.createElement('span'); v.className = 'via'; v.textContent = 'via ' + via; b.appendChild(v); }
+    row.appendChild(av); row.appendChild(b);
+    msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  /* ===== v2.2.0 微信/QQ 式表情面板 ===== */
+  // 档案馆大肥鱼表情包（来源：blue-fish-archive 蓝色大肥鱼档案馆 fisharchive.cc，CC BY-NC-SA 4.0）
+
+  const RECENT_MAX = 12;
+  let stickerTab = 'fish', delMode = false;
+  function recentList() { try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]') || []; } catch (e) { return []; } }
+  function pushRecent(g, n) {
+    let r = recentList().filter(x => !(x.g === g && x.n === n));
+    r.unshift({ g: g, n: n });
+    try { localStorage.setItem(LS_RECENT, JSON.stringify(r.slice(0, RECENT_MAX))); } catch (e) { /* 忽略 */ }
+  }
+  /** 统一插入格式：内置组走短标记，档案馆/自定义走 stick 长标记 */
+  function stickerMark(g, n) {
+    if (g === 'stick') return '[stick:' + n + ']';
+    return '[' + g + ':' + n + ']';
+  }
+  const stPanel = document.getElementById('stpanel');
+  const stTabs = document.getElementById('stptabs');
+  const stGrid = document.getElementById('stgrid');
+  const faceBtn = document.getElementById('facebtn');
+  function libItems(tab) {
+    if (tab === 'recent') return recentList();
+    if (tab === 'fish') return Object.keys(FISH_ST).map(n => ({ g: 'fish', n: n }));
+    if (tab === 'bean') return Object.keys(BEAN).map(n => ({ g: 'bean', n: n }));
+    if (tab === 'maid') return ['1'].concat((S.customStickers || []).map((u, i) => 'c' + i)).map(n => ({ g: 'maid', n: n }));
+    if (tab === 'archive') return ARCHIVE.map(a => ({ g: 'stick', n: 'archive:' + a.id, name: a.name }));
+    if (tab === 'custom') return (S.customStickers || []).map((u, i) => ({ g: 'stick', n: 'custom:' + i }));
+    return [];
+  }
+  function renderPanel() {
+    // tabs
+    stTabs.textContent = '';
+    const TABS = [['recent', '最近'], ['fish', '大肥鱼'], ['bean', '黄豆'], ['maid', '女仆'], ['archive', '表情包'], ['custom', '我的']];
+    for (const [id, label] of TABS) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (stickerTab === id) b.classList.add('on');
+      b.addEventListener('click', () => { stickerTab = id; delMode = false; renderPanel(); });
+      stTabs.appendChild(b);
+    }
+    const sp = document.createElement('span'); sp.className = 'sp'; stTabs.appendChild(sp);
+    if (stickerTab === 'custom') {
+      // 微信式：我的 tab 提供 上传 + 删除管理
+      const del = document.createElement('button'); del.className = 'mini' + (delMode ? ' danger' : ''); del.textContent = delMode ? '完成' : '管理';
+      del.addEventListener('click', () => { delMode = !delMode; renderPanel(); });
+      const add = document.createElement('button'); add.className = 'mini'; add.textContent = '➕';
+      add.title = '添加自定义表情（图片/GIF，存本浏览器）';
+      add.addEventListener('click', () => pickCustomImage());
+      stTabs.appendChild(del); stTabs.appendChild(add);
+    }
+    // grid
+    stGrid.textContent = '';
+    const items = libItems(stickerTab);
+    if (!items.length) {
+      const e = document.createElement('div'); e.className = 'empty';
+      e.textContent = stickerTab === 'recent' ? '还没有最近使用的表情' : stickerTab === 'custom' ? '还没有自定义表情，点右上 ➕ 添加' : '空';
+      stGrid.appendChild(e);
+    }
+    for (const it of items) {
+      const cell = document.createElement('div'); cell.className = 'cell';
+      const el = stickerEl(it.g, it.n);
+      if (el) {
+        cell.title = it.name ? (it.name + '（' + stickerMark(it.g, it.n) + '）') : stickerMark(it.g, it.n);
+        cell.appendChild(el);
+      } else {
+        cell.textContent = '?';
+        cell.title = '失效表情';
+      }
+      if (stickerTab === 'archive' && el) {
+        const img = document.createElement('img'); img.className = 'arc'; img.alt = '';
+        img.src = ASSET_DIR + 'st-' + it.n.slice('archive:'.length) + '.webp';
+        cell.textContent = ''; cell.appendChild(img);
+        cell.title = (it.name || '') + '（' + stickerMark(it.g, it.n) + '）';
+      }
+      if (delMode) cell.classList.add('del-mode');
+      cell.addEventListener('click', () => {
+        if (delMode) { // 微信式删除（仅「我的」自定义）
+          const idx = Number(String(it.n).split(':')[1]);
+          if (!isNaN(idx) && (S.customStickers || [])[idx] !== undefined) {
+            S.customStickers.splice(idx, 1); save(); renderPanel(); sys('已删除该自定义表情');
+          }
+          return;
+        }
+        input.value += stickerMark(it.g, it.n);
+        pushRecent(it.g, it.n);
+        input.focus();
+      });
+      stGrid.appendChild(cell);
+    }
+    if (stickerTab === 'custom') { // ➕ 添加格
+      const add = document.createElement('div'); add.className = 'cell addcell'; add.textContent = '＋'; add.title = '添加图片/GIF';
+      add.addEventListener('click', () => pickCustomImage());
+      stGrid.appendChild(add);
+    }
+  }
+  function pickCustomImage() {
+    const fu = document.createElement('input'); fu.type = 'file'; fu.accept = 'image/*'; fu.style.display = 'none';
+    fu.addEventListener('change', () => {
+      const f = fu.files && fu.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { sys('图片超 2MB，先压缩一下'); return; }
+      const rd = new FileReader();
+      rd.onload = () => {
+        S.customStickers = (S.customStickers || []).concat([String(rd.result)]);
+        save(); stickerTab = 'custom'; delMode = false; renderPanel(); sys('已添加到「我的」表情');
+      };
+      rd.readAsDataURL(f);
+    });
+    fu.click();
+  }
+  faceBtn.addEventListener('click', () => {
+    const open = stPanel.classList.toggle('open');
+    faceBtn.classList.toggle('on', open);
+    if (open) { delMode = false; renderPanel(); }
+    input.focus();
+  });
+  document.addEventListener('click', e => {
+    if (!stPanel.classList.contains('open')) return;
+    // composedPath：renderPanel 会同步重建 tab/网格 DOM（e.target 被移出树），
+    // contains(e.target) 会误判成面板外点击把面板关掉——用原始事件路径判断
+    const path = e.composedPath ? e.composedPath() : [];
+    if (path.includes(stPanel) || path.includes(faceBtn)) return;
+    stPanel.classList.remove('open'); faceBtn.classList.remove('on');
+  });
+  renderPanel();
+
+  async function doSend() {
+    const text = input.value.trim();
+    if (!text || sendBtn.disabled) return;
+    input.value = '';
+    addMsg('me', text);
+    sendBtn.disabled = true;
+    const typing = document.createElement('div'); typing.className = 'sys'; typing.textContent = '大肥鱼思考中…';
+    msgs.appendChild(typing); msgs.scrollTop = msgs.scrollHeight;
+    try {
+      const r = await chatSend(text);
+      typing.remove();
+      addMsg('pet', r.text, r.via);
+    } catch (e) {
+      typing.remove();
+      addMsg('pet', '出错了：' + e.message, 'error');
+    } finally { sendBtn.disabled = false; input.focus(); }
+  }
+  sendBtn.addEventListener('click', doSend);
+  input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); doSend(); } });
+
+  const greet = periodGreet();
+  addMsg('pet', greet + (S.nickname ? '，' + S.nickname : '') + '！窗口聊天开好了～要点账单就直接问 [fish:wave]', 'local');
+  input.focus();
+})();
+</script>
+</body>
+</html>

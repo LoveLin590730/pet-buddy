@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+/* ============================================================================
+ * pet-buddy 构建脚本
+ * ----------------------------------------------------------------------------
+ * 做两件事：
+ *  1. 把 src/core/*.js（唯一真相源）按标记注入两份产物：
+ *       src/pet.client.js   → client.js   （桌宠半边，注入到 IIFE 顶部）
+ *       src/chat.template.html → chat.html（聊天窗口半边，注入到页面脚本顶部）
+ *  2. 统一版本号：以 src/core/config.js 的 PB_VERSION 为准，写回 manifest.json 的 version。
+ *
+ * 手法参考 hakihakii/bibibobo 的 build.mjs：单一真相源 + 标记注入 + 失配即报错
+ * （找不到标记、core 里出现 import/export、注入后校验不过，都直接 throw，不产出半成品）。
+ *
+ * 用法：
+ *   node build.mjs          构建（写产物）
+ *   node build.mjs --check  只校验产物是否与源码一致（不写文件；安装脚本/CI 用）
+ * ==========================================================================*/
+
+import {readFileSync, writeFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const CHECK = process.argv.includes('--check');
+const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
+const BEGIN = '/* pb:core:begin';
+const END = '/* pb:core:end */';
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'chat.js'];
+
+/* ---------- 1. 拼 core 段 ---------- */
+const core = ORDER.map((f) => {
+  const t = read('src/core/' + f).trimEnd();
+  if (/^\s*(import|export)\b/m.test(t)) throw new Error(`src/core/${f} 里出现了 import/export —— core 必须能原样内联（去掉行首 export 即可运行）`);
+  if (/<\/script/i.test(t)) throw new Error(`src/core/${f} 含 </script>，会截断 HTML 内联`);
+  return `  /* ======== src/core/${f} ======== */\n` + t;
+}).join('\n\n');
+
+const version = (read('src/core/config.js').match(/PB_VERSION\s*=\s*'([^']+)'/) || [])[1];
+if (!version) throw new Error('src/core/config.js 里没找到 PB_VERSION');
+
+/* ---------- 2. 注入 ---------- */
+function inject(srcFile, outFile) {
+  const src = read(srcFile);
+  const b = src.indexOf(BEGIN);
+  const e = src.indexOf(END, b);
+  if (b < 0 || e < 0) throw new Error(`${srcFile} 里没找到 ${BEGIN} … ${END} 标记`);
+  const head = src.slice(0, b);
+  const tail = src.slice(e + END.length);
+  const text = head + `/* pb:core:begin（由 build.mjs 从 src/core/* 注入，勿手改） */\n` + core + `\n  ` + END + tail;
+  if (!text.includes(core)) throw new Error(`${outFile}: 注入校验失败（core 未被完整写入）`);
+  if ((text.match(/pb:core:begin/g) || []).length !== 1) throw new Error(`${outFile}: 标记数量异常`);
+  const prev = (() => { try { return read(outFile); } catch { return null; } })();
+  const changed = prev !== text;
+  if (!CHECK && changed) writeFileSync(path.join(ROOT, outFile), text, 'utf8');
+  return {outFile, bytes: Buffer.byteLength(text), changed};
+}
+
+const results = [
+  inject('src/pet.client.js', 'client.js'),
+  inject('src/chat.template.html', 'chat.html'),
+];
+
+/* ---------- 3. 版本号写回 manifest.json ---------- */
+const mf = JSON.parse(read('manifest.json'));
+const mfChanged = mf.version !== version;
+if (mfChanged) {
+  mf.version = version;
+  if (!CHECK) writeFileSync(path.join(ROOT, 'manifest.json'), JSON.stringify(mf, null, 2) + '\n', 'utf8');
+}
+
+/* ---------- 4. 汇报 ---------- */
+for (const r of results) {
+  console.log(`${CHECK ? '[check] ' : ''}${r.outFile}: ${(r.bytes / 1024).toFixed(1)} KB ${CHECK ? (r.changed ? '需要重新构建 ✗' : '与源码一致 ✓') : (r.changed ? '已更新' : '无变化')}`);
+}
+console.log(`${CHECK ? '[check] ' : ''}manifest.json: version=${version}${mfChanged ? (CHECK ? ' 需要更新 ✗' : ' 已写回') : ' ✓'}`);
+if (CHECK && (results.some((r) => r.changed) || mfChanged)) process.exitCode = 1;
