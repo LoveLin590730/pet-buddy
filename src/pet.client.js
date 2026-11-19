@@ -2013,7 +2013,6 @@
     info.appendChild(acts);          // v5.1：按钮行挂在信息列底部（一行右对齐）
     card.appendChild(th); card.appendChild(info);
     card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
-    grid.appendChild(card);
     return card;
   }
 
@@ -2105,9 +2104,7 @@
       info.appendChild(acts);        // v5.1：按钮行在信息列底部
       card.appendChild(th); card.appendChild(info);
       card.addEventListener('click', () => { settings.skin = c.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); });
-      grid2.appendChild(card);
-    }
-    return card;
+      return card;
   }
 
   function openModelPicker() {
@@ -2530,8 +2527,6 @@
         saveSettings();
         bubbleSay('设置好了～', 2000);
       } },
-    ]);
-  }
     ]);
   }
 

@@ -18,6 +18,7 @@
 
 import {readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {Script} from 'node:vm';
 import path from 'node:path';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,38 @@ const results = [
   inject('src/pet.client.js', 'client.js'),
   inject('src/chat.template.html', 'chat.html'),
 ];
+
+/* ---------- 2.5 语法校验（v4.18 补：这是之前的缺口） ----------
+ * 教训：注入后的产物若是"函数没闭合/括号错位"这类语法错误，浏览器会整份脚本拒绝执行
+ * ——插件表现为"桌宠不显示"，而文本层面的检查（对账、标记数量）全都查不出来。
+ * 这里用 vm.Script 真编译一遍：语法错就 throw，绝不产出半成品。
+ * 同时校验 core 各文件单独也语法合法（便于定位是哪一块写坏了）。 */
+function syntaxCheck(label, text) {
+  try {
+    new Script(text, {filename: label});          // 只编译、不执行
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    const m = /:(\d+)/.exec(msg);
+    let where = '';
+    if (m) {
+      const ln = Number(m[1]);
+      const L = text.split('\n');
+      for (let i = Math.max(0, ln - 4); i < Math.min(L.length, ln + 2); i++) {
+        where += `\n      ${i + 1 === ln ? '→' : ' '} ${String(i + 1).padStart(5)}| ${L[i]}`;
+      }
+    }
+    throw new Error(`${label} 语法错误：${msg}${where}`);
+  }
+}
+syntaxCheck('client.js（注入后）', read('client.js'));
+/* chat.html 是 HTML：把内联 <script> 段逐个抽出来校验（外链 src 的不算） */
+{
+  const html = read('chat.html');
+  const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  if (!scripts.length) throw new Error('chat.html 里没找到内联 <script>，无法做语法校验');
+  scripts.forEach((s, i) => syntaxCheck(`chat.html 内联脚本 #${i + 1}`, s));
+}
+for (const f of ORDER) syntaxCheck('src/core/' + f, read('src/core/' + f));
 
 /* ---------- 3. 版本号写回 manifest.json ---------- */
 const mf = JSON.parse(read('manifest.json'));
