@@ -267,6 +267,7 @@
       speak(r.text);
     } catch (e) {
       typing.remove();
+      sfx('err');
       addMsg('pet', '出错了：' + e.message, 'error');
     } finally { sendBtn.disabled = false; input.focus(); }
   }

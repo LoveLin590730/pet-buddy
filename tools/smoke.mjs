@@ -14,7 +14,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'speech.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -67,6 +67,8 @@ const probe = `
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
+  SFX_SPEC, sfx, sfxState, sfxApplyVolume,
+  SPRITE_SKINS, isSpriteSkin, ASSET_SPRITE_CODEX,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
 
@@ -196,6 +198,30 @@ console.log('\n[素材清单 · v3.1.0]');
   eq('贴纸清单与代码 ARCHIVE 表逐条一致',
     listed.filter((f) => f.indexOf('st-') === 0).sort(),
     P.ARCHIVE.map((a) => 'st-' + a.id + '.webp').sort());
+  ok('社区桌宠包图集已登记（署名素材，随包分发）',
+    listed.indexOf('pet-whale-codex.webp') >= 0 && P.ASSET_SPRITE_CODEX.endsWith('pet-whale-codex.webp'));
+}
+
+console.log('\n[音效与社区皮肤 · v3.3]');
+{
+  eq('音效谱齐（五个动作一声）', Object.keys(P.SFX_SPEC).join(','), 'tap,pop,drop,ok,err');
+  ok('音效都是单字（啵/叮/唰/嗯/哔）', Object.keys(P.SFX_SPEC).every((k) => P.SFX_SPEC[k].text.length === 1),
+    Object.keys(P.SFX_SPEC).map((k) => P.SFX_SPEC[k].text).join(''));
+  const st = P.sfxState();
+  ok('音效状态可读（离线环境无音频上下文）', st.enabled === true && st.hasGain === false && st.names.length === 5, JSON.stringify(st));
+  ok('无音频环境时 sfx 返回 false、不抛错', P.sfx('tap') === false && P.sfx('没有这个音效') === false);
+  P.settings.sfxOn = false;
+  ok('音效开关关闭时直接不响', P.sfx('tap') === false);
+  P.settings.sfxOn = true;
+
+  ok('精灵图皮肤：官方 + 社区包（同一套网格规格，可直接换图）',
+    P.isSpriteSkin('fish') && P.isSpriteSkin('codex') && !P.isSpriteSkin('maid') && !P.isSpriteSkin('custom:1'));
+  eq('默认皮肤仍是官方图集', P.isSpriteSkin(P.settings.skin === undefined ? 'fish' : P.settings.skin), true);
+  ok('社区皮肤带署名（许可要求）', /YunYueSama/.test(P.SPRITE_SKINS.codex.credit) && /codex-deepseek-pet/.test(P.SPRITE_SKINS.codex.credit), P.SPRITE_SKINS.codex.credit);
+  ok('社区皮肤名称可直接显示', /大肥鱼/.test(P.SPRITE_SKINS.codex.name));
+  ok('两套精灵图都走插件根目录绝对路径（宿主只服务根级文件）',
+    P.SPRITE_SKINS.fish.url.indexOf('/_plugins/') >= 0 && P.SPRITE_SKINS.codex.url.indexOf('/_plugins/') >= 0,
+    P.SPRITE_SKINS.codex.url);
 }
 
 console.log('\n[语音合成与播报 · v3.2]');

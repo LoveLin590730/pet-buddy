@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.2.0';
+const PB_VERSION = '3.3.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -51,6 +51,9 @@ const CHAT_MODELS = [
     speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
     speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
     speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
+    /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */
+    sfxOn: true,             // 交互音效开关
+    sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
   };
 
 /** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */

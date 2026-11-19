@@ -83,12 +83,14 @@
   let petState = 'idle', stateStart = performance.now(), transient = null, transientUntil = 0;
   let lastPaint = '';
   function applySkin() {
-    const s = settings.skin;
+    const s = settings.skin || 'fish';
+    const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
     petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img');
-    if (s === 'fish' || !s) {
+    if (sp) {
       skinMode = 'fish';
       petWrap.classList.add('pb2-skin-fish');
-      lastPaint = ''; // 强制下一帧重画（clip-path 已由 viewport 承担）
+      try { sprite.style.backgroundImage = 'url("' + sp.url + '")'; } catch (e) { /* 保持 CSS 默认图 */ }
+      lastPaint = ''; // 强制下一帧重画
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
@@ -179,6 +181,7 @@
   petWrap.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     speechUnlock(); // v3.2：点桌宠就是用户手势——顺手解锁音频（之后自动播报才出声）
+    sfx('tap');     // v3.3：点桌宠一声「啵」
     const startL = parseFloat(petWrap.style.left) || 0;
     const startB = parseFloat(petWrap.style.bottom) || 0;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, startL, startB, moved: false, downAt: Date.now() };
@@ -220,6 +223,7 @@
       saveSettings();
       petWrap.classList.remove('pb2-dragging');
       applyPos(settings.pos);
+      if (left === 8 || left === vw - petSize().w - 8) sfx('drop'); // v3.3：吸附到边缘给一声「唰」
       transient = 'waving'; transientUntil = performance.now() + 1200;
     }
     suppressClickUntil = wasMoved ? Date.now() + 200 : 0;
@@ -308,7 +312,7 @@
         chatSend(text).then(r => {
           bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
           speakReply(r.text); // v3.2：问答闲聊互动 → 桌宠开口说话
-        }).catch(err => bubbleSay('出错了：' + err.message, 5000));
+        }).catch(err => { sfx('err'); bubbleSay('出错了：' + err.message, 5000); });
       };
       send.addEventListener('click', doSend);
       cancel.addEventListener('click', () => { bubble.hidden = true; });
@@ -339,7 +343,7 @@
     chatSend(text).then(r => {
       bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
       speakReply(r.text);
-    }).catch(err => bubbleSay('出错了：' + err.message, 5000));
+    }).catch(err => { sfx('err'); bubbleSay('出错了：' + err.message, 5000); });
   }
 
   /** 菜单点「语音闲聊」：不摸键盘也能说一轮（静音 2 秒自动收尾并发送） */
@@ -351,6 +355,7 @@
 
   viOn((phase, info) => {   // 状态 → 气泡与动作
     if (phase === 'recording') {
+      sfx('pop'); // 开始收音：一声「叮」，让用户知道在听了
       transient = 'waiting'; transientUntil = performance.now() + 60000;
       bubbleSay('（在听……说完松开 ' + VI_HOTKEY_LABEL + '）', 0);
       return;
@@ -369,8 +374,8 @@
   });
 
   viOnResult(r => {         // 一轮听写的结论：松开热键 / 静音自动收尾 / 菜单触发都走这里
-    if (r.ok) sendVoiceChat(r.text);
-    else if (r.message) bubbleSay(r.message, 5200);
+    if (r.ok) { sfx('ok'); sendVoiceChat(r.text); }
+    else if (r.message) { sfx('err'); bubbleSay(r.message, 5200); }
   });
 
   viWatchHotkey({           // 按住 右 Alt+M 说话（按下是用户手势，顺手解锁音频）
@@ -468,6 +473,7 @@
   }
   petWrap.addEventListener('contextmenu', e => {
     e.preventDefault(); e.stopPropagation();
+    sfx('pop'); // v3.3：右键菜单弹出
     buildMenu();
     menu.hidden = false;
     menu.style.left = clamp(e.clientX - 8, 6, window.innerWidth - 200) + 'px';
@@ -483,6 +489,7 @@
   let dialogMask = null;
   function openDialog(title, bodyBuilder, footButtons) {
     closeDialog();
+    sfx('pop'); // v3.3：面板弹出给一声轻响
     dialogMask = $new('div', 'pb2-mask');
     const dlg = $new('div', 'pb2-dialog');
     const tt = $new('div', 'pb2-dtitle');
@@ -509,10 +516,15 @@
     openDialog('修改桌宠模型', body => {
       body.appendChild($new('h4', null, '内置模型'));
       const grid = $new('div', 'pb2-model-grid');
-      const builtin = [
-        { id: 'fish', name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', thumb: ASSET_SPRITE, bgPos: '-192px -208px' },
+      const builtin = Object.keys(SPRITE_SKINS).map(id => ({
+        id,
+        name: SPRITE_SKINS[id].name,
+        desc: SPRITE_SKINS[id].desc + (SPRITE_SKINS[id].credit ? ' · ' + SPRITE_SKINS[id].credit : ''),
+        thumb: SPRITE_SKINS[id].url,
+        bgPos: '-192px -208px',
+      })).concat([
         { id: 'maid', name: 'DeepSeek 女仆', desc: '内置皮肤 pet-deepseek.webp · 呼吸动画 · BongoCat 式鼠标/键盘监控', thumb: ASSET_SKIN_DEFAULT },
-      ];
+      ]);
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
         const th = $new('div', 'pb2-model-thumb');
@@ -522,7 +534,7 @@
         info.appendChild($new('div', 'pb2-model-name', m.name));
         info.appendChild($new('div', 'pb2-model-desc', m.desc));
         card.appendChild(th); card.appendChild(info);
-        card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); bubbleSay('变身！' + m.name + '登场～', 2600); });
+        card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
         grid.appendChild(card);
       }
       body.appendChild(grid);
@@ -686,8 +698,7 @@
       const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
       spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
       body.appendChild(spMax);
-      const probe = $new('button', null, '试听一句'); probe.type = 'button';
-      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
+      const probe = $new('button', null, '试听一句'); probe.type = 'button';      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
         settings.speechOn = spOn.value === '1';
         settings.speechVoice = spVoice.value;
         settings.speechVolume = Number(spVol.value);
@@ -697,9 +708,29 @@
         speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
       });
       body.appendChild(probe);
+      body.appendChild($new('label', null, '音效 · 开关（点桌宠 / 弹面板 / 拖拽吸附 / 听写提示）'));
+      const sfxOnSel = $new('select');
+      [['1', '开启'], ['0', '关闭']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.sfxOn !== false ? '1' : '0') === v) op.selected = true;
+        sfxOnSel.appendChild(op);
+      });
+      body.appendChild(sfxOnSel);
+      body.appendChild($new('label', null, '音效 · 音量（与语音音量独立）'));
+      const sfxVol = $new('input'); sfxVol.type = 'range'; sfxVol.min = '0'; sfxVol.max = '1'; sfxVol.step = '0.05';
+      sfxVol.value = String(sfxVolume());
+      body.appendChild(sfxVol);
+      const sfxProbe = $new('button', null, '试听音效'); sfxProbe.type = 'button';
+      sfxProbe.addEventListener('click', () => { // 先落盘当前值，再连着把五个音效响一遍
+        settings.sfxOn = sfxOnSel.value === '1';
+        settings.sfxVolume = Number(sfxVol.value);
+        sfxApplyVolume(); saveSettings();
+        ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320));
+      });
+      body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -721,7 +752,10 @@
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
+          settings.sfxOn = f.sfxOnSel.value === '1';
+          settings.sfxVolume = Number(f.sfxVol.value);
           speechApplyVolume();
+          sfxApplyVolume();
           CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
           saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
         } },
@@ -776,6 +810,8 @@
     speechProbe,
     speechClean,
     speechState,
+    sfx,
+    sfxState,
     voice: { start: viStart, stop: viStop, cancel: viCancel, phase: viPhase, lastError: viLastError, label: VI_HOTKEY_LABEL },
     _test: {
       singleClick: onPetSingleClick,
@@ -785,6 +821,7 @@
       renderRich, stickerEl, normSticker,
       sendVoiceChat, voiceChatByButton, speakReply,
       speechUnlock, speechStop, speechApplyVolume,
+      sfxApplyVolume, isSpriteSkin,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

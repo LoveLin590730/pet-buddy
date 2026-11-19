@@ -16,6 +16,10 @@
 - **语音闲聊（v3.2）**：按住 **右 Alt + M** 说话，松开就发（也可以点右键菜单「语音闲聊」，
   说完静音 2 秒自动收尾）；识别走宿主「语音」组件的本地离线模型，识别结果先回显「你说：…」再发送。
   **左 Alt 保持助手自带的语音听写**（设置 → 语音），插件不占用、不抢键
+- **交互音效（v3.3）**：点桌宠「啵」、弹面板「叮」、拖拽吸附「唰」、听写成功「嗯」、出错「哔」——
+  和语音同一套合成器造的短音，独立开关与音量（默认开、0.6）
+- **可插拔精灵图皮肤（v3.3）**：内置「大肥鱼·社区桌宠包」（社区二创图集，8×11 / 192×208 同规格，
+  直接换图即用）；新增社区图集只要把图平铺放插件根目录 + 在 `SPRITE_SKINS` 里加一条 + 登记素材清单与许可
 
 ---
 
@@ -35,6 +39,7 @@ pet-buddy/
 │  │  ├─ stickers.js      #     资产目录推导、贴纸表与白名单解析、富文本渲染（防 XSS）
 │  │  ├─ balance.js       #     价目/节假日谷价、今日消耗、网关真实积分
 │  │  ├─ speech.js        #     语音播报：文本清洗 + 单实例播放（合成核心来自 vendor/bibibobo.js）
+│  │  ├─ sfx.js           #     交互音效：同一套合成器造的短音（啵/叮/唰/嗯/哔）+ 独立音量
 │  │  ├─ voiceinput.js    #     语音听写：16k 采集 + VAD + 宿主本地识别（右 Alt+M 热键）
 │  │  └─ chat.js          #     三通道发送、人设指纹、提示词组装
 │  ├─ pet.client.js       #   桌宠半边源码（注入 core 后 = client.js）
@@ -49,7 +54,7 @@ pet-buddy/
 │  ├─ pack-oneclick.ps1   # 打一键安装形态（zip + 单文件 .cmd 安装器）
 │  └─ oneclick/           # 一键安装器素材：install-plugin.ps1 / 安装.cmd / 卸载.cmd / 安装说明.txt / 单文件头部
 ├─ vendor/                # 第三方原样引入（bibibobo.js · MIT）：构建期内联，只去掉行首 export
-└─ 素材（必须平铺）        # feiyu-spritesheet.png / pet-deepseek.webp / st-*.webp（40 张）/ icon.png
+└─ 素材（必须平铺）        # feiyu-spritesheet.png / pet-deepseek.webp / pet-whale-codex.webp / st-*.webp（40 张）/ icon.png
 ```
 
 **为什么素材平铺、不能放进 `assets/` 子目录**（v3.1.0 实测）：宿主对 `/_plugins/<id>/` **只服务插件根级文件**，
@@ -80,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 
 离线（不需要宿主）：
 
-- `node tools/smoke.mjs` —— **80 项断言全绿**（配置 / 贴纸解析 / 余额积分 / 聊天组装 / 令牌识别 / 内部额度与计价 / 素材清单 / 语音合成与清洗 / 听写请求与降级）
+- `node tools/smoke.mjs` —— **91 项断言全绿**（配置 / 贴纸解析 / 余额积分 / 聊天组装 / 令牌识别 / 内部额度与计价 / 素材清单 / 语音合成与清洗 / 听写请求与降级 / 音效与社区皮肤）
 - `node --check client.js` —— 产物语法
 - `node build.mjs --check` —— 产物与源码一致（安装脚本与 CI 用；不一致时退出码 1）
 
@@ -104,6 +109,12 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
    - 聊天设置里关掉「语音播报」→ 完全不出声；`设置 → 语音` 里关掉听写组件 → 语音闲聊应提示
      「语音听写不可用：宿主的「语音」组件未开启」，而不是静默失败
    - 页面隐藏/切走再回来，语音仍正常（音频上下文被挂起时会自动重试）
+9. **音效与社区皮肤（v3.3）**：
+   - 点桌宠/开右键菜单/拖到边缘吸附/开始收音/出错 各有短音；聊天设置里「试听音效」能连着响五个；
+     关掉音效开关后完全安静（语音不受影响，两者独立）
+   - 右键 →「修改桌宠模型」应看到两张卡：**「大肥鱼·鲸鲸娘」（官方图集）** 与
+     **「大肥鱼·社区桌宠包」（社区图集，卡片上带署名）**；切到社区包后桌宠换成该画风，
+     拖动/动画/吸附一切照旧（同网格规格）；切回官方图集也应正常
 
 ## 四、素材来源与许可
 
@@ -113,6 +124,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 |---|---|---|
 | `feiyu-spritesheet.png`（8×11=88 格，192×208/格） | zhouwu97/ds-pet 官方 v2 精灵图 | MIT（见 `LICENSE-dspet.txt`） |
 | `pet-deepseek.webp`（内置女仆皮肤） | 上游 ds-pet 素材 | MIT（见 `LICENSE-dspet.txt`） |
+| `pet-whale-codex.webp`（社区桌宠包图集，同 8×11 / 192×208 规格） | YunYueSama/codex-deepseek-pet 的 `spritesheet.webp`（原样未改；作者：YunYueSama） | 大肥鱼项目署名许可 1.0：允许使用/修改/分享/商用，**须署名作者与仓库**（见 `LICENSE-deepseekpet.txt`） |
 | `st-deepseek-*.webp`、`st-chatgpt-renwu-jieshao.webp` 等 16 张 | 蓝色大肥鱼档案馆（fisharchive.cc） | CC BY-NC-SA 4.0 |
 | `st-wx-01..24.webp` | 微信表情包 640.wxpic（wxgf/HEVC）解码后 6×4 网格裁切 | 二创，非商用 |
 | `icon.png` | 自有 | MIT（见 `LICENSE`） |

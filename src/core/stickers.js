@@ -31,8 +31,22 @@
    * pet-deepseek.webp（内置女仆皮肤）、icon.png（插件图标）；清单见 assets.manifest.json。
    * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
   const ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  const ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
   const ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
   const ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+
+  /* ---- 皮肤表（v3.3 可插拔精灵图皮肤） ----
+   * 两种皮肤：
+   *   ① sprite：整张精灵图按网格播动画（要求 8 列 × 11 行、cell 192×208、每行动作帧数同 STATES）——
+   *      官方 ds-pet 与社区「Codex 桌宠包」都是这个规格，所以社区包能直接换图用；
+   *   ② image ：单张静态图（内置女仆 / 用户自己传的图），配合 BongoCat 式键鼠监控。
+   * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（url + 名称 + 署名）→ 登记素材清单。 */
+  const SPRITE_SKINS = {
+    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', url: ASSET_SPRITE, credit: '' },
+    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', url: ASSET_SPRITE_CODEX, credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）' },
+  };
+  /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
+  function isSpriteSkin(skin) { return !!SPRITE_SKINS[skin || 'fish']; }
 
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
