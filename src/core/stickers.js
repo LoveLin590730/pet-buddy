@@ -33,7 +33,7 @@
    * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
   /* 素材前缀：默认按 ASSET_DIR 拼，但**启动时会用 CSS 解析出的绝对基准重算**
    * （见下面的 resolveAssetUrls——宿主用 file/内部协议加载页面时，根相对路径会失效）。 */
-  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.webp';   // 官方精灵图（v4.1 起 WebP，体积 -59%）
   let ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
   let ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-bongocat.png';  // 内置静态皮肤（BongoCat 猫猫，v3.3.3 起）
   let ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
@@ -50,7 +50,7 @@
    * 再在 client.css 里加一行 `.pb2-pet-wrap.<cls> .pb2-sprite { background-image: url("<file>"); }`。
    * 图片一律走 CSS 相对路径加载（http / file 协议都可靠），JS 只切类名。 */
   const SPRITE_SKINS = {
-    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.png', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.png' },
+    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.webp', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.webp' },
     codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', file: 'pet-whale-codex.webp', cls: 'pb2-skin-codex', credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）', url: ASSET_DIR + 'pet-whale-codex.webp' },
   };
   /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
@@ -93,11 +93,78 @@
   /** 某皮肤是否走静态图（BongoCat / 用户上传的自定义图） */
   function isImageSkin(skin) { return !!IMAGE_SKINS[skin]; }
 
+  /* ---- v4.1 自定义动图皮肤：GIF / 动画 WebP 上传即会动 ----
+   * 渲染路径与内置皮肤完全同路（<img> 会自动播 GIF/动画 WebP，和大人 120 帧已验证），
+   * 这里只负责三件事：①判定一张 dataUrl 是不是动图 ②动画皮肤不叠 CSS 呼吸（pb2-skin-anim）
+   * ③上传/导入前做体积与 localStorage 容量预检（存不下就明说，不静默丢）。
+   * 上限沿用静态图既有约定延伸：静态 2MB；动图 4MB（base64 后约 5.3MB，
+   * localStorage 配额约 10MB，CUSTOM_STORE_BUDGET 之外还给设置留余量）。 */
+  const CUSTOM_STATIC_MAX = 2 * 1024 * 1024;   // 静态图上限（沿用既有约定）
+  const CUSTOM_ANIM_MAX   = 4 * 1024 * 1024;   // 动图上限（GIF/动画 WebP）
+  const CUSTOM_STORE_BUDGET = 9.0e6;           // 自定义皮肤总存储预算（字符；localStorage 上限约 10MB）
+
+  /** 判定 dataUrl 是不是动图：'gif' | 'webp' | ''（静态/未知）。
+   *  GIF89a：数 Graphic Control Extension（0x21 0xF9）出现次数，≥2 判动画（每帧带一个 GCE；
+   *          单帧透明 GIF 也可能有 1 个 GCE，所以阈值取 2）。
+   *  WebP：RIFF 容器里遍历 chunk，见到 'ANIM' 即动画（一定在头部，扫前 64KB 足够）。 */
+  function imgAnimKind(dataUrl) {
+    const s = String(dataUrl || '');
+    const comma = s.indexOf(',');
+    if (s.slice(0, 5) !== 'data:' || comma < 0) return '';
+    let bytes;
+    try { bytes = atob(s.slice(comma + 1)); } catch (e) { return ''; }
+    const n = bytes.length;
+    if (n < 12) return '';
+    // GIF：头 GIF89a + ≥2 个 GCE → 动画
+    if (bytes.slice(0, 6) === 'GIF89a') {
+      let gce = 0;
+      for (let i = 0; i < n - 1 && gce < 2; i++) if (bytes.charCodeAt(i) === 0x21 && bytes.charCodeAt(i + 1) === 0xF9) gce++;
+      return gce >= 2 ? 'gif' : '';
+    }
+    // WebP：RIFF....WEBP + ANIM chunk
+    if (bytes.slice(0, 4) === 'RIFF' && bytes.slice(8, 12) === 'WEBP') {
+      let p = 12;
+      while (p + 8 <= n && p <= 65536) {
+        const tag = bytes.substr(p, 4);
+        const sz = bytes.charCodeAt(p + 4) | (bytes.charCodeAt(p + 5) << 8) | (bytes.charCodeAt(p + 6) << 16) | (bytes.charCodeAt(p + 7) << 24);
+        if (tag === 'ANIM') return 'webp';
+        p += 8 + sz + (sz & 1);   // chunk 按 2 字节对齐
+      }
+    }
+    return '';
+  }
+
+  /** 自定义皮肤是否为动图：c.anim 是缓存标记（上传时写入；旧数据与导入包没有就现场判定一次并记在内存里） */
+  function customSkinAnim(c) {
+    if (!c || typeof c.dataUrl !== 'string') return false;
+    if (c.anim === true) return true;
+    if (c.anim === false) return false;
+    const k = imgAnimKind(c.dataUrl);
+    c.anim = k !== '';            // 现场判定结果缓存到对象上（下次 saveSettings 顺带落盘）
+    return c.anim;
+  }
+
+  /** 上传/导入前容量预检：新的 dataUrl 加进现有列表后，序列化长度是否还在预算内 */
+  function customSkinStoreFits(list, dataUrl) {
+    let total = String(dataUrl || '').length + 2048;   // 2048 = 其他字段与设置的粗略余量
+    for (const c of (list || [])) total += String(c && c.dataUrl || '').length + 160;
+    return total <= CUSTOM_STORE_BUDGET;
+  }
+
+  /** v4.1 空闲随机小动作（图片皮肤用）：与精灵图皮肤的 waving/jumping 等价，
+   * 但图片皮肤没有帧序列，改用 CSS 整体小动作（keyframes 见 client.css）。 */
+  const IMG_IDLE_FUNS = ['pb2-fun-wobble', 'pb2-fun-jump', 'pb2-fun-tilt'];
+  function pickIdleFunClass(r) {
+    const v = r == null ? Math.random() : Number(r);   // 注意 0 是合法输入，不能用 || 兜底
+    const i = Math.floor((isNaN(v) ? Math.random() : v) * IMG_IDLE_FUNS.length);
+    return IMG_IDLE_FUNS[Math.min(Math.max(i, 0), IMG_IDLE_FUNS.length - 1)];
+  }
+
   /** 把探测到的可用前缀应用到所有素材常量上 */
   function applyAssetBase(base) {
     if (!base || base === ASSET_DIR_RESOLVED) return false;
     ASSET_DIR_RESOLVED = base;
-    ASSET_SPRITE = base + 'feiyu-spritesheet.png';
+    ASSET_SPRITE = base + 'feiyu-spritesheet.webp';
     ASSET_SPRITE_CODEX = base + 'pet-whale-codex.webp';
     ASSET_SKIN_DEFAULT = base + 'pet-bongocat.png';
     ASSET_STICKER = base;

@@ -21,10 +21,10 @@
       "prefix": "feiyu-",
       "count": 1,
       "files": [
-        "feiyu-spritesheet.png"
+        "feiyu-spritesheet.webp"
       ],
-      "use": "桌宠精灵图：8 列 × 11 行 = 88 格，每格 192×208（含 57 动作帧 + 16 方向帧）",
-      "source": "zhouwu97/ds-pet 官方 v2 精灵图",
+      "use": "桌宠精灵图：8 列 × 11 行 = 88 格，每格 192×208（含 57 动作帧 + 16 方向帧）；v4.1 起由 PNG(2.9MB) 转 WebP(q98，1.2MB，体积 -59%)",
+      "source": "zhouwu97/ds-pet 官方 v2 精灵图（本仓库用 Pillow 有损重编码 q98/method=6/exact，逐像素对比：主体差异 mean≈0.4 色阶，仅每格顶部的既有蓝色标记线有可见差异）",
       "license": "MIT（见 LICENSE-dspet.txt）"
     },
     {

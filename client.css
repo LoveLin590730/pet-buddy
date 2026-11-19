@@ -30,7 +30,7 @@
    （整图=元素 8×11 倍 → 每格恰好=元素大小）+ 位移=元素尺寸×格序号（JS 内联）。
    不可用「原图像素位移」配百分比尺寸（v2.1.0 错位根因），也不可用「原图尺寸+小窗口」
    （那只是格子左上裁切窗，v2.2.0 初版翻车根因） */
-.pb2-bubble .sticker.pb2-st-fish { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat;
+.pb2-bubble .sticker.pb2-st-fish { width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat;
   background-size: 800% 1100%; }
 .pb2-bubble .sticker svg { width: 52px; height: 52px; display: block; }
 .pb2-bubble .sticker.pb2-st-maid img { max-width: 84px; max-height: 84px; border-radius: 8px; display: block; }
@@ -54,7 +54,7 @@
   background-repeat: no-repeat; background-size: var(--pb2-sheet-w, 1536px) var(--pb2-sheet-h, 2288px); will-change: transform; backface-visibility: hidden; }
 /* 皮肤按 CSS 类切图（相对本 CSS 的路径：http / file 协议都能加载；
    v3.3.0 用 JS 拼绝对路径切图，在桌面版里加载失败 → 桌宠空白，这里改回 CSS） */
-.pb2-pet-wrap.pb2-skin-fish .pb2-sprite { background-image: url("feiyu-spritesheet.png"); }
+.pb2-pet-wrap.pb2-skin-fish .pb2-sprite { background-image: url("feiyu-spritesheet.webp"); }
 .pb2-pet-wrap.pb2-skin-codex .pb2-sprite { background-image: url("pet-whale-codex.webp"); }
 
 /* 静态皮肤（DeepSeek 女仆图 / 自定义上传）：CSS 呼吸 */
@@ -265,6 +265,33 @@
 
 /* 气泡里的贴纸尺寸（桌宠侧原本只有窗口页有这套规则，所以气泡里会被撑到 300px+） */
 .pb2-chatp-msg .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; flex: 0 0 auto; }
-.pb2-chatp-msg .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; }
+.pb2-chatp-msg .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat; background-size: 800% 1100%; }
 .pb2-chatp-msg .sticker.bean-st svg { width: 46px; height: 46px; display: block; }
 .pb2-chatp-msg .sticker.stick-st img { max-width: 112px; max-height: 112px; width: auto; height: auto; object-fit: contain; display: block; border-radius: 8px; }
+
+/* ===== v4.1 自定义动图皮肤 + 图片皮肤空闲小动作 ===== */
+/* 动图（GIF/动画 WebP）由 <img> 自行逐帧播放，与和大人同款：不叠呼吸缩放（见上方 .pb2-skin-anim）。
+   空闲小动作挂在 petWrap 整体上（呼吸/果冻在 viewport/imgSkin 层，互不打架）：
+   图片皮肤没有帧序列可切，就用这三段 CSS 整体动作顶上，精灵图皮肤仍用帧动画（waving/jumping）。 */
+@keyframes pb2-fun-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(3.5deg); }
+  55% { transform: rotate(-3deg); }
+  80% { transform: rotate(1.5deg); }
+}
+@keyframes pb2-fun-jump {
+  0%, 100% { transform: translateY(0); }
+  22% { transform: translateY(-13px); }
+  40% { transform: translateY(0); }
+  58% { transform: translateY(-7px); }
+  76% { transform: translateY(0); }
+}
+@keyframes pb2-fun-tilt {
+  0%, 18%, 78%, 100% { transform: rotate(0deg); }
+  32% { transform: rotate(5.5deg) translateY(-2px); }
+  60% { transform: rotate(5.5deg) translateY(-2px); }
+}
+.pb2-pet-wrap.pb2-fun-wobble { animation: pb2-fun-wobble 1.8s ease-in-out; }
+.pb2-pet-wrap.pb2-fun-jump { animation: pb2-fun-jump 1.8s cubic-bezier(.3, .7, .4, 1); }
+.pb2-pet-wrap.pb2-fun-tilt { animation: pb2-fun-tilt 1.8s ease-in-out; transform-origin: bottom center; }
+.pb2-pet-wrap.pb2-dragging { animation: none; }   /* 拖动时不跳，免得跟手感受差 */

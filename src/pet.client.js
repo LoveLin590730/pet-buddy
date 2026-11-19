@@ -130,13 +130,13 @@
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
       const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat / 和大人 / RYANFFY）
-      petWrap.classList.toggle('pb2-skin-anim', !!(im && im.anim));   // 动画 WebP 不再叠呼吸动画
-      let url = '';
-      if (im) url = assetUrl(im.file);
+      let url = '', anim = false;
+      if (im) { url = assetUrl(im.file); anim = !!im.anim; }
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
-        if (c) url = c.dataUrl;
+        if (c) { url = c.dataUrl; anim = customSkinAnim(c); }   // v4.1：上传的 GIF/动画 WebP 也走这条路
       }
+      petWrap.classList.toggle('pb2-skin-anim', anim);   // 动图不叠呼吸动画（和大人 120 帧同款处理）
       imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
       // v3.6.1：图加载完之后要重算 wrap 尺寸（切换皮肤时那会儿还拿不到新图尺寸）
       imgSkin.onload = () => { if (skinMode === 'img') { lastPaint = ''; refreshLayout(); } };
@@ -177,17 +177,30 @@
   }
   (function loop() { paintFrame(); requestAnimationFrame(loop); })();
 
-  // 偶尔挥手/跳跃
+  // 偶尔挥手/跳跃；v4.1 图片皮肤（含上传的动图）也有份：改用 CSS 整体小动作（没有帧序列可用）
   function scheduleIdleFun() {
     setTimeout(() => {
       if (!settings.hidden && !drag && (!transient || performance.now() >= transientUntil)) {
-        transient = Math.random() < 0.5 ? 'waving' : 'jumping';
-        transientUntil = performance.now() + 1500;
+        if (skinMode === 'img') petIdleFun();
+        else { transient = Math.random() < 0.5 ? 'waving' : 'jumping'; transientUntil = performance.now() + 1500; }
       }
       scheduleIdleFun();
     }, 18000 + Math.random() * 22000);
   }
   scheduleIdleFun();
+
+  /** v4.1 图片皮肤的空闲小动作：随机挑一个 CSS 动作类挂到 petWrap，一会儿自动摘掉。
+   *  挂在 petWrap 上（呼吸/果冻在 viewport/imgSkin 上），两层动画互不打架；拖动中不打扰。 */
+  let idleFunTimer = null;
+  function petIdleFun() {
+    if (idleFunTimer) return;                       // 上一段还没跳完
+    const cls = pickIdleFunClass();
+    petWrap.classList.add(cls);
+    idleFunTimer = setTimeout(() => {
+      petWrap.classList.remove(cls);
+      idleFunTimer = null;
+    }, 1800);
+  }
 
   /* ---- 位置：默认右下角，吸附 + 记忆 ---- */
   /** v3.6.1：静态图皮肤按图片自身比例定 wrap 尺寸（否则横图/竖图与交互区对不上，看着"位置偏了"） */
@@ -408,7 +421,9 @@
     pendingSpecialLine = '';
     const head = special || pickPokeLine();
     showBubble(b => {
-      const main = $new('span', 'pb2-bubble-text', head);
+      // v4.1 修复：台词里的 [bean:sleep] 等贴纸标记要渲染成图（原来纯文本塞入，显示成方括号文字）
+      const main = $new('span', 'pb2-bubble-text');
+      renderRich(main, head);
       const cost = $new('span', 'pb2-bubble-cost', '（算账中…）');
       b.appendChild(main); b.appendChild(cost);
       todaySpend(true).then(d => {
@@ -601,7 +616,7 @@
   const MENU_ITEMS = [
     { icon: 'chat', label: '气泡聊天', act: openChatPanel },
     { icon: 'speaker', label: 'bibo语音', sub: [
-      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('你好，我是坚祥数字助理！哼哼，记住了吗？'); } },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
@@ -895,7 +910,7 @@
   function exportSkinPack(list) {
     const pack = {
       format: 'pet-buddy-skinpack', version: 1, exportedAt: nowStr(),
-      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl })),
+      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl, anim: customSkinAnim(c) === true ? true : undefined })),
     };
     try {
       const blob = new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' });
@@ -919,10 +934,12 @@
         let added = 0;
         for (const s of list) {
           if (!s || typeof s.dataUrl !== 'string' || s.dataUrl.slice(0, 5) !== 'data:') continue;
+          if (!customSkinStoreFits(settings.customSkins || [], s.dataUrl)) continue;   // v4.1：装不下的跳过并计数
           settings.customSkins = (settings.customSkins || []).concat([{
             id: 'custom:' + Date.now() + ':' + (added++),
             name: String(s.name || '导入的模型').slice(0, 24),
             dataUrl: s.dataUrl,
+            anim: s.anim === true || undefined,   // v4.1：动图标记随包走；旧包没有就留给 customSkinAnim 现场判定
           }]);
         }
         // 自定义模型上限 24 个（localStorage 不是无底洞）＋每个 2MB 以内
@@ -1283,13 +1300,28 @@
       file.addEventListener('change', () => {
         const f = file.files && file.files[0];
         if (!f) return;
-        if (f.size > 2 * 1024 * 1024) { body.appendChild($new('div', 'pb2-hint', '图片超过 2MB，请压缩后再上传')); return; }
+        // v4.1：上限按静态/动图分档（读出内容后再判）；动图（GIF/动画 WebP）放宽到 4MB
+        if (f.size > CUSTOM_ANIM_MAX) {
+          body.appendChild($new('div', 'pb2-hint', '图片超过 ' + Math.round(CUSTOM_ANIM_MAX / 1024 / 1024) + 'MB，请压缩后再上传'));
+          return;
+        }
         const rd = new FileReader();
         rd.onload = () => {
+          const dataUrl = String(rd.result);
+          const anim = imgAnimKind(dataUrl) !== '';
+          if (!anim && f.size > CUSTOM_STATIC_MAX) {
+            body.appendChild($new('div', 'pb2-hint', '静态图超过 2MB，请压缩后再上传（动图 GIF/动画 WebP 可到 4MB）'));
+            return;
+          }
+          // localStorage 配额预检（约 10MB 上限）：存不下就明说，绝不静默丢
+          if (!customSkinStoreFits(settings.customSkins || [], dataUrl)) {
+            body.appendChild($new('div', 'pb2-hint', '本机存储放不下了（自定义模型存在 localStorage，上限约 10MB）：删几个旧模型，或换张小一点的图'));
+            return;
+          }
           const id = 'custom:' + Date.now();
-          settings.customSkins = (settings.customSkins || []).concat([{ id, name: f.name, dataUrl: String(rd.result) }]);
+          settings.customSkins = (settings.customSkins || []).concat([{ id, name: f.name, dataUrl: dataUrl, anim: anim }]);
           settings.skin = id; saveSettings(); applySkin(); refreshLayout(); closeDialog();
-          bubbleSay('新衣服穿好啦～', 2400);
+          bubbleSay(anim ? '会动的新衣服穿好啦～' : '新衣服穿好啦～', 2400);
         };
         rd.readAsDataURL(f);
       });
@@ -1303,7 +1335,7 @@
           th.style.backgroundImage = 'url("' + c.dataUrl + '")';
           const info = $new('div');
           info.appendChild($new('div', 'pb2-model-name', c.name));
-          info.appendChild($new('div', 'pb2-model-desc', '自定义上传'));
+          info.appendChild($new('div', 'pb2-model-desc', customSkinAnim(c) ? '自定义动图（GIF/动画 WebP）' : '自定义上传'));
           const acts = $new('div', 'pb2-model-acts');
           const ren = $new('button', 'pb2-model-act', '改名'); ren.type = 'button';
           ren.addEventListener('click', ev => {
@@ -1694,6 +1726,15 @@
     if (savedPos && savedPos.left != null) {
       chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
       chatp.style.left = savedPos.left + 'px'; chatp.style.top = savedPos.top + 'px';
+    } else {
+      /* v4.1 修复：默认位置不再硬编码 bottom:150px——桌宠大小一变就悬空一截或压住桌宠头顶。
+       * 改成贴着桌宠头顶 8px（桌宠调大调小都跟着）；桌宠隐藏/量不到时回退 150px。 */
+      const pr = petWrap.getBoundingClientRect();
+      const petTop = pr.top || 0;
+      const follow = !settings.hidden && petTop > 0
+        ? clamp(Math.round(window.innerHeight - petTop) + 8, 8, Math.max(60, window.innerHeight - 140))
+        : 150;
+      chatp.style.bottom = follow + 'px';
     }
     let dragging = false, dragDx = 0, dragDy = 0;
     head.addEventListener('pointerdown', ev => {

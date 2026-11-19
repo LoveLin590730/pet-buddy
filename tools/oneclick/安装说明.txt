@@ -25,7 +25,7 @@
 
 【包内容】
 pet-buddy\             插件本体：client.js / chat.html / client.css / manifest.json /
-                        icon.png / feiyu-spritesheet.png / pet-deepseek.webp / st-*.webp（40 张）/
+                        icon.png / feiyu-spritesheet.webp / pet-*.webp,png（5 个皮肤素材） / st-*.webp（40 张）/
                         assets.manifest.json / README.md / CHANGELOG.md / LICENSE*
 install-plugin.ps1      安装逻辑（也可以手动跑：
                         powershell -ExecutionPolicy Bypass -File install-plugin.ps1 -Source ".\pet-buddy"）

@@ -35,6 +35,7 @@ const sandbox = {
   setTimeout, clearTimeout, setInterval, clearInterval,
   TextDecoder, URL, Blob,
   btoa: (s) => Buffer.from(String(s), 'latin1').toString('base64'),
+  atob: (s) => Buffer.from(String(s), 'base64').toString('latin1'),
   localStorage: {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
     setItem: (k, v) => mem.set(k, String(v)),
@@ -72,6 +73,8 @@ const probe = `
   resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
   SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
+  imgAnimKind, customSkinAnim, customSkinStoreFits, CUSTOM_STATIC_MAX, CUSTOM_ANIM_MAX, CUSTOM_STORE_BUDGET,
+  IMG_IDLE_FUNS, pickIdleFunClass, numToZh, numZhValue,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
@@ -185,7 +188,7 @@ console.log('\n[余额来源：内部通道额度 + 缓存命中计价 · v3.1.0
   ok('身份牌不再去打网关账单，且原因说人话', cr.ok === false && /内部通道身份牌/.test(cr.reason), cr.reason);
   P.settings.gatewayKey = '';
   ok('素材常量指向插件根（宿主只服务根级文件，素材必须平铺）',
-    P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.png' && P.ASSET_STICKER === P.ASSET_DIR &&
+    P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.webp' && P.ASSET_STICKER === P.ASSET_DIR &&
     P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'pet-bongocat.png',
     P.ASSET_SPRITE);
 }
@@ -521,7 +524,7 @@ console.log('\n[音效与社区皮肤 · v3.3]');
   ok('社区皮肤带署名（许可要求）', /YunYueSama/.test(P.SPRITE_SKINS.codex.credit) && /codex-deepseek-pet/.test(P.SPRITE_SKINS.codex.credit), P.SPRITE_SKINS.codex.credit);
   ok('社区皮肤名称可直接显示', /大肥鱼/.test(P.SPRITE_SKINS.codex.name));
   ok('两套精灵图都指向插件根目录（含回退前缀）',
-    P.SPRITE_SKINS.fish.url.endsWith('feiyu-spritesheet.png') && P.SPRITE_SKINS.codex.url.endsWith('pet-whale-codex.webp'),
+    P.SPRITE_SKINS.fish.url.endsWith('feiyu-spritesheet.webp') && P.SPRITE_SKINS.codex.url.endsWith('pet-whale-codex.webp'),
     P.SPRITE_SKINS.codex.url);
 }
 
@@ -614,6 +617,83 @@ console.log('\n[语音合成与播报 · v3.2]');
   P.settings.speechOn = true;
   const empty = await P.speak('[stick:archive:比心]');
   ok('清洗后为空就不说（skipped=empty）', empty.ok === false && empty.skipped === 'empty', JSON.stringify(empty));
+}
+
+console.log('\n[v4.1 自定义动图皮肤]');
+{
+  // ---- 动画判定：手工构造字节头，不依赖真实图片文件 ----
+  const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+  const du = (mime, bytes) => 'data:image/' + mime + ';base64,' + b64(bytes);
+  const GCE = [0x21, 0xF9, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00];   // Graphic Control Extension
+  const gifAnim = du('gif', [0x47,0x49,0x46,0x38,0x39,0x61].concat([7,0,7,0], GCE, [0x2C,0,0,0,0,1,0,1,0,0], GCE, [0x3B]));
+  const gifStill = du('gif', [0x47,0x49,0x46,0x38,0x39,0x61].concat([7,0,7,0], GCE, [0x2C,0,0,0,0,1,0,1,0,0], [0x3B]));
+  const chunk = (tag, payload) => [...Buffer.from(tag, 'latin1')].concat(
+    [payload.length & 255, (payload.length >> 8) & 255, (payload.length >> 16) & 255, (payload.length >> 24) & 255], payload);
+  const riffBody = [...Buffer.from('WEBP', 'latin1')].concat(chunk('VP8X', [0x0A,0,0,0, 0,0,0,0,0,0]), chunk('ANIM', [0,0,0,0, 0,0]));
+  const webpAnim = du('webp', [...Buffer.from('RIFF', 'latin1')].concat([riffBody.length & 255,0,0,0], riffBody));
+  const webpStill = du('webp', [...Buffer.from('RIFF', 'latin1')].concat(
+    [(4 + 8 + 4) & 255, 0, 0, 0], [...Buffer.from('WEBP', 'latin1')], chunk('VP8 ', [0x0A,0,0,0])));
+  const pngStill = 'data:image/png;base64,' + Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0,0,0,13,0x49,0x48,0x44,0x52]).toString('base64');
+
+  eq('GIF89a 含 ≥2 个 GCE → 动画', P.imgAnimKind(gifAnim), 'gif');
+  eq('GIF89a 只有 1 个 GCE → 静态', P.imgAnimKind(gifStill), '');
+  eq('WebP 含 ANIM chunk → 动画', P.imgAnimKind(webpAnim), 'webp');
+  eq('WebP 只有 VP8 → 静态', P.imgAnimKind(webpStill), '');
+  eq('PNG → 静态', P.imgAnimKind(pngStill), '');
+  eq('非 data: 前缀 → 静态（不抛错）', P.imgAnimKind('http://x/a.gif'), '');
+
+  // ---- 上限常量与存储预检 ----
+  eq('静态图上限沿用 2MB', P.CUSTOM_STATIC_MAX, 2 * 1024 * 1024);
+  eq('动图上限放宽到 4MB', P.CUSTOM_ANIM_MAX, 4 * 1024 * 1024);
+  ok('动图上限 > 静态上限（分档生效）', P.CUSTOM_ANIM_MAX > P.CUSTOM_STATIC_MAX);
+  ok('空列表 + 小图放得下', P.customSkinStoreFits([], 'data:image/gif;base64,AAAA') === true);
+  ok('总量超预算（约 10MB localStorage）时明说放不下',
+    P.customSkinStoreFits([{dataUrl: 'x'.repeat(9.0e6)}], 'data:image/gif;base64,' + 'A'.repeat(1024)) === false);
+
+  // ---- anim 缓存标记（旧数据现场判定并记回内存） ----
+  eq('anim:true 直接认', P.customSkinAnim({anim: true, dataUrl: 'x'}), true);
+  eq('anim:false 直接认', P.customSkinAnim({anim: false, dataUrl: 'x'}), false);
+  const legacy = {id: 'custom:1', name: '旧数据', dataUrl: gifAnim};
+  eq('旧数据（无 anim）现场判定为动图', P.customSkinAnim(legacy), true);
+  eq('判定结果写回缓存（下次不再算）', legacy.anim, true);
+  const legacyStill = {id: 'custom:2', name: '旧静态', dataUrl: pngStill};
+  eq('旧静态数据判定为静态并缓存', P.customSkinAnim(legacyStill) === false && legacyStill.anim === false, true);
+
+  // ---- 空闲小动作 ----
+  eq('图片皮肤空闲动作三档', P.IMG_IDLE_FUNS.length, 3);
+  ok('动作类名都带 pb2-fun- 前缀', P.IMG_IDLE_FUNS.every((c) => c.indexOf('pb2-fun-') === 0));
+  eq('pickIdleFunClass(0) 取第一档', P.pickIdleFunClass(0), P.IMG_IDLE_FUNS[0]);
+  eq('pickIdleFunClass(0.999) 取最后一档', P.pickIdleFunClass(0.999), P.IMG_IDLE_FUNS[2]);
+  ok('pickIdleFunClass() 随机也落在表内', P.IMG_IDLE_FUNS.indexOf(P.pickIdleFunClass()) >= 0);
+
+  // ---- 产物同步（CSS/产物里不能再有旧 png 引用；关键新逻辑要在产物里） ----
+  const cssV41 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  const jsV41 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const htmlV41 = readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
+  ok('client.css 精灵图引用已换 WebP（无 png 残留）', cssV41.indexOf('feiyu-spritesheet.png') < 0 && cssV41.indexOf('feiyu-spritesheet.webp') >= 0);
+  ok('chat.html 精灵图引用已换 WebP（无 png 残留）', htmlV41.indexOf('feiyu-spritesheet.png') < 0 && htmlV41.indexOf('feiyu-spritesheet.webp') >= 0);
+  ok('空闲小动作三段 keyframes 都在 CSS 里', ['pb2-fun-wobble', 'pb2-fun-jump', 'pb2-fun-tilt'].every((k) => cssV41.indexOf('@keyframes ' + k) >= 0));
+  ok('拖动时不播空闲动作', /\.pb2-pet-wrap\.pb2-dragging\s*\{\s*animation:\s*none/.test(cssV41));
+  ok('上传处理带容量预检（存不下明说，不静默丢）', /customSkinStoreFits/.test(jsV41) && /本机存储放不下/.test(jsV41));
+  ok('上传后 anim 标记落进 customSkins', /anim:\s*anim/.test(jsV41));
+  ok('单击台词走 renderRich（[bean:sleep] 渲染成图，不再显示方括号文字）', /renderRich\(main,\s*head\)/.test(jsV41));
+  ok('气泡聊天默认位置跟随桌宠头顶（不再硬编码 150px）', /不再硬编码 bottom:150px/.test(jsV41));
+}
+
+console.log('\n[v4.1 语音数字本地化]');
+{
+  eq('67834 → 六万七千八百三十四', P.numToZh('67834'), '六万七千八百三十四');
+  eq('67.83 → 六十七点八三', P.numToZh('67.83'), '六十七点八三');
+  eq('0.5 → 零点五', P.numToZh('0.5'), '零点五');
+  eq('10 → 十（一十省略）', P.numToZh('10'), '十');
+  eq('14 → 十四', P.numToZh('14'), '十四');
+  eq('10000 → 一万', P.numToZh('10000'), '一万');
+  eq('10001 → 一万零一', P.numToZh('10001'), '一万零一');
+  eq('9 → 九', P.numToZh('9'), '九');
+  eq('0 → 零', P.numToZh('0'), '零');
+  ok('≥8 位长号码逐位读（不按位值）', P.numToZh('13800001111') === '一三八零零零零一一一一');
+  ok('speechClean 把余额数字念成中文', P.speechClean('还剩 67834 分 ≈¥67.83').indexOf('六万七千八百三十四') >= 0 && P.speechClean('还剩 67834 分').indexOf('67834') < 0);
+  eq('无数字的句子原样通过', P.speechClean('你好，我是坚祥数字助理'), '你好，我是坚祥数字助理');
 }
 
 console.log('\n[语音听写 · v3.2]');

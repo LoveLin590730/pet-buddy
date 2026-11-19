@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.0.0';
+const PB_VERSION = '4.1.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -311,7 +311,7 @@ const CHAT_MODELS = [
    * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
   /* 素材前缀：默认按 ASSET_DIR 拼，但**启动时会用 CSS 解析出的绝对基准重算**
    * （见下面的 resolveAssetUrls——宿主用 file/内部协议加载页面时，根相对路径会失效）。 */
-  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.webp';   // 官方精灵图（v4.1 起 WebP，体积 -59%）
   let ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
   let ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-bongocat.png';  // 内置静态皮肤（BongoCat 猫猫，v3.3.3 起）
   let ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
@@ -328,7 +328,7 @@ const CHAT_MODELS = [
    * 再在 client.css 里加一行 `.pb2-pet-wrap.<cls> .pb2-sprite { background-image: url("<file>"); }`。
    * 图片一律走 CSS 相对路径加载（http / file 协议都可靠），JS 只切类名。 */
   const SPRITE_SKINS = {
-    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.png', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.png' },
+    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.webp', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.webp' },
     codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', file: 'pet-whale-codex.webp', cls: 'pb2-skin-codex', credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）', url: ASSET_DIR + 'pet-whale-codex.webp' },
   };
   /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
@@ -371,11 +371,78 @@ const CHAT_MODELS = [
   /** 某皮肤是否走静态图（BongoCat / 用户上传的自定义图） */
   function isImageSkin(skin) { return !!IMAGE_SKINS[skin]; }
 
+  /* ---- v4.1 自定义动图皮肤：GIF / 动画 WebP 上传即会动 ----
+   * 渲染路径与内置皮肤完全同路（<img> 会自动播 GIF/动画 WebP，和大人 120 帧已验证），
+   * 这里只负责三件事：①判定一张 dataUrl 是不是动图 ②动画皮肤不叠 CSS 呼吸（pb2-skin-anim）
+   * ③上传/导入前做体积与 localStorage 容量预检（存不下就明说，不静默丢）。
+   * 上限沿用静态图既有约定延伸：静态 2MB；动图 4MB（base64 后约 5.3MB，
+   * localStorage 配额约 10MB，CUSTOM_STORE_BUDGET 之外还给设置留余量）。 */
+  const CUSTOM_STATIC_MAX = 2 * 1024 * 1024;   // 静态图上限（沿用既有约定）
+  const CUSTOM_ANIM_MAX   = 4 * 1024 * 1024;   // 动图上限（GIF/动画 WebP）
+  const CUSTOM_STORE_BUDGET = 9.0e6;           // 自定义皮肤总存储预算（字符；localStorage 上限约 10MB）
+
+  /** 判定 dataUrl 是不是动图：'gif' | 'webp' | ''（静态/未知）。
+   *  GIF89a：数 Graphic Control Extension（0x21 0xF9）出现次数，≥2 判动画（每帧带一个 GCE；
+   *          单帧透明 GIF 也可能有 1 个 GCE，所以阈值取 2）。
+   *  WebP：RIFF 容器里遍历 chunk，见到 'ANIM' 即动画（一定在头部，扫前 64KB 足够）。 */
+  function imgAnimKind(dataUrl) {
+    const s = String(dataUrl || '');
+    const comma = s.indexOf(',');
+    if (s.slice(0, 5) !== 'data:' || comma < 0) return '';
+    let bytes;
+    try { bytes = atob(s.slice(comma + 1)); } catch (e) { return ''; }
+    const n = bytes.length;
+    if (n < 12) return '';
+    // GIF：头 GIF89a + ≥2 个 GCE → 动画
+    if (bytes.slice(0, 6) === 'GIF89a') {
+      let gce = 0;
+      for (let i = 0; i < n - 1 && gce < 2; i++) if (bytes.charCodeAt(i) === 0x21 && bytes.charCodeAt(i + 1) === 0xF9) gce++;
+      return gce >= 2 ? 'gif' : '';
+    }
+    // WebP：RIFF....WEBP + ANIM chunk
+    if (bytes.slice(0, 4) === 'RIFF' && bytes.slice(8, 12) === 'WEBP') {
+      let p = 12;
+      while (p + 8 <= n && p <= 65536) {
+        const tag = bytes.substr(p, 4);
+        const sz = bytes.charCodeAt(p + 4) | (bytes.charCodeAt(p + 5) << 8) | (bytes.charCodeAt(p + 6) << 16) | (bytes.charCodeAt(p + 7) << 24);
+        if (tag === 'ANIM') return 'webp';
+        p += 8 + sz + (sz & 1);   // chunk 按 2 字节对齐
+      }
+    }
+    return '';
+  }
+
+  /** 自定义皮肤是否为动图：c.anim 是缓存标记（上传时写入；旧数据与导入包没有就现场判定一次并记在内存里） */
+  function customSkinAnim(c) {
+    if (!c || typeof c.dataUrl !== 'string') return false;
+    if (c.anim === true) return true;
+    if (c.anim === false) return false;
+    const k = imgAnimKind(c.dataUrl);
+    c.anim = k !== '';            // 现场判定结果缓存到对象上（下次 saveSettings 顺带落盘）
+    return c.anim;
+  }
+
+  /** 上传/导入前容量预检：新的 dataUrl 加进现有列表后，序列化长度是否还在预算内 */
+  function customSkinStoreFits(list, dataUrl) {
+    let total = String(dataUrl || '').length + 2048;   // 2048 = 其他字段与设置的粗略余量
+    for (const c of (list || [])) total += String(c && c.dataUrl || '').length + 160;
+    return total <= CUSTOM_STORE_BUDGET;
+  }
+
+  /** v4.1 空闲随机小动作（图片皮肤用）：与精灵图皮肤的 waving/jumping 等价，
+   * 但图片皮肤没有帧序列，改用 CSS 整体小动作（keyframes 见 client.css）。 */
+  const IMG_IDLE_FUNS = ['pb2-fun-wobble', 'pb2-fun-jump', 'pb2-fun-tilt'];
+  function pickIdleFunClass(r) {
+    const v = r == null ? Math.random() : Number(r);   // 注意 0 是合法输入，不能用 || 兜底
+    const i = Math.floor((isNaN(v) ? Math.random() : v) * IMG_IDLE_FUNS.length);
+    return IMG_IDLE_FUNS[Math.min(Math.max(i, 0), IMG_IDLE_FUNS.length - 1)];
+  }
+
   /** 把探测到的可用前缀应用到所有素材常量上 */
   function applyAssetBase(base) {
     if (!base || base === ASSET_DIR_RESOLVED) return false;
     ASSET_DIR_RESOLVED = base;
-    ASSET_SPRITE = base + 'feiyu-spritesheet.png';
+    ASSET_SPRITE = base + 'feiyu-spritesheet.webp';
     ASSET_SPRITE_CODEX = base + 'pet-whale-codex.webp';
     ASSET_SKIN_DEFAULT = base + 'pet-bongocat.png';
     ASSET_STICKER = base;
@@ -1298,11 +1365,67 @@ const CHAT_MODELS = [
     t = t.replace(/[*_#>~]/g, ' ');                             // markdown 记号（保留 ｜ 停顿标记）
     t = t.replace(/[（(]\s*[)）]/g, ' ');
     t = t.replace(/[ \t\r\n]+/g, ' ').trim();
+    // v4.1：数字本地化朗读——合成音念不出阿拉伯数字串（会挤成一声），转成中文读法。
+    // <8 位按位值读（67834 → 六万七千八百三十四），≥8 位逐位读（手机号/时间戳类），
+    // 小数部分一律逐位（67.83 → 六十七点八三）。
+    t = t.replace(/\d{1,16}(?:\.\d{1,8})?/g, function (m) { return numToZh(m); });
     t = t.replace(/\s*｜\s*/g, '｜');                            // 停顿标记两侧不留空格
     const max = clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400);
     if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？｜\s]+$/, '') + '……';
     return t;
   }
+
+  /* ---- v4.1 数字 → 中文读法（只服务朗读，不上屏） ---- */
+  const ZH_DIGITS = '零一二三四五六七八九';
+  /** 1~4 位整数段 → 中文（六千七百八十三；10~19 的「一十」省成「十」） */
+  function numZhSeg(seg) {
+    const units = ['', '十', '百', '千'];
+    let out = '', zeroPending = false;
+    for (let i = 0; i < seg.length; i++) {
+      const d = seg.charCodeAt(i) - 48;
+      const u = seg.length - 1 - i;
+      if (d === 0) { if (out) zeroPending = true; }
+      else {
+        if (zeroPending) { out += '零'; zeroPending = false; }
+        if (d === 1 && u === 1 && !out) out += '十';        // 10~19 读「十x」不读「一十x」
+        else out += ZH_DIGITS[d] + units[u];
+      }
+    }
+    return out || '零';
+  }
+  /** 按位值读：万/亿分组（67834 → 六万七千八百三十四；100005 → 十万零五） */
+  function numZhValue(s) {
+    const groups = [];
+    for (let i = s.length; i > 0; i -= 4) groups.unshift(s.slice(Math.max(0, i - 4), i));
+    const gu = ['', '万', '亿', '兆'];
+    let out = '', prevZero = false;
+    for (let i = 0; i < groups.length; i++) {
+      const g = numZhSeg(groups[i]);
+      const isTop = i === 0;
+      if (g === '零') { prevZero = !isTop; continue; }
+      if (prevZero || (!isTop && groups[i].charAt(0) === '0')) out += '零';   // 跨组连接零（10001 → 一万零一）
+      out += g + gu[groups.length - 1 - i];
+      prevZero = false;
+    }
+    return out || '零';
+  }
+  /** 入口：'67834' → 六万七千八百三十四；'67.83' → 六十七点八三；'13800001111' → 逐位 */
+  function numToZh(m) {
+    const parts = String(m).split('.');
+    let int = parts[0].replace(/^0+(?=\d)/, '');
+    let out;
+    if (!int) out = '零';                                  // 纯 '0' 或 '0xx'
+    else if (int.length >= 8) {                            // 长号码/时间戳：逐位读更自然
+      out = '';
+      for (let i = 0; i < int.length; i++) out += ZH_DIGITS[int.charCodeAt(i) - 48];
+    } else out = numZhValue(int);
+    if (parts.length > 1 && parts[1]) {
+      out += '点';
+      for (let i = 0; i < parts[1].length; i++) out += ZH_DIGITS[parts[1].charCodeAt(i) - 48];
+    }
+    return out;
+  }
+
 
   /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
   function pauseOf(p) {
@@ -2254,13 +2377,13 @@ const CHAT_MODELS = [
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
       const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat / 和大人 / RYANFFY）
-      petWrap.classList.toggle('pb2-skin-anim', !!(im && im.anim));   // 动画 WebP 不再叠呼吸动画
-      let url = '';
-      if (im) url = assetUrl(im.file);
+      let url = '', anim = false;
+      if (im) { url = assetUrl(im.file); anim = !!im.anim; }
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
-        if (c) url = c.dataUrl;
+        if (c) { url = c.dataUrl; anim = customSkinAnim(c); }   // v4.1：上传的 GIF/动画 WebP 也走这条路
       }
+      petWrap.classList.toggle('pb2-skin-anim', anim);   // 动图不叠呼吸动画（和大人 120 帧同款处理）
       imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
       // v3.6.1：图加载完之后要重算 wrap 尺寸（切换皮肤时那会儿还拿不到新图尺寸）
       imgSkin.onload = () => { if (skinMode === 'img') { lastPaint = ''; refreshLayout(); } };
@@ -2301,17 +2424,30 @@ const CHAT_MODELS = [
   }
   (function loop() { paintFrame(); requestAnimationFrame(loop); })();
 
-  // 偶尔挥手/跳跃
+  // 偶尔挥手/跳跃；v4.1 图片皮肤（含上传的动图）也有份：改用 CSS 整体小动作（没有帧序列可用）
   function scheduleIdleFun() {
     setTimeout(() => {
       if (!settings.hidden && !drag && (!transient || performance.now() >= transientUntil)) {
-        transient = Math.random() < 0.5 ? 'waving' : 'jumping';
-        transientUntil = performance.now() + 1500;
+        if (skinMode === 'img') petIdleFun();
+        else { transient = Math.random() < 0.5 ? 'waving' : 'jumping'; transientUntil = performance.now() + 1500; }
       }
       scheduleIdleFun();
     }, 18000 + Math.random() * 22000);
   }
   scheduleIdleFun();
+
+  /** v4.1 图片皮肤的空闲小动作：随机挑一个 CSS 动作类挂到 petWrap，一会儿自动摘掉。
+   *  挂在 petWrap 上（呼吸/果冻在 viewport/imgSkin 上），两层动画互不打架；拖动中不打扰。 */
+  let idleFunTimer = null;
+  function petIdleFun() {
+    if (idleFunTimer) return;                       // 上一段还没跳完
+    const cls = pickIdleFunClass();
+    petWrap.classList.add(cls);
+    idleFunTimer = setTimeout(() => {
+      petWrap.classList.remove(cls);
+      idleFunTimer = null;
+    }, 1800);
+  }
 
   /* ---- 位置：默认右下角，吸附 + 记忆 ---- */
   /** v3.6.1：静态图皮肤按图片自身比例定 wrap 尺寸（否则横图/竖图与交互区对不上，看着"位置偏了"） */
@@ -2532,7 +2668,9 @@ const CHAT_MODELS = [
     pendingSpecialLine = '';
     const head = special || pickPokeLine();
     showBubble(b => {
-      const main = $new('span', 'pb2-bubble-text', head);
+      // v4.1 修复：台词里的 [bean:sleep] 等贴纸标记要渲染成图（原来纯文本塞入，显示成方括号文字）
+      const main = $new('span', 'pb2-bubble-text');
+      renderRich(main, head);
       const cost = $new('span', 'pb2-bubble-cost', '（算账中…）');
       b.appendChild(main); b.appendChild(cost);
       todaySpend(true).then(d => {
@@ -2725,7 +2863,7 @@ const CHAT_MODELS = [
   const MENU_ITEMS = [
     { icon: 'chat', label: '气泡聊天', act: openChatPanel },
     { icon: 'speaker', label: 'bibo语音', sub: [
-      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('你好，我是坚祥数字助理！哼哼，记住了吗？'); } },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
@@ -3019,7 +3157,7 @@ const CHAT_MODELS = [
   function exportSkinPack(list) {
     const pack = {
       format: 'pet-buddy-skinpack', version: 1, exportedAt: nowStr(),
-      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl })),
+      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl, anim: customSkinAnim(c) === true ? true : undefined })),
     };
     try {
       const blob = new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' });
@@ -3043,10 +3181,12 @@ const CHAT_MODELS = [
         let added = 0;
         for (const s of list) {
           if (!s || typeof s.dataUrl !== 'string' || s.dataUrl.slice(0, 5) !== 'data:') continue;
+          if (!customSkinStoreFits(settings.customSkins || [], s.dataUrl)) continue;   // v4.1：装不下的跳过并计数
           settings.customSkins = (settings.customSkins || []).concat([{
             id: 'custom:' + Date.now() + ':' + (added++),
             name: String(s.name || '导入的模型').slice(0, 24),
             dataUrl: s.dataUrl,
+            anim: s.anim === true || undefined,   // v4.1：动图标记随包走；旧包没有就留给 customSkinAnim 现场判定
           }]);
         }
         // 自定义模型上限 24 个（localStorage 不是无底洞）＋每个 2MB 以内
@@ -3407,13 +3547,28 @@ const CHAT_MODELS = [
       file.addEventListener('change', () => {
         const f = file.files && file.files[0];
         if (!f) return;
-        if (f.size > 2 * 1024 * 1024) { body.appendChild($new('div', 'pb2-hint', '图片超过 2MB，请压缩后再上传')); return; }
+        // v4.1：上限按静态/动图分档（读出内容后再判）；动图（GIF/动画 WebP）放宽到 4MB
+        if (f.size > CUSTOM_ANIM_MAX) {
+          body.appendChild($new('div', 'pb2-hint', '图片超过 ' + Math.round(CUSTOM_ANIM_MAX / 1024 / 1024) + 'MB，请压缩后再上传'));
+          return;
+        }
         const rd = new FileReader();
         rd.onload = () => {
+          const dataUrl = String(rd.result);
+          const anim = imgAnimKind(dataUrl) !== '';
+          if (!anim && f.size > CUSTOM_STATIC_MAX) {
+            body.appendChild($new('div', 'pb2-hint', '静态图超过 2MB，请压缩后再上传（动图 GIF/动画 WebP 可到 4MB）'));
+            return;
+          }
+          // localStorage 配额预检（约 10MB 上限）：存不下就明说，绝不静默丢
+          if (!customSkinStoreFits(settings.customSkins || [], dataUrl)) {
+            body.appendChild($new('div', 'pb2-hint', '本机存储放不下了（自定义模型存在 localStorage，上限约 10MB）：删几个旧模型，或换张小一点的图'));
+            return;
+          }
           const id = 'custom:' + Date.now();
-          settings.customSkins = (settings.customSkins || []).concat([{ id, name: f.name, dataUrl: String(rd.result) }]);
+          settings.customSkins = (settings.customSkins || []).concat([{ id, name: f.name, dataUrl: dataUrl, anim: anim }]);
           settings.skin = id; saveSettings(); applySkin(); refreshLayout(); closeDialog();
-          bubbleSay('新衣服穿好啦～', 2400);
+          bubbleSay(anim ? '会动的新衣服穿好啦～' : '新衣服穿好啦～', 2400);
         };
         rd.readAsDataURL(f);
       });
@@ -3427,7 +3582,7 @@ const CHAT_MODELS = [
           th.style.backgroundImage = 'url("' + c.dataUrl + '")';
           const info = $new('div');
           info.appendChild($new('div', 'pb2-model-name', c.name));
-          info.appendChild($new('div', 'pb2-model-desc', '自定义上传'));
+          info.appendChild($new('div', 'pb2-model-desc', customSkinAnim(c) ? '自定义动图（GIF/动画 WebP）' : '自定义上传'));
           const acts = $new('div', 'pb2-model-acts');
           const ren = $new('button', 'pb2-model-act', '改名'); ren.type = 'button';
           ren.addEventListener('click', ev => {
@@ -3818,6 +3973,15 @@ const CHAT_MODELS = [
     if (savedPos && savedPos.left != null) {
       chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
       chatp.style.left = savedPos.left + 'px'; chatp.style.top = savedPos.top + 'px';
+    } else {
+      /* v4.1 修复：默认位置不再硬编码 bottom:150px——桌宠大小一变就悬空一截或压住桌宠头顶。
+       * 改成贴着桌宠头顶 8px（桌宠调大调小都跟着）；桌宠隐藏/量不到时回退 150px。 */
+      const pr = petWrap.getBoundingClientRect();
+      const petTop = pr.top || 0;
+      const follow = !settings.hidden && petTop > 0
+        ? clamp(Math.round(window.innerHeight - petTop) + 8, 8, Math.max(60, window.innerHeight - 140))
+        : 150;
+      chatp.style.bottom = follow + 'px';
     }
     let dragging = false, dragDx = 0, dragDy = 0;
     head.addEventListener('pointerdown', ev => {

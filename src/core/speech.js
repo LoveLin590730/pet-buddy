@@ -374,11 +374,67 @@
     t = t.replace(/[*_#>~]/g, ' ');                             // markdown 记号（保留 ｜ 停顿标记）
     t = t.replace(/[（(]\s*[)）]/g, ' ');
     t = t.replace(/[ \t\r\n]+/g, ' ').trim();
+    // v4.1：数字本地化朗读——合成音念不出阿拉伯数字串（会挤成一声），转成中文读法。
+    // <8 位按位值读（67834 → 六万七千八百三十四），≥8 位逐位读（手机号/时间戳类），
+    // 小数部分一律逐位（67.83 → 六十七点八三）。
+    t = t.replace(/\d{1,16}(?:\.\d{1,8})?/g, function (m) { return numToZh(m); });
     t = t.replace(/\s*｜\s*/g, '｜');                            // 停顿标记两侧不留空格
     const max = clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400);
     if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？｜\s]+$/, '') + '……';
     return t;
   }
+
+  /* ---- v4.1 数字 → 中文读法（只服务朗读，不上屏） ---- */
+  const ZH_DIGITS = '零一二三四五六七八九';
+  /** 1~4 位整数段 → 中文（六千七百八十三；10~19 的「一十」省成「十」） */
+  function numZhSeg(seg) {
+    const units = ['', '十', '百', '千'];
+    let out = '', zeroPending = false;
+    for (let i = 0; i < seg.length; i++) {
+      const d = seg.charCodeAt(i) - 48;
+      const u = seg.length - 1 - i;
+      if (d === 0) { if (out) zeroPending = true; }
+      else {
+        if (zeroPending) { out += '零'; zeroPending = false; }
+        if (d === 1 && u === 1 && !out) out += '十';        // 10~19 读「十x」不读「一十x」
+        else out += ZH_DIGITS[d] + units[u];
+      }
+    }
+    return out || '零';
+  }
+  /** 按位值读：万/亿分组（67834 → 六万七千八百三十四；100005 → 十万零五） */
+  function numZhValue(s) {
+    const groups = [];
+    for (let i = s.length; i > 0; i -= 4) groups.unshift(s.slice(Math.max(0, i - 4), i));
+    const gu = ['', '万', '亿', '兆'];
+    let out = '', prevZero = false;
+    for (let i = 0; i < groups.length; i++) {
+      const g = numZhSeg(groups[i]);
+      const isTop = i === 0;
+      if (g === '零') { prevZero = !isTop; continue; }
+      if (prevZero || (!isTop && groups[i].charAt(0) === '0')) out += '零';   // 跨组连接零（10001 → 一万零一）
+      out += g + gu[groups.length - 1 - i];
+      prevZero = false;
+    }
+    return out || '零';
+  }
+  /** 入口：'67834' → 六万七千八百三十四；'67.83' → 六十七点八三；'13800001111' → 逐位 */
+  function numToZh(m) {
+    const parts = String(m).split('.');
+    let int = parts[0].replace(/^0+(?=\d)/, '');
+    let out;
+    if (!int) out = '零';                                  // 纯 '0' 或 '0xx'
+    else if (int.length >= 8) {                            // 长号码/时间戳：逐位读更自然
+      out = '';
+      for (let i = 0; i < int.length; i++) out += ZH_DIGITS[int.charCodeAt(i) - 48];
+    } else out = numZhValue(int);
+    if (parts.length > 1 && parts[1]) {
+      out += '点';
+      for (let i = 0; i < parts[1].length; i++) out += ZH_DIGITS[parts[1].charCodeAt(i) - 48];
+    }
+    return out;
+  }
+
 
   /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
   function pauseOf(p) {
