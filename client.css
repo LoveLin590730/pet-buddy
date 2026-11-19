@@ -191,6 +191,12 @@
 .pb2-menu .pb2-msep { background: linear-gradient(90deg,transparent,#dfe6f7 18%,#dfe6f7 82%,transparent); margin: 5px 8px; }
 .pb2-submenu { border-left-color: #dfe6f7; }
 
+/* ===== 5.x 菜单合并：栏内分组小标题（「bibo语音与音效」栏里的 语音 / 音效 两组） =====
+ * 小标题不可点、不参与悬停高亮，只负责分组感（配合 .pb2-msep 分隔线）。 */
+.pb2-menu .pb2-mhead { margin: 7px 8px 1px; font-size: 11px; font-weight: 650; color: #7c88ab;
+  letter-spacing: .5px; cursor: default; pointer-events: none; }
+.pb2-submenu .pb2-mhead:first-child { margin-top: 1px; }
+
 /* 弹窗：遮罩柔化 + 标题栏渐变 + 控件统一手感 */
 .pb2-mask { background: rgba(18,26,48,.30); backdrop-filter: blur(2px); }
 .pb2-dialog { border-radius: 14px; border-color: #dbe3f5; box-shadow: 0 18px 48px rgba(20,30,70,.28); }

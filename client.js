@@ -5137,26 +5137,28 @@ const CHAT_MODELS = [
     }, 650);
   });
 
-  /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音 / bibo音效 / 桌宠 / 设置）
-   *      v4.16：桌宠那栏精简——"设置类"全收进「桌宠设置…」弹窗（菜单只留常用动作） ---- */
+  /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音与音效 / 桌宠 / 设置）
+   *      v4.16：桌宠那栏精简——"设置类"全收进「桌宠设置…」弹窗（菜单只留常用动作）
+   *      5.x：原来的「bibo语音」「bibo音效」两栏合并为一栏「bibo语音与音效」——
+   *            栏内用两个小标题（语音 / 音效）+ 分隔线分组，菜单项、行为与 keepOpen 语义一个都没动 ---- */
   const MENU_ITEMS = [
     { icon: 'chat', label: '气泡聊天', act: openChatPanel },
-    { icon: 'speaker', label: 'bibo语音', sub: [
+    { icon: 'speaker', label: 'bibo语音与音效', sub: [
+      { head: '语音' },
       { icon: 'speaker', label: '试听语音', act: () => { bubbleSay('试听中…（说完这句会停）', 2600); speechUnlock(); speechProbe(probeText()); } },
       { icon: 'note', label: '试听文本…', act: openProbeTextEditor },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: 'book', label: '常用语…', act: openPhraseBook },
-      { icon: 'gear', label: '声音设置…', act: openSoundSettings },
-      { sep: true },
       { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
       { icon: 'palette', label: () => 'bibo音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
       { icon: 'mic', label: () => '朗读音色：' + ttsVoiceLabel(), act: () => cycleTtsVoice(), keepOpen: true },
       { icon: 'speed', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
-    ] },
-    { icon: 'bell', label: 'bibo音效', sub: [
+      { sep: true },
+      { head: '音效' },
       { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'), act: () => toggleSfx(), keepOpen: true },
       { icon: 'speed', label: () => '音效音量：' + Math.round(sfxVolume() * 100) + '%', act: () => cycleSfxVolume(), keepOpen: true },
       { icon: 'speaker', label: '试听音效', act: () => { speechUnlock(); ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320)); } },
+      { sep: true },
       { icon: 'gear', label: '声音设置…', act: openSoundSettings },
     ] },
     { icon: 'mask', label: '桌宠', sub: [
@@ -5327,6 +5329,7 @@ const CHAT_MODELS = [
         const sub = $new('div', 'pb2-submenu');
         for (const s of it.sub) {
           if (s.sep) { sub.appendChild($new('div', 'pb2-msep')); continue; }
+          if (s.head) { sub.appendChild($new('div', 'pb2-mhead', s.head)); continue; }   // 栏内分组小标题（语音 / 音效）
           const r2 = $new('div', 'pb2-mi');
           menuIcon(r2, s.icon);
           r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
