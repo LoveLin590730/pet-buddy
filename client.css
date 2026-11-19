@@ -104,7 +104,7 @@
 .pb2-model-acts { display: flex; gap: 5px; flex-wrap: wrap; }
 .pb2-model-act { font-size: 12px; padding: 2px 8px; }
 .pb2-menu .pb2-msep { height: 1px; background: #e7ecf8; margin: 4px 6px; }
-/* v3.3.1 折叠子菜单（右键菜单里的「bibo语音」）：**点击就地展开**（缩进列表，不弹出到菜单外，
+/* v3.3.1 折叠子菜单（右键菜单里的「bibo语音与音效」）：**点击就地展开**（缩进列表，不弹出到菜单外，
    避免桌宠在屏幕右下角时子菜单被窗口边界裁掉） */
 .pb2-menu .pb2-mi > .pb2-mlabel { flex: 1 1 auto; }
 .pb2-menu .pb2-marrow { flex: none; opacity: .5; font-size: 10px; }
