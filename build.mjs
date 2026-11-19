@@ -25,9 +25,22 @@ const CHECK = process.argv.includes('--check');
 const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
 const BEGIN = '/* pb:core:begin';
 const END = '/* pb:core:end */';
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'speech.js', 'voiceinput.js', 'chat.js'];
+/* 第三方原样内联（只去掉行首 export）：先于 core 注入，core 里的模块直接用它的函数。
+ * 升级做法：整文件替换 vendor/ 下的原件，跑一次 build 即可（diff 只可能在去 export 那步）。 */
+const VENDOR = [{file: 'vendor/bibibobo.js'}];
 
-/* ---------- 1. 拼 core 段 ---------- */
+/* ---------- 1. 拼 vendor 段（第三方，原样） ---------- */
+const vendor = VENDOR.map((v) => {
+  const raw = read(v.file).trimEnd();
+  if (/^\s*import\b/m.test(raw)) throw new Error(`${v.file} 里有 import —— vendor 必须自包含才能原样内联`);
+  if (/<\/script/i.test(raw)) throw new Error(`${v.file} 含 </script>，会截断 HTML 内联`);
+  const t = raw.replace(/^export\s+(?=(?:const|let|var|function|class)\b)/gm, '');
+  if (/^\s*export\b/m.test(t)) throw new Error(`${v.file} 里还有未能去掉的 export（只支持行首 export const/let/var/function/class）`);
+  return `  /* ======== ${v.file}（第三方原样内联，MIT；仅去掉行首 export）======== */\n` + t;
+}).join('\n\n');
+
+/* ---------- 2. 拼 core 段 ---------- */
 const core = ORDER.map((f) => {
   const t = read('src/core/' + f).trimEnd();
   if (/^\s*(import|export)\b/m.test(t)) throw new Error(`src/core/${f} 里出现了 import/export —— core 必须能原样内联（去掉行首 export 即可运行）`);
@@ -46,7 +59,8 @@ function inject(srcFile, outFile) {
   if (b < 0 || e < 0) throw new Error(`${srcFile} 里没找到 ${BEGIN} … ${END} 标记`);
   const head = src.slice(0, b);
   const tail = src.slice(e + END.length);
-  const text = head + `/* pb:core:begin（由 build.mjs 从 src/core/* 注入，勿手改） */\n` + core + `\n  ` + END + tail;
+  const text = head + `/* pb:core:begin（由 build.mjs 从 vendor/* + src/core/* 注入，勿手改） */\n` + vendor + `\n\n` + core + `\n  ` + END + tail;
+  if (!text.includes(vendor)) throw new Error(`${outFile}: 注入校验失败（vendor 未被完整写入）`);
   if (!text.includes(core)) throw new Error(`${outFile}: 注入校验失败（core 未被完整写入）`);
   if ((text.match(/pb:core:begin/g) || []).length !== 1) throw new Error(`${outFile}: 标记数量异常`);
   const prev = (() => { try { return read(outFile); } catch { return null; } })();

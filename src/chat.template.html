@@ -253,25 +253,45 @@
   });
   renderPanel();
 
-  async function doSend() {
-    const text = input.value.trim();
+  async function sendText(text) {
     if (!text || sendBtn.disabled) return;
-    input.value = '';
     addMsg('me', text);
     sendBtn.disabled = true;
     const typing = document.createElement('div'); typing.className = 'sys'; typing.textContent = '大肥鱼思考中…';
     msgs.appendChild(typing); msgs.scrollTop = msgs.scrollHeight;
     try {
+      speechUnlock(); // 用户手势里解锁音频：v3.2 起窗口聊天也会把回复念出来
       const r = await chatSend(text);
       typing.remove();
       addMsg('pet', r.text, r.via);
+      speak(r.text);
     } catch (e) {
       typing.remove();
       addMsg('pet', '出错了：' + e.message, 'error');
     } finally { sendBtn.disabled = false; input.focus(); }
   }
+  async function doSend() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    await sendText(text);
+  }
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); doSend(); } });
+
+  /* v3.2 语音闲聊：与桌宠同一条路（按住 右 Alt+M 说话，松开就发；静音 2 秒自动收尾） */
+  const setHint = (s) => { input.placeholder = s || '跟大肥鱼说点什么…'; };
+  viOn((phase, info) => {
+    if (phase === 'recording') setHint('（在听……说完松开 ' + VI_HOTKEY_LABEL + '）');
+    else if (phase === 'recognizing') setHint('（听懂了，让本小姐想想……）');
+    else if (phase === 'error') setHint('语音有点问题：' + (info && info.err ? info.err : '未知原因'));
+  });
+  viOnResult(r => { setHint(''); if (r.ok) sendText(r.text); });
+  viWatchHotkey({
+    onStart: () => { if (viPhase() !== 'idle') return; speechUnlock(); viStart().catch(() => {}); },
+    onStop: () => { viStop().catch(() => {}); },
+    onCancel: () => setHint(''),
+  });
 
   const greet = periodGreet();
   addMsg('pet', greet + (S.nickname ? '，' + S.nickname : '') + '！窗口聊天开好了～要点账单就直接问 [fish:wave]', 'local');

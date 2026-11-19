@@ -178,6 +178,7 @@
 
   petWrap.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    speechUnlock(); // v3.2：点桌宠就是用户手势——顺手解锁音频（之后自动播报才出声）
     const startL = parseFloat(petWrap.style.left) || 0;
     const startB = parseFloat(petWrap.style.bottom) || 0;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, startL, startB, moved: false, downAt: Date.now() };
@@ -302,9 +303,11 @@
       const doSend = () => {
         const text = input.value.trim();
         if (!text) return;
+        speechUnlock(); // 用户手势里解锁音频：之后桌宠的自动播报才出得了声
         bubbleSay('……让本小姐想想', 20000);
         chatSend(text).then(r => {
           bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
+          speakReply(r.text); // v3.2：问答闲聊互动 → 桌宠开口说话
         }).catch(err => bubbleSay('出错了：' + err.message, 5000));
       };
       send.addEventListener('click', doSend);
@@ -315,6 +318,66 @@
       });
     }, 0, true);
   }
+
+  /* ================= 语音（v3.2）：回复播报 + 语音闲聊听写 =================
+     · 回复播报：聊天回复念出来（本地离线合成，声线/音量/语速/字数上限都在设置里）
+     · 语音闲聊：按住「右 Alt + M」说话，松开就发；也可点右键菜单「语音闲聊」，
+       说完静音 2 秒自动收尾（不用摸键盘）
+     · 左 Alt 是助手自带的语音听写（设置 → 语音），本插件不碰、不抢
+     · 浏览器自动播放策略：没有用户手势时不会出声——所以点桌宠/开菜单/发消息
+       这些手势里顺手解锁一次；真被挡住也只是安静不响，不弹窗不报错 */
+  function speakReply(text, opts) {
+    return speak(text, Object.assign({
+      onStart: () => { transient = 'waving'; transientUntil = performance.now() + 1500; },
+    }, opts || {}));
+  }
+
+  /** 听写结果 → 当闲聊发出去（先回显「你说：…」，用户能核对识别得对不对） */
+  function sendVoiceChat(text) {
+    bubbleSay('你说：' + text, 3200);
+    transient = 'review'; transientUntil = performance.now() + 1400;
+    chatSend(text).then(r => {
+      bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
+      speakReply(r.text);
+    }).catch(err => bubbleSay('出错了：' + err.message, 5000));
+  }
+
+  /** 菜单点「语音闲聊」：不摸键盘也能说一轮（静音 2 秒自动收尾并发送） */
+  function voiceChatByButton() {
+    if (viPhase() !== 'idle') { bubbleSay('还在处理上一句呢，等一下下…', 2600); return; }
+    speechUnlock(); // 点了菜单 = 用户手势
+    viStart().then(r => { if (!r.ok) bubbleSay('语音这边不行：' + r.reason, 6000); });
+  }
+
+  viOn((phase, info) => {   // 状态 → 气泡与动作
+    if (phase === 'recording') {
+      transient = 'waiting'; transientUntil = performance.now() + 60000;
+      bubbleSay('（在听……说完松开 ' + VI_HOTKEY_LABEL + '）', 0);
+      return;
+    }
+    if (phase === 'recognizing') {
+      transient = 'review'; transientUntil = performance.now() + 20000;
+      bubbleSay('（听懂了，让本小姐想想……）', 0);
+      return;
+    }
+    if (phase === 'error') {
+      transient = 'failed'; transientUntil = performance.now() + 1500;
+      bubbleSay('语音这边有点问题：' + (info && info.err ? info.err : '未知原因'), 6500);
+      return;
+    }
+    if (phase === 'idle' && info && info.cancelled) bubbleSay('（不说了？那本小姐继续躺着）', 3000);
+  });
+
+  viOnResult(r => {         // 一轮听写的结论：松开热键 / 静音自动收尾 / 菜单触发都走这里
+    if (r.ok) sendVoiceChat(r.text);
+    else if (r.message) bubbleSay(r.message, 5200);
+  });
+
+  viWatchHotkey({           // 按住 右 Alt+M 说话（按下是用户手势，顺手解锁音频）
+    onStart: () => { if (viPhase() !== 'idle') return; speechUnlock(); viStart().catch(() => {}); },
+    onStop: () => { viStop().catch(() => {}); },
+    onCancel: () => bubbleSay('（松开太快，这次不算）', 2600),
+  });
 
   /* ================= BongoCat 式鼠标 / 键盘监控 =================
      女仆 / 自定义皮肤开启监控后：
@@ -382,6 +445,8 @@
   /* ---- 右键菜单 ---- */
   const MENU_ITEMS = [
     { icon: '💬', label: '窗口化聊天', act: openChatWindow },
+    { icon: '🎙', label: '语音闲聊（或按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+    { icon: '🔊', label: '试听声音', act: () => { speechProbe('哼哼，本小姐的声音，好听吧？'); } },
     { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
     { icon: '📝', label: '角色设定', act: openPersonaEditor },
     { icon: '⚙️', label: '聊天设置', act: openChatSettings },
@@ -593,8 +658,48 @@
         mon.appendChild(op);
       });
       body.appendChild(mon);
+      body.appendChild($new('label', null, '声音 · 语音播报（聊天回复念出来）'));
+      const spOn = $new('select');
+      [['1', '开启'], ['0', '关闭（不说话）']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.speechOn !== false ? '1' : '0') === v) op.selected = true;
+        spOn.appendChild(op);
+      });
+      body.appendChild(spOn);
+      body.appendChild($new('label', null, '声音 · 声线'));
+      const spVoice = $new('select');
+      Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
+        const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
+        if ((settings.speechVoice || 'fish') === k) op.selected = true;
+        spVoice.appendChild(op);
+      });
+      body.appendChild(spVoice);
+      body.appendChild($new('label', null, '声音 · 音量'));
+      const spVol = $new('input'); spVol.type = 'range'; spVol.min = '0'; spVol.max = '1'; spVol.step = '0.05';
+      spVol.value = String(speechVolume());
+      body.appendChild(spVol);
+      body.appendChild($new('label', null, '声音 · 语速（每字间隔秒，越小越快）'));
+      const spStep = $new('input'); spStep.type = 'range'; spStep.min = '0.08'; spStep.max = '0.3'; spStep.step = '0.01';
+      spStep.value = String(clamp(Number(settings.speechStep) || 0.13, 0.08, 0.3));
+      body.appendChild(spStep);
+      body.appendChild($new('label', null, '声音 · 单次朗读上限（字，超出截断）'));
+      const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
+      spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
+      body.appendChild(spMax);
+      const probe = $new('button', null, '试听一句'); probe.type = 'button';
+      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
+        settings.speechOn = spOn.value === '1';
+        settings.speechVoice = spVoice.value;
+        settings.speechVolume = Number(spVol.value);
+        settings.speechStep = Number(spStep.value) || 0.13;
+        settings.speechMaxChars = Number(spMax.value) || 60;
+        speechApplyVolume(); saveSettings();
+        speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
+      });
+      body.appendChild(probe);
+      body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -611,6 +716,12 @@
           settings.gatewayKey = f.gk.value;
           settings.gatewayModel = f.gm.value.trim();
           settings.monitor = f.mon.value === '1';
+          settings.speechOn = f.spOn.value === '1';
+          settings.speechVoice = f.spVoice.value;
+          settings.speechVolume = Number(f.spVol.value);
+          settings.speechStep = Number(f.spStep.value) || 0.13;
+          settings.speechMaxChars = Number(f.spMax.value) || 60;
+          speechApplyVolume();
           CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
           saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
         } },
@@ -661,12 +772,19 @@
     settings: () => Object.assign({}, settings),
     logs: () => logs.slice(),
     els: { root, petWrap, sprite, bubble, menu },
+    speech: speak,
+    speechProbe,
+    speechClean,
+    speechState,
+    voice: { start: viStart, stop: viStop, cancel: viCancel, phase: viPhase, lastError: viLastError, label: VI_HOTKEY_LABEL },
     _test: {
       singleClick: onPetSingleClick,
       doubleClick: onPetDoubleClick,
       applySkin, refreshLayout, applyHidden, applyMonitor,
       pokeReaction, handleClickCandidate,
       renderRich, stickerEl, normSticker,
+      sendVoiceChat, voiceChatByButton, speakReply,
+      speechUnlock, speechStop, speechApplyVolume,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

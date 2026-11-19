@@ -11,6 +11,11 @@
 - **网关令牌格式识别**：`sk-…` = 网关 API Key（读网关账单）；`jxai-姓名-设备号` = 公司内部通道身份牌
   （认人用，可一键当昵称，余额不走它）；留空则用助手额度——三种情况都在设置里即时说明
 - 40 张贴纸（蓝色大肥鱼档案馆 16 + 微信表情 24）与图片/GIF 自定义表情面板
+- **语音播报（v3.2）**：回复念成「哔哔啵啵」的小人声（本地离线合成，声线/音量/语速/字数上限可调；
+  默认开启，聊天设置里可关）。合成核心是 vendor/bibibobo.js（MIT）——不联网、不录音、不用 AI 配音
+- **语音闲聊（v3.2）**：按住 **右 Alt + M** 说话，松开就发（也可以点右键菜单「语音闲聊」，
+  说完静音 2 秒自动收尾）；识别走宿主「语音」组件的本地离线模型，识别结果先回显「你说：…」再发送。
+  **左 Alt 保持助手自带的语音听写**（设置 → 语音），插件不占用、不抢键
 
 ---
 
@@ -29,10 +34,12 @@ pet-buddy/
 │  │  ├─ store.js         #     设置收发、后台日志（思考过程只进这里）
 │  │  ├─ stickers.js      #     资产目录推导、贴纸表与白名单解析、富文本渲染（防 XSS）
 │  │  ├─ balance.js       #     价目/节假日谷价、今日消耗、网关真实积分
+│  │  ├─ speech.js        #     语音播报：文本清洗 + 单实例播放（合成核心来自 vendor/bibibobo.js）
+│  │  ├─ voiceinput.js    #     语音听写：16k 采集 + VAD + 宿主本地识别（右 Alt+M 热键）
 │  │  └─ chat.js          #     三通道发送、人设指纹、提示词组装
 │  ├─ pet.client.js       #   桌宠半边源码（注入 core 后 = client.js）
 │  └─ chat.template.html  #   聊天窗口源码（注入 core 后 = chat.html）
-├─ build.mjs              # 构建：core → 两份产物（标记注入，失配即报错）
+├─ build.mjs              # 构建：vendor + core → 两份产物（标记注入，失配即报错）
 ├─ assets.manifest.json   # 素材清单（42 个：精灵图 / 皮肤 / 图标 / 40 张贴纸）：install 与 pack 按它复制，smoke 按它校验
 ├─ 一键构建并同步.cmd      # 开发机一条命令：build → smoke → install → pack → pack-oneclick
 ├─ tools/
@@ -41,7 +48,7 @@ pet-buddy/
 │  ├─ pack.ps1            # 打标准发布包 dist/pet-buddy-v<版本>.zip
 │  ├─ pack-oneclick.ps1   # 打一键安装形态（zip + 单文件 .cmd 安装器）
 │  └─ oneclick/           # 一键安装器素材：install-plugin.ps1 / 安装.cmd / 卸载.cmd / 安装说明.txt / 单文件头部
-├─ vendor/                # 第三方原样引入（bibibobo.js · MIT）：v3.1 语音升级预留，尚未接入
+├─ vendor/                # 第三方原样引入（bibibobo.js · MIT）：构建期内联，只去掉行首 export
 └─ 素材（必须平铺）        # feiyu-spritesheet.png / pet-deepseek.webp / st-*.webp（40 张）/ icon.png
 ```
 
@@ -73,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 
 离线（不需要宿主）：
 
-- `node tools/smoke.mjs` —— **56 项断言全绿**（配置 / 贴纸解析 / 余额积分 / 聊天组装 / 令牌识别 / 内部额度与计价 / 素材清单）
+- `node tools/smoke.mjs` —— **80 项断言全绿**（配置 / 贴纸解析 / 余额积分 / 聊天组装 / 令牌识别 / 内部额度与计价 / 素材清单 / 语音合成与清洗 / 听写请求与降级）
 - `node --check client.js` —— 产物语法
 - `node build.mjs --check` —— 产物与源码一致（安装脚本与 CI 用；不一致时退出码 1）
 
@@ -88,6 +95,15 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
    粘 `sk-xxx` 应识别为网关 API Key；留空则提示余额走助手额度
 6. 贴纸渲染：模型回 `[stick:archive:比心]`、`[bean:smile]`、`[fish:wave]` 都能出图；乱编的名字直接忽略（不出现破碎标记）
 7. 断开助手（关掉服务）应提示「助手不在线」并回落模拟模式
+8. **语音（v3.2）**：
+   - 点一下桌宠（用户手势，解锁音频）→ 双击聊天发一句话 → 回复应被念出来；
+     再连发两句，前一句应立刻被后一句打断（不叠音）
+   - 右键 →「试听声音」、聊天设置里的「试听一句」都能出声；改声线/语速/音量后立即生效
+   - 按住 **右 Alt + M** 说话：松开后应先看到气泡「你说：…」再发出，随后桌宠念出回复；
+     没有说话就松开 → 提示「没听到说话」；点右键菜单「语音闲聊」也能走一轮（静音 2 秒自动收尾）
+   - 聊天设置里关掉「语音播报」→ 完全不出声；`设置 → 语音` 里关掉听写组件 → 语音闲聊应提示
+     「语音听写不可用：宿主的「语音」组件未开启」，而不是静默失败
+   - 页面隐藏/切走再回来，语音仍正常（音频上下文被挂起时会自动重试）
 
 ## 四、素材来源与许可
 
@@ -100,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 | `st-deepseek-*.webp`、`st-chatgpt-renwu-jieshao.webp` 等 16 张 | 蓝色大肥鱼档案馆（fisharchive.cc） | CC BY-NC-SA 4.0 |
 | `st-wx-01..24.webp` | 微信表情包 640.wxpic（wxgf/HEVC）解码后 6×4 网格裁切 | 二创，非商用 |
 | `icon.png` | 自有 | MIT（见 `LICENSE`） |
-| `vendor/bibibobo.js` | hakihakii/bibibobo（原样引入、保留来源注释） | MIT（该文件头注明；v3.1 语音升级预留，当前未接入） |
+| `vendor/bibibobo.js` | hakihakii/bibibobo（原样引入、保留来源注释） | MIT（该文件头注明）；**v3.2 起已接入**：语音播报的合成核心，由 build.mjs 内联进产物 |
 | 本仓库代码 | 坚祥（yzc） | MIT（见 `LICENSE`） |
 
 ## 五、打包发布

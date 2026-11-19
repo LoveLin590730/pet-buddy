@@ -24,7 +24,112 @@
 
   /* ================= 常量：素材与官方 motion 权威值 ================= */
 
-  /* pb:core:begin（由 build.mjs 从 src/core/* 注入，勿手改） */
+  /* pb:core:begin（由 build.mjs 从 vendor/* + src/core/* 注入，勿手改） */
+  /* ======== vendor/bibibobo.js（第三方原样内联，MIT；仅去掉行首 export）======== */
+// 第三方（原样引入，勿手改）：bibibobo —— 把一句话变成「哔哔啵啵」的小人说话声
+// 来源：https://github.com/hakihakii/bibibobo （B 站「路墨小剧场」哈基科技 / Lumoswitch）
+// 许可：MIT。本仓库只做两件事：原样内联进 client.js / chat.html（build.mjs 去掉行首 export）、
+// 由 src/core/speech.js 调用 synth() / toWav() 把大肥鱼的回复读出来。升级请整文件替换后 diff。
+// ---------------------------------------------------------------------------
+// bibibobo —— 把一句话变成「哔哔啵啵」的小人说话声。零依赖，浏览器和 Node 都能用。
+// 做法只有五步：一条锯齿波 → 两个带通滤波器捏出口型 → 一个字一声（按字算出音高和口型）→ 每个角色一组音阶 → 标点管语气。
+// 出自《路墨小剧场》（哈基科技 / Lumoswitch）每期配乐脚本里的同一段代码。MIT 协议。
+
+const TAU = Math.PI * 2;
+const mtof = (m) => 440 * 2 ** ((m - 69) / 12); // MIDI 音高 → 频率
+
+/** 五种口型：每种只是两个共振峰频率（Hz）。 */
+const VOWELS = [[800, 1200], [400, 2200], [350, 800], [600, 1700], [300, 2600]];
+
+/** 声线：音阶（MIDI 音高）、共振峰倍率、每个字的时长上限、字头小滑音、默认语速。 */
+const VOICES = {
+  fish: {scale: [76, 79, 81, 83, 84], formant: 1.25, maxDur: 0.13, hold: 0.8, chirp: 1.5, fall: 0, gain: 0.16, step: 0.13}, // 大肥鱼：E5 G5 A5 B5 C6
+  lumo: {scale: [62, 64, 67, 69], formant: 0.9, maxDur: 0.2, hold: 0.7, chirp: 0, fall: -2, gain: 0.17, step: 0.16}, // 路墨：D4 E4 G4 A4
+};
+
+/** 同一个字永远得到同一个数，所以同一个字永远是同一声。 */
+const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.codePointAt(0)) % 9973, 7);
+
+/** 一个汉字算一声，一串英文或数字算一声。 */
+const syllables = (s) => s.match(/[A-Za-z_\/.0-9]+|[\u4e00-\u9fff]/g) ?? [];
+
+// 抗混叠锯齿波（polyBLEP）
+function saw(sampleRate) {
+  let ph = 0;
+  return (f) => {
+    const dt = f / sampleRate;
+    ph += dt; if (ph >= 1) ph -= 1;
+    let v = 2 * ph - 1;
+    if (ph < dt) { const t = ph / dt; v -= t + t - t * t - 1; }
+    else if (ph > 1 - dt) { const t = (ph - 1) / dt; v -= t * t + t + t + 1; }
+    return v;
+  };
+}
+// 状态变量滤波器，取带通输出
+function bandpass(sampleRate) {
+  let lp = 0, bp = 0;
+  return (x, fc, q) => {
+    const f = 2 * Math.sin((Math.PI * Math.min(fc, sampleRate / 6)) / sampleRate);
+    const hp = x - lp - bp / q;
+    bp += f * hp; lp += f * bp;
+    return bp;
+  };
+}
+
+/** 把一声写进 out：音高 m，时长 dur 秒，glide 是结尾滑多少个半音，vowel 选口型。 */
+function voice(out, sampleRate, t, m, dur, v, glide = 0, vowel = 0) {
+  const osc = saw(sampleRate), f1 = bandpass(sampleRate), f2 = bandpass(sampleRate);
+  const [a, b] = VOWELS[vowel % VOWELS.length];
+  const start = Math.floor(t * sampleRate), n = Math.floor(dur * sampleRate);
+  for (let i = 0; i < n && start + i < out.length; i++) {
+    const x = i / sampleRate;
+    const pitch = mtof(m + glide * (x / dur) + v.chirp * Math.exp(-x * 30)) * (1 + 0.012 * Math.sin(TAU * 6 * x)); // 滑音 + 字头小滑音 + 一点颤音
+    const s = osc(pitch);
+    const env = Math.min(1, x * 200) * Math.min(1, (dur - x) * 40); // 5 毫秒起音，25 毫秒收尾
+    out[start + i] += (f1(s, a * v.formant, 4) + 0.7 * f2(s, b * v.formant, 5)) * env * v.gain;
+  }
+}
+
+/**
+ * 把一句话合成为单声道采样（Float32Array，范围 -1..1）。
+ * @param {string} text 要说的话。问号结尾尾音上扬；带感叹号整句升高；省略号结尾整句压低、尾音下滑。
+ * @param {{voice?: 'fish'|'lumo'|object, step?: number, sampleRate?: number, gap?: number}} [opts]
+ *   voice 声线；step 每个字间隔多少秒；gap 句子之间停多少秒。
+ */
+function synth(text, opts = {}) {
+  const v = typeof opts.voice === 'object' ? {...VOICES.fish, ...opts.voice} : VOICES[opts.voice ?? 'fish'];
+  const sampleRate = opts.sampleRate ?? 44100, step = opts.step ?? v.step, gap = opts.gap ?? 0.22;
+  // 按标点切成句子，每句各自套一条语气规则
+  const sentences = (text.match(/[^？?！!。.，,、；;…\n]+[？?！!。.，,、；;…]*/g) ?? []).map((s) => ({text: s, tk: syllables(s)})).filter((s) => s.tk.length);
+  const total = sentences.reduce((n, s) => n + s.tk.length * step + gap, 0) + 0.4;
+  const out = new Float32Array(Math.ceil(total * sampleRate));
+  let t = 0.02;
+  for (const {text: s, tk} of sentences) {
+    const ask = /[？?]$/.test(s), shout = /[！!]/.test(s), sad = /(……|\.\.\.|…)$/.test(s);
+    tk.forEach((w, i) => {
+      const last = i === tk.length - 1;
+      const m = v.scale[hash(w) % v.scale.length] + (shout ? 3 : 0) - (sad ? 3 : 0);
+      const dur = Math.min(step * v.hold, v.maxDur) + (last && (ask || shout || sad) ? 0.1 : 0);
+      voice(out, sampleRate, t + i * step, m, dur, v, last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0, hash(w));
+    });
+    t += tk.length * step + gap;
+  }
+  for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * 2.4); // 软限幅，响一点也不破音
+  return out;
+}
+
+/** 把采样打包成 16 位单声道 WAV 文件内容（Uint8Array）。 */
+function toWav(samples, sampleRate = 44100) {
+  const buf = new ArrayBuffer(44 + samples.length * 2), d = new DataView(buf);
+  const str = (o, s) => [...s].forEach((c, i) => d.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); d.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVEfmt ');
+  d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+  d.setUint32(24, sampleRate, true); d.setUint32(28, sampleRate * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true);
+  str(36, 'data'); d.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) d.setInt16(44 + i * 2, Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767), true);
+  return new Uint8Array(buf);
+}
+
   /* ======== src/core/config.js ======== */
 /* ============================================================================
  * pet-buddy · 共享核心（core）· 配置（版本与默认值）
@@ -37,7 +142,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.1.0';
+const PB_VERSION = '3.2.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -73,6 +178,12 @@ const CHAT_MODELS = [
     gatewayBase: '', gatewayKey: '', gatewayModel: '',
     size: 96,                // 桌宠显示宽度 px
     monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+    /* v3.2 声音：播报走本地合成（bibibobo 声线），听写走宿主语音组件的本地离线模型 */
+    speechOn: true,          // 语音播报开关（聊天回复念出来）
+    speechVolume: 0.5,       // 音量 0..1
+    speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
+    speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
+    speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
   };
 
 /** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */
@@ -584,6 +695,402 @@ const CHAT_MODELS = [
     return out;
   }
 
+  /* ======== src/core/speech.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 语音播报：把回复念成「哔哔啵啵」的小人声
+ * ----------------------------------------------------------------------------
+ * 合成核心来自 vendor/bibibobo.js（MIT，构建期原样内联，只去掉行首 export）：
+ *   一条抗混叠锯齿波 → 两个带通滤波器捏共振峰（口型）→ 一个字一声
+ *   （hash(字) 选音高与口型，同一个字永远同一声）→ 每个声线一组音阶 →
+ *   标点管语气（问号尾音上滑、感叹号整句升高、省略号压低）。零依赖、全离线。
+ * 播放走 Web Audio 单实例：新一句开始前停掉上一句，音量统一经一个 GainNode。
+ * 自动播放策略：无用户手势的冷启动会拿到 suspended 的上下文、声音出不来——
+ *   本模块**静默降级**（不上屏、不报错、只记一条日志），绝不弹窗打扰。
+ * 调用方约定：speak() 返回 Promise（播完/被跳过/被挡住都会 resolve，不 reject）。
+ * ==========================================================================*/
+
+  const SPEECH_SR = 44100;  // 采样率（bibibobo 原样；降到 16k 会闷掉共振峰的齿音）
+  let SPEECH = null;        // { ctx, gain, src, id }：全局一份，懒创建
+
+  /** 声线名 → 展示名（设置面板用） */
+  const SPEECH_VOICE_NAMES = { fish: '大肥鱼（高）', lumo: '路墨（低）' };
+
+  /** 语音总开关与音量（settings 是唯一真相源；改完调 speechApplyVolume） */
+  function speechEnabled() { return settings.speechOn !== false; }
+  function speechVolume() { return clamp(Number(settings.speechVolume) >= 0 ? Number(settings.speechVolume) : 0.5, 0, 1); }
+
+  function speechCtx() {
+    if (SPEECH && SPEECH.ctx) return SPEECH.ctx;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try {
+      const ctx = new Ctx();
+      const gain = ctx.createGain();
+      gain.gain.value = speechVolume();
+      gain.connect(ctx.destination);
+      SPEECH = { ctx, gain, src: null, id: 0 };
+      return ctx;
+    } catch (e) { log('error', '音频上下文创建失败: ' + e.message); return null; }
+  }
+
+  function speechApplyVolume() { if (SPEECH && SPEECH.gain) SPEECH.gain.gain.value = speechVolume(); }
+
+  /** 在用户手势里调一次：把被策略挂起的上下文唤起来（之后自动说话才出声） */
+  function speechUnlock() {
+    const ctx = speechCtx();
+    if (!ctx) return false;
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 只能等下一次手势 */ } }
+    if (ctx.state !== 'running') return false;
+    // 0 长度缓冲"空播"一次：部分内核要把上下文真正跑起来才算解锁
+    try {
+      const b = ctx.createBuffer(1, 1, SPEECH_SR);
+      const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.gain); s.start();
+    } catch (e) { /* 无所谓，唤醒失败也不影响后续尝试 */ }
+    return true;
+  }
+
+  function speechStop() {
+    if (SPEECH && SPEECH.src) {
+      const s = SPEECH.src; SPEECH.src = null;
+      try { s.onended = null; s.stop(); } catch (e) { /* 已经停了 */ }
+    }
+  }
+
+  /** 状态快照（诊断/验证页用） */
+  function speechState() {
+    return { enabled: speechEnabled(), volume: speechVolume(), hasCtx: !!(SPEECH && SPEECH.ctx), ctxState: SPEECH && SPEECH.ctx ? SPEECH.ctx.state : 'none', speaking: !!(SPEECH && SPEECH.src) };
+  }
+
+  /** 清洗成「能念的文本」：剥掉贴纸标记/代码/链接/markdown 记号，压平空白，按上限截断 */
+  function speechClean(raw) {
+    let t = String(raw == null ? '' : raw);
+    t = t.replace(/\[(?:stick|fish|bean)\s*:[^\]]*\]/gi, ' '); // 表情/贴纸标记不念出来
+    t = t.replace(/```[\s\S]*?```/g, ' ');                      // 代码块
+    t = t.replace(/`[^`]*`/g, ' ');
+    t = t.replace(/https?:\/\/\S+/g, ' ');                      // 链接
+    t = t.replace(/[*_#>|~]/g, ' ');                            // markdown 记号
+    t = t.replace(/[（(]\s*[)）]/g, ' ');
+    t = t.replace(/[ \t\r\n]+/g, ' ').trim();
+    const max = clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400);
+    if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？\s]+$/, '') + '……';
+    return t;
+  }
+
+  /**
+   * 念一句。
+   * @param {string} raw 要说的话（会先 speechClean）
+   * @param {{force?:boolean, onStart?:Function, onEnd?:Function}} [opts]
+   *   force=true 时无视总开关（设置面板的「试听」用）
+   * @returns {Promise<{ok:boolean, reason?:string, skipped?:string, seconds?:number, text?:string}>}
+   *   ok=true 播完；ok=false 说明原因（off/empty/no-ctx/blocked/synth/start），调用方不必处理错误
+   */
+  function speak(raw, opts) {
+    const o = opts || {};
+    if (!speechEnabled() && !o.force) return Promise.resolve({ ok: false, skipped: 'off' });
+    const text = speechClean(raw);
+    if (!text) return Promise.resolve({ ok: false, skipped: 'empty' });
+    if (o.opts) { /* 预留：逐句语速等覆盖项 */ }
+    const ctx = speechCtx();
+    if (!ctx) return Promise.resolve({ ok: false, reason: 'no-ctx' });
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 等手势 */ } }
+    let samples;
+    try {
+      samples = synth(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+    } catch (e) {
+      log('error', '语音合成失败: ' + e.message);
+      return Promise.resolve({ ok: false, reason: 'synth' });
+    }
+    const durSec = samples.length / SPEECH_SR;
+    let buf;
+    try {
+      buf = ctx.createBuffer(1, samples.length, SPEECH_SR);
+      buf.copyToChannel(samples, 0);
+    } catch (e) {
+      log('error', '语音缓冲准备失败: ' + e.message);
+      return Promise.resolve({ ok: false, reason: 'buffer' });
+    }
+    speechStop(); // 单实例：新的一句打断上一句
+    const id = ++SPEECH.id;
+    const node = ctx.createBufferSource();
+    node.buffer = buf; node.connect(SPEECH.gain);
+    SPEECH.src = node;
+    if (o.onStart) { try { o.onStart({ text, seconds: durSec }); } catch (e) { /* 回调出错不影响播放 */ } }
+    return new Promise((resolve) => {
+      let settled = false;
+      const t0 = ctx.currentTime;
+      const finish = (r) => {
+        if (settled) return;
+        settled = true;
+        if (SPEECH && SPEECH.src === node) SPEECH.src = null;
+        if (o.onEnd) { try { o.onEnd(r); } catch (e) { /* 同上 */ } }
+        resolve(Object.assign({ text, seconds: durSec, id }, r));
+      };
+      node.onended = () => finish({ ok: true });
+      try { node.start(); } catch (e) { finish({ ok: false, reason: 'start' }); return; }
+      // 兜底：正常播完也一定有 onended；这里只防"被策略挡住 → 一声不响也不结束"。
+      // 判据：起播 350ms 后音频时钟还没走 → 认定没出声（冷启动被策略拦），静默收场。
+      setTimeout(() => {
+        if (settled) return;
+        if (ctx.state === 'suspended' || ctx.currentTime - t0 < 0.005) {
+          log('info', '语音未能出声（浏览器的自动播放策略：需要一次用户点击后才能自动说话）');
+          try { node.stop(); } catch (e) { /* 未起播 */ }
+          finish({ ok: false, reason: 'blocked' });
+        }
+      }, 350);
+      // 第二道兜底：时钟异常时别让 Promise 永远挂着
+      setTimeout(() => { if (!settled) { try { node.stop(); } catch (e) { /* 已停 */ } finish({ ok: true, late: true }); } }, (durSec + 1.2) * 1000);
+    });
+  }
+
+  /** 试听（设置面板/菜单用：无视开关，念一句固定台词） */
+  function speechProbe(text) {
+    speechUnlock();
+    return speak(text || '哼哼，本小姐的声音，好听吧？', { force: true });
+  }
+
+  /* ======== src/core/voiceinput.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 语音听写：对着桌宠说话（右 Alt+M）
+ * ----------------------------------------------------------------------------
+ * 采集：16 kHz 单声道（AudioContext + MediaStreamSource + ScriptProcessor，
+ *   与宿主「语音」组件同一套做法；内核给不到 16k 时内部线性重采样到 16k）。
+ * VAD：噪声底自适应，阈值 = max(0.008, 底 × 3.5)（与宿主语音组件同口径）；
+ *   尾部静音满 2 秒、或松开热键、或超过 60 秒 → 收尾。
+ * 识别：POST /api/c/voice/asr/transcribe —— 宿主「语音」组件的本地离线模型
+ *   （零配置、不联网）。组件被关掉时该端点 404，这里给出人话提示，不假装成功。
+ * 触发：右 Alt + M（按住说话，松开结束）。左 Alt 是助手自带的听写，本插件不碰。
+ * 纪律：识别结果先回显给用户看（「你说：…」）再发出去；空结果不发送。
+ * 调用方约定：viStart() 可能失败（未授权/无麦克风），一律返回 {ok, reason}。
+ * ==========================================================================*/
+
+  const VI_ASR_URL = '/api/c/voice/asr/transcribe';
+  const VI_SR = 16000;            // 识别引擎要的采样率
+  const VI_MIN_SPEECH_MS = 350;   // 短于它算噪声毛刺（不说话就不发）
+  const VI_TAIL_SILENCE_MS = 2000;// 尾部静音满 2 秒自动收尾
+  const VI_MAX_MS = 60000;        // 单次上限
+  const VI = {
+    phase: 'idle', stream: null, ctx: null, node: null, srcNode: null,
+    frames: [], speechMs: 0, silenceMs: 0, noise: 0.004, startedAt: 0, level: 0,
+    cbs: [], resultCbs: [], lastErr: '', autoStopped: false, timer: null,
+  };
+
+  function viPhase() { return VI.phase; }
+  function viLastError() { return VI.lastErr; }
+  /** 订阅状态变化：cb(phase, info)；phase = idle | recording | recognizing | error */
+  function viOn(cb) { if (typeof cb === 'function') VI.cbs.push(cb); }
+  /** 订阅「一轮听写的结论」：cb({ok, text?, reason?})——手动松开、静音自动收尾都走这里 */
+  function viOnResult(cb) { if (typeof cb === 'function') VI.resultCbs.push(cb); }
+  function viEmitResult(r) { for (const cb of VI.resultCbs) { try { cb(r); } catch (e) { /* 回调异常不影响流程 */ } } }
+  function viEmit(extra) {
+    const info = Object.assign({ level: VI.level, ms: Date.now() - VI.startedAt, err: VI.lastErr }, extra || {});
+    for (const cb of VI.cbs) { try { cb(VI.phase, info); } catch (e) { /* 回调异常不影响录音流程 */ } }
+  }
+  function viSetPhase(p, extra) { VI.phase = p; viEmit(extra); }
+
+  /** 线性重采样（内核给不到 16k 时用；语音带宽窄，这样够） */
+  function viResample(input, fromRate, toRate) {
+    if (fromRate === toRate) return input;
+    const ratio = fromRate / toRate;
+    const outLen = Math.max(1, Math.floor(input.length / ratio));
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * ratio, i0 = Math.floor(pos), i1 = Math.min(input.length - 1, i0 + 1), frac = pos - i0;
+      out[i] = input[i0] * (1 - frac) + input[i1] * frac;
+    }
+    return out;
+  }
+  /** Float32 采样 → 16 位单声道 WAV 的 base64（ASR 接口要的格式） */
+  function viWavB64(floats) {
+    const len = floats.length;
+    const buf = new ArrayBuffer(44 + len * 2);
+    const v = new DataView(buf);
+    const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    wstr(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); wstr(8, 'WAVE');
+    wstr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, VI_SR, true); v.setUint32(28, VI_SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    wstr(36, 'data'); v.setUint32(40, len * 2, true);
+    for (let i = 0; i < len; i++) {
+      const s = Math.max(-1, Math.min(1, floats[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    const u8 = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  /** 语音识别（本地离线模型）：返回识别文本（空串＝没听清） */
+  async function viTranscribe(wavB64) {
+    const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 90000) : null;
+    try {
+      const r = await fetch(VI_ASR_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd: 'transcribe', model: 'xasr', device: 'cpu', wav_b64: wavB64 }),
+        signal: ctl ? ctl.signal : undefined,
+      });
+      if (r.status === 404) throw new Error('语音听写不可用：宿主的「语音」组件未开启（设置 → 语音）');
+      if (!r.ok) throw new Error('语音识别失败（HTTP ' + r.status + '）');
+      const d = await r.json();
+      return String((d && (d.text || d.result)) || '').trim();
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
+  function viTeardown() {
+    if (VI.timer) { clearInterval(VI.timer); VI.timer = null; }
+    try { if (VI.node) VI.node.disconnect(); } catch (e) { /* 已断 */ }
+    try { if (VI.srcNode) VI.srcNode.disconnect(); } catch (e) { /* 已断 */ }
+    try { if (VI.ctx) VI.ctx.close(); } catch (e) { /* 已关 */ }
+    try { if (VI.stream) VI.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* 已停 */ }
+    VI.node = null; VI.srcNode = null; VI.ctx = null; VI.stream = null;
+    VI.frames = []; VI.speechMs = 0; VI.silenceMs = 0; VI.noise = 0.004; VI.level = 0;
+  }
+
+  /** 开始录音。返回 {ok:true} 或 {ok:false, reason} */
+  async function viStart() {
+    if (VI.phase === 'recording') return { ok: true, already: true };
+    if (VI.phase === 'recognizing') return { ok: false, reason: 'busy' };
+    VI.lastErr = ''; VI.autoStopped = false;
+    const md = (typeof navigator !== 'undefined' && navigator.mediaDevices) ? navigator.mediaDevices : null;
+    if (!md || !md.getUserMedia) {
+      VI.lastErr = '当前环境没有麦克风接口（需要 https 或本机地址）';
+      viSetPhase('error', { reason: 'no-api' });
+      return { ok: false, reason: VI.lastErr };
+    }
+    let stream;
+    try {
+      stream = await md.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+      const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError');
+      VI.lastErr = denied ? '麦克风未授权（Windows 设置 → 隐私 → 麦克风 / 允许桌面应用访问）' : ('麦克风不可用：' + (e && e.message ? e.message : e));
+      viSetPhase('error', { reason: 'mic' });
+      return { ok: false, reason: VI.lastErr };
+    }
+    VI.stream = stream;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      VI.ctx = new Ctx({ sampleRate: VI_SR });
+    } catch (e) { VI.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    VI.srcNode = VI.ctx.createMediaStreamSource(stream);
+    VI.node = VI.ctx.createScriptProcessor(4096, 1, 1);
+    VI.frames = []; VI.speechMs = 0; VI.silenceMs = 0; VI.noise = 0.004; VI.startedAt = Date.now();
+    VI.node.onaudioprocess = (ev) => {
+      if (VI.phase !== 'recording') return;
+      const f = ev.inputBuffer.getChannelData(0);
+      let sum = 0;
+      for (let i = 0; i < f.length; i++) sum += f[i] * f[i];
+      const rms = Math.sqrt(sum / f.length);
+      VI.level = Math.min(1, rms * 7);
+      const frameMs = (f.length / VI.ctx.sampleRate) * 1000;
+      const isSpeech = rms > Math.max(0.008, VI.noise * 3.5);
+      if (!isSpeech) VI.noise = Math.min(0.02, VI.noise * 0.98 + rms * 0.02);
+      if (isSpeech) {
+        VI.frames.push(new Float32Array(f));
+        VI.speechMs += frameMs; VI.silenceMs = 0;
+      } else if (VI.speechMs > 0) {
+        VI.frames.push(new Float32Array(f)); // 说话后的间隙也留着（识别更连贯），由收尾统一截
+        VI.silenceMs += frameMs;
+      }
+      // 自动收尾：说过话 + 尾部静音满 2 秒（或单次超上限）
+      if ((VI.speechMs >= VI_MIN_SPEECH_MS && VI.silenceMs >= VI_TAIL_SILENCE_MS) || (Date.now() - VI.startedAt > VI_MAX_MS)) {
+        VI.autoStopped = true;
+        viEmit({ auto: true });
+        setTimeout(() => { viStop().catch(() => {}); }, 0);
+      }
+    };
+    VI.srcNode.connect(VI.node);
+    VI.node.connect(VI.ctx.destination); // 内核要求节点入图才会回调
+    viSetPhase('recording', { started: true });
+    try { if (VI.ctx.state === 'suspended') await VI.ctx.resume(); } catch (e) { /* 唤醒失败也继续录 */ }
+    return { ok: true };
+  }
+
+  /** 结束录音并识别。结论经 viOnResult 派发（无论成功失败），同时作为返回值给出 */
+  async function viStop() {
+    if (VI.phase !== 'recording') return { ok: false, reason: 'not-recording' };
+    const ctxRate = VI.ctx ? VI.ctx.sampleRate : VI_SR;
+    const frames = VI.frames, speechMs = VI.speechMs;
+    viTeardown();
+    viSetPhase('recognizing', { speechMs });
+    if (speechMs < VI_MIN_SPEECH_MS) {
+      VI.lastErr = '没听到说话（按住 ' + VI_HOTKEY_LABEL + ' 说完再松开）';
+      viSetPhase('idle', { silent: true });
+      const r = { ok: false, reason: 'silent', silent: true, message: VI.lastErr };
+      viEmitResult(r);
+      return r;
+    }
+    const total = frames.reduce((n, c) => n + c.length, 0);
+    const all = new Float32Array(total);
+    let off = 0;
+    for (const c of frames) { all.set(c, off); off += c.length; }
+    const pcm = viResample(all, ctxRate, VI_SR);
+    try {
+      const text = await viTranscribe(viWavB64(pcm));
+      viSetPhase('idle', { text });
+      if (!text) {
+        VI.lastErr = '没听清（说得慢一点、离麦克风近一点）';
+        const r = { ok: false, reason: 'empty', message: VI.lastErr };
+        viEmitResult(r);
+        return r;
+      }
+      const r = { ok: true, text, seconds: pcm.length / VI_SR };
+      viEmitResult(r);
+      return r;
+    } catch (e) {
+      VI.lastErr = (e && e.name === 'AbortError') ? '语音识别超时（识别引擎忙或组件未就绪）' : (e && e.message ? e.message : String(e));
+      viSetPhase('error', { reason: 'asr' });
+      const r = { ok: false, reason: VI.lastErr, message: VI.lastErr };
+      viEmitResult(r);
+      return r;
+    }
+  }
+
+  /** 放弃这一轮（按键取消/失焦）：不识别、不上传 */
+  function viCancel() {
+    if (VI.phase !== 'recording') return false;
+    viTeardown();
+    viSetPhase('idle', { cancelled: true });
+    return true;
+  }
+
+  /* ---- 右 Alt + M：按住说话（左 Alt 属于助手自带的听写，这里不碰） ----
+   * 浏览器对右 Alt 的报法不统一：key='Alt' + location=2，或 key='AltGraph'；
+   * 两种都认。热键只负责"何时按下/松开"，具体流程由调用方决定。
+   * handlers = { onStart, onCancel }：按下时调 onStart；松开时调用方自行 viStop()
+   * （viStop 的结论经 viOnResult 派发，所以松开处理不必回传）。 */
+  let VI_HOTKEY_BOUND = false;
+  let viRightAlt = false;
+  function viWatchHotkey(handlers) {
+    if (VI_HOTKEY_BOUND) return false;
+    VI_HOTKEY_BOUND = true;
+    const h = handlers || {};
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Alt' && e.location === 2) viRightAlt = true;
+      if (e.key === 'AltGraph') viRightAlt = true;
+      if (e.code === 'KeyM' && viRightAlt && !e.repeat) {
+        e.preventDefault();
+        if (h.onStart) { try { h.onStart(); } catch (err) { /* 调用方异常不影响热键 */ } }
+      }
+    }, true);
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'Alt' && e.location === 2) viRightAlt = false;
+      if (e.key === 'AltGraph') viRightAlt = false;
+      if (e.code === 'KeyM' && VI.phase === 'recording') {
+        e.preventDefault();
+        if (h.onStop) { try { h.onStop(); } catch (err) { /* 同上 */ } }
+        else viStop().catch(() => {});
+      }
+    }, true);
+    window.addEventListener('blur', () => {
+      viRightAlt = false;
+      if (VI.phase === 'recording' && viCancel() && h.onCancel) { try { h.onCancel(); } catch (err) { /* 同上 */ } }
+    });
+    return true;
+  }
+
+  /** 热键文案（气泡与设置里共用一处，避免两处写岔） */
+  const VI_HOTKEY_LABEL = '右 Alt + M';
+
   /* ======== src/core/chat.js ======== */
 /* ============================================================================
  * pet-buddy · 共享核心（core）· 聊天引擎（三通道）
@@ -1072,6 +1579,7 @@ const CHAT_MODELS = [
 
   petWrap.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    speechUnlock(); // v3.2：点桌宠就是用户手势——顺手解锁音频（之后自动播报才出声）
     const startL = parseFloat(petWrap.style.left) || 0;
     const startB = parseFloat(petWrap.style.bottom) || 0;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, startL, startB, moved: false, downAt: Date.now() };
@@ -1196,9 +1704,11 @@ const CHAT_MODELS = [
       const doSend = () => {
         const text = input.value.trim();
         if (!text) return;
+        speechUnlock(); // 用户手势里解锁音频：之后桌宠的自动播报才出得了声
         bubbleSay('……让本小姐想想', 20000);
         chatSend(text).then(r => {
           bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
+          speakReply(r.text); // v3.2：问答闲聊互动 → 桌宠开口说话
         }).catch(err => bubbleSay('出错了：' + err.message, 5000));
       };
       send.addEventListener('click', doSend);
@@ -1209,6 +1719,66 @@ const CHAT_MODELS = [
       });
     }, 0, true);
   }
+
+  /* ================= 语音（v3.2）：回复播报 + 语音闲聊听写 =================
+     · 回复播报：聊天回复念出来（本地离线合成，声线/音量/语速/字数上限都在设置里）
+     · 语音闲聊：按住「右 Alt + M」说话，松开就发；也可点右键菜单「语音闲聊」，
+       说完静音 2 秒自动收尾（不用摸键盘）
+     · 左 Alt 是助手自带的语音听写（设置 → 语音），本插件不碰、不抢
+     · 浏览器自动播放策略：没有用户手势时不会出声——所以点桌宠/开菜单/发消息
+       这些手势里顺手解锁一次；真被挡住也只是安静不响，不弹窗不报错 */
+  function speakReply(text, opts) {
+    return speak(text, Object.assign({
+      onStart: () => { transient = 'waving'; transientUntil = performance.now() + 1500; },
+    }, opts || {}));
+  }
+
+  /** 听写结果 → 当闲聊发出去（先回显「你说：…」，用户能核对识别得对不对） */
+  function sendVoiceChat(text) {
+    bubbleSay('你说：' + text, 3200);
+    transient = 'review'; transientUntil = performance.now() + 1400;
+    chatSend(text).then(r => {
+      bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
+      speakReply(r.text);
+    }).catch(err => bubbleSay('出错了：' + err.message, 5000));
+  }
+
+  /** 菜单点「语音闲聊」：不摸键盘也能说一轮（静音 2 秒自动收尾并发送） */
+  function voiceChatByButton() {
+    if (viPhase() !== 'idle') { bubbleSay('还在处理上一句呢，等一下下…', 2600); return; }
+    speechUnlock(); // 点了菜单 = 用户手势
+    viStart().then(r => { if (!r.ok) bubbleSay('语音这边不行：' + r.reason, 6000); });
+  }
+
+  viOn((phase, info) => {   // 状态 → 气泡与动作
+    if (phase === 'recording') {
+      transient = 'waiting'; transientUntil = performance.now() + 60000;
+      bubbleSay('（在听……说完松开 ' + VI_HOTKEY_LABEL + '）', 0);
+      return;
+    }
+    if (phase === 'recognizing') {
+      transient = 'review'; transientUntil = performance.now() + 20000;
+      bubbleSay('（听懂了，让本小姐想想……）', 0);
+      return;
+    }
+    if (phase === 'error') {
+      transient = 'failed'; transientUntil = performance.now() + 1500;
+      bubbleSay('语音这边有点问题：' + (info && info.err ? info.err : '未知原因'), 6500);
+      return;
+    }
+    if (phase === 'idle' && info && info.cancelled) bubbleSay('（不说了？那本小姐继续躺着）', 3000);
+  });
+
+  viOnResult(r => {         // 一轮听写的结论：松开热键 / 静音自动收尾 / 菜单触发都走这里
+    if (r.ok) sendVoiceChat(r.text);
+    else if (r.message) bubbleSay(r.message, 5200);
+  });
+
+  viWatchHotkey({           // 按住 右 Alt+M 说话（按下是用户手势，顺手解锁音频）
+    onStart: () => { if (viPhase() !== 'idle') return; speechUnlock(); viStart().catch(() => {}); },
+    onStop: () => { viStop().catch(() => {}); },
+    onCancel: () => bubbleSay('（松开太快，这次不算）', 2600),
+  });
 
   /* ================= BongoCat 式鼠标 / 键盘监控 =================
      女仆 / 自定义皮肤开启监控后：
@@ -1276,6 +1846,8 @@ const CHAT_MODELS = [
   /* ---- 右键菜单 ---- */
   const MENU_ITEMS = [
     { icon: '💬', label: '窗口化聊天', act: openChatWindow },
+    { icon: '🎙', label: '语音闲聊（或按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+    { icon: '🔊', label: '试听声音', act: () => { speechProbe('哼哼，本小姐的声音，好听吧？'); } },
     { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
     { icon: '📝', label: '角色设定', act: openPersonaEditor },
     { icon: '⚙️', label: '聊天设置', act: openChatSettings },
@@ -1487,8 +2059,48 @@ const CHAT_MODELS = [
         mon.appendChild(op);
       });
       body.appendChild(mon);
+      body.appendChild($new('label', null, '声音 · 语音播报（聊天回复念出来）'));
+      const spOn = $new('select');
+      [['1', '开启'], ['0', '关闭（不说话）']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.speechOn !== false ? '1' : '0') === v) op.selected = true;
+        spOn.appendChild(op);
+      });
+      body.appendChild(spOn);
+      body.appendChild($new('label', null, '声音 · 声线'));
+      const spVoice = $new('select');
+      Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
+        const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
+        if ((settings.speechVoice || 'fish') === k) op.selected = true;
+        spVoice.appendChild(op);
+      });
+      body.appendChild(spVoice);
+      body.appendChild($new('label', null, '声音 · 音量'));
+      const spVol = $new('input'); spVol.type = 'range'; spVol.min = '0'; spVol.max = '1'; spVol.step = '0.05';
+      spVol.value = String(speechVolume());
+      body.appendChild(spVol);
+      body.appendChild($new('label', null, '声音 · 语速（每字间隔秒，越小越快）'));
+      const spStep = $new('input'); spStep.type = 'range'; spStep.min = '0.08'; spStep.max = '0.3'; spStep.step = '0.01';
+      spStep.value = String(clamp(Number(settings.speechStep) || 0.13, 0.08, 0.3));
+      body.appendChild(spStep);
+      body.appendChild($new('label', null, '声音 · 单次朗读上限（字，超出截断）'));
+      const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
+      spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
+      body.appendChild(spMax);
+      const probe = $new('button', null, '试听一句'); probe.type = 'button';
+      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
+        settings.speechOn = spOn.value === '1';
+        settings.speechVoice = spVoice.value;
+        settings.speechVolume = Number(spVol.value);
+        settings.speechStep = Number(spStep.value) || 0.13;
+        settings.speechMaxChars = Number(spMax.value) || 60;
+        speechApplyVolume(); saveSettings();
+        speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
+      });
+      body.appendChild(probe);
+      body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -1505,6 +2117,12 @@ const CHAT_MODELS = [
           settings.gatewayKey = f.gk.value;
           settings.gatewayModel = f.gm.value.trim();
           settings.monitor = f.mon.value === '1';
+          settings.speechOn = f.spOn.value === '1';
+          settings.speechVoice = f.spVoice.value;
+          settings.speechVolume = Number(f.spVol.value);
+          settings.speechStep = Number(f.spStep.value) || 0.13;
+          settings.speechMaxChars = Number(f.spMax.value) || 60;
+          speechApplyVolume();
           CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
           saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
         } },
@@ -1555,12 +2173,19 @@ const CHAT_MODELS = [
     settings: () => Object.assign({}, settings),
     logs: () => logs.slice(),
     els: { root, petWrap, sprite, bubble, menu },
+    speech: speak,
+    speechProbe,
+    speechClean,
+    speechState,
+    voice: { start: viStart, stop: viStop, cancel: viCancel, phase: viPhase, lastError: viLastError, label: VI_HOTKEY_LABEL },
     _test: {
       singleClick: onPetSingleClick,
       doubleClick: onPetDoubleClick,
       applySkin, refreshLayout, applyHidden, applyMonitor,
       pokeReaction, handleClickCandidate,
       renderRich, stickerEl, normSticker,
+      sendVoiceChat, voiceChatByButton, speakReply,
+      speechUnlock, speechStop, speechApplyVolume,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.1.0';
+const PB_VERSION = '3.2.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -45,6 +45,12 @@ const CHAT_MODELS = [
     gatewayBase: '', gatewayKey: '', gatewayModel: '',
     size: 96,                // 桌宠显示宽度 px
     monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+    /* v3.2 声音：播报走本地合成（bibibobo 声线），听写走宿主语音组件的本地离线模型 */
+    speechOn: true,          // 语音播报开关（聊天回复念出来）
+    speechVolume: 0.5,       // 音量 0..1
+    speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
+    speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
+    speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
   };
 
 /** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */

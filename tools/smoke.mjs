@@ -14,8 +14,12 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'chat.js'];
-const core = ORDER.map((f) => readFileSync(path.join(ROOT, 'src/core', f), 'utf8')).join('\n');
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'speech.js', 'voiceinput.js', 'chat.js'];
+/* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
+const VENDOR = ['vendor/bibibobo.js'];
+const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
+  .replace(/^export\s+(?=(?:const|let|var|function|class)\b)/gm, '')).join('\n');
+const core = vendor + '\n' + ORDER.map((f) => readFileSync(path.join(ROOT, 'src/core', f), 'utf8')).join('\n');
 
 /* ---------- 最小桩：够 core 跑完，不做真实渲染 ---------- */
 const mem = new Map();
@@ -30,6 +34,7 @@ const sandbox = {
   Date, Math, JSON, Object, Array, String, Number, Boolean, Set, Map, Promise, isNaN, parseInt, parseFloat,
   setTimeout, clearTimeout, setInterval, clearInterval,
   TextDecoder, URL, Blob,
+  btoa: (s) => Buffer.from(String(s), 'latin1').toString('base64'),
   localStorage: {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
     setItem: (k, v) => mem.set(k, String(v)),
@@ -47,6 +52,8 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
+// 无麦克风环境的桩：viStart 应当给人话原因，而不是抛 ReferenceError
+sandbox.navigator = {};
 
 /* 探针：与 core 拼成同一个脚本，才能访问 core 里的 const/function */
 const probe = `
@@ -58,6 +65,9 @@ const probe = `
   parseGatewayToken, tokenHint, fetchCompanyQuota, quotaLine, fetchCredits, todaySpend,
   buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname,
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
+  synth, toWav, VOICES, VOWELS, hash, syllables,
+  speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
+  viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
 
 vm.createContext(sandbox);
@@ -186,6 +196,67 @@ console.log('\n[素材清单 · v3.1.0]');
   eq('贴纸清单与代码 ARCHIVE 表逐条一致',
     listed.filter((f) => f.indexOf('st-') === 0).sort(),
     P.ARCHIVE.map((a) => 'st-' + a.id + '.webp').sort());
+}
+
+console.log('\n[语音合成与播报 · v3.2]');
+{
+  const s = P.synth('没饭了？没饭了！', {voice: 'fish'});
+  ok('合成产出非空采样', !!s && s.length > 44100 * 0.3, s ? String(s.length) : 'null');
+  let peak = 0, bad = 0;
+  for (let i = 0; i < s.length; i++) { const a = Math.abs(s[i]); if (a > peak) peak = a; if (!(a <= 1)) bad++; }
+  ok('采样值域落在 [-1,1] 且不静音', peak > 0.05 && bad === 0, 'peak=' + peak.toFixed(3) + ' bad=' + bad);
+  const wav = P.toWav(s);
+  ok('WAV 容器头与长度正确', Buffer.from(wav.slice(0, 4)).toString('latin1') === 'RIFF' && wav.length === 44 + s.length * 2, 'len=' + wav.length);
+  ok('同一个字永远同一声（哈希稳定）', P.hash('鱼') === P.hash('鱼') && P.hash('鱼') !== P.hash('饭'));
+  ok('两个声线（大肥鱼高 / 路墨低）', P.VOICES.fish.scale[0] > P.VOICES.lumo.scale[0] && P.SPEECH_VOICE_NAMES.fish.indexOf('大肥鱼') >= 0);
+  eq('分句按标点（问号句尾音处理的前提）', P.syllables('今天吃白饭？没饭了！').join(''), '今天吃白饭没饭了');
+
+  eq('朗读前剥掉贴纸标记', P.speechClean('好看吗 [stick:archive:比心] 真的'), '好看吗 真的');
+  eq('朗读前剥掉链接与 markdown', P.speechClean('看 **这里** https://a.b/c 吧'), '看 这里 吧');
+  eq('代码块不念出来', P.speechClean('看代码 ```js\nconst a=1;\n``` 好了'), '看代码 好了');
+  ok('超长按上限截断并加省略号', /……$/.test(P.speechClean('一'.repeat(200))), P.speechClean('一'.repeat(200)).slice(-6));
+
+  ok('状态快照可读（离线环境没有音频上下文）', P.speechState().hasCtx === false && P.speechState().enabled === true);
+  const sp = await P.speak('测试一句');
+  ok('没有音频上下文时不抛错，只回答原因（静默降级）', sp.ok === false && sp.reason === 'no-ctx', JSON.stringify(sp));
+  P.settings.speechOn = false;
+  const off = await P.speak('测试');
+  ok('开关关闭时直接跳过（skipped=off）', off.ok === false && off.skipped === 'off', JSON.stringify(off));
+  P.settings.speechOn = true;
+  const empty = await P.speak('[stick:archive:比心]');
+  ok('清洗后为空就不说（skipped=empty）', empty.ok === false && empty.skipped === 'empty', JSON.stringify(empty));
+}
+
+console.log('\n[语音听写 · v3.2]');
+{
+  eq('热键文案统一在一处', P.VI_HOTKEY_LABEL, '右 Alt + M');
+  eq('听写初始状态', P.viPhase(), 'idle');
+  const vr = await P.viStart();
+  ok('没有麦克风接口时给人话原因（不静默失败）', vr.ok === false && /麦克风/.test(vr.reason), JSON.stringify(vr));
+  eq('失败后状态回到 error/idle（可再次触发）', P.viPhase() === 'error' || P.viPhase() === 'idle', true);
+
+  const raw = Buffer.from(P.viWavB64(new Float32Array(1600)), 'base64');
+  ok('上传用 WAV 头与长度正确（16k 单声道 16 位）',
+    raw.toString('latin1', 0, 4) === 'RIFF' && raw.toString('latin1', 8, 12) === 'WAVE' && raw.length === 44 + 3200,
+    'len=' + raw.length);
+  ok('重采样 48k→16k 长度三等分', P.viResample(new Float32Array(4800), 48000, 16000).length === 1600);
+
+  let asrReq = null;
+  sandbox.fetch = async (url, opt) => { asrReq = {url: String(url), opt}; return {ok: true, status: 200, json: async () => ({text: '你好呀'})}; };
+  const txt = await P.viTranscribe('AAAA');
+  eq('识别文本解析', txt, '你好呀');
+  eq('走宿主语音组件的本地识别端点', asrReq.url, P.VI_ASR_URL);
+  const body = JSON.parse(asrReq.opt.body);
+  ok('请求体字段齐（cmd/model/device/wav_b64）',
+    body.cmd === 'transcribe' && body.model === 'xasr' && body.device === 'cpu' && body.wav_b64 === 'AAAA',
+    asrReq.opt.body.slice(0, 90));
+  sandbox.fetch = async (url) => { // 组件没开 → 端点 404 时必须给人话提示
+    if (String(url).indexOf('/api/c/voice/asr/transcribe') === 0) return {ok: false, status: 404, text: async () => ''};
+    throw new Error('offline（自检不联网）');
+  };
+  let hint = '';
+  try { await P.viTranscribe('AAAA'); } catch (e) { hint = e.message; }
+  ok('识别端点 404 时提示去开语音组件', /语音/.test(hint) && /组件/.test(hint), hint);
 }
 
 console.log(`\n结果：${pass} 项通过，${fail} 项失败`);
