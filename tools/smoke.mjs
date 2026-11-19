@@ -1090,6 +1090,48 @@ console.log('\n[v4.8 表情包扩展与管理 + 弹窗规范]');
   ok('零散 marginTop 的"手工间距"已清掉', !/style\.marginTop/.test(js8));
 }
 
+console.log('\n[v4.9 表情包重命名 + 按语境挑表情]');
+{
+  const js9 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  // —— 微信 24 张：占位名已全部换成语义名
+  const wx = P.archiveStickerList().filter(a => /^wx-\d\d$/.test(a.id));
+  eq('微信表情仍是 24 张', wx.length, 24);
+  eq('不再有「微信表情包 NN」占位名', wx.filter(a => /^微信表情包\s*\d+$/.test(a.name)).length, 0);
+  ok('每张都是 2~6 字的语义名', wx.every(a => a.name.length >= 2 && a.name.length <= 6), wx.map(a => a.name).join('、'));
+  // 逐张可解析（说人话就能发）
+  const wxExpect = {
+    'wx-01': '搓手期待', 'wx-05': '害羞捂脸', 'wx-07': '打工搬砖', 'wx-10': '点赞没问题',
+    'wx-13': '生气皱眉', 'wx-16': '委屈抱膝', 'wx-18': '无语斜眼', 'wx-19': '放声大哭',
+    'wx-22': '震惊裂开', 'wx-23': '挥手打招呼', 'wx-24': '慌张吓到',
+  };
+  ok('语义名 → id 解析正确（抽查 11 张）',
+    Object.keys(wxExpect).every(id => P.archiveResolve(wxExpect[id]) === id),
+    Object.keys(wxExpect).map(id => wxExpect[id] + '→' + P.archiveResolve(wxExpect[id])).join(' '));
+  eq('旧写法 wx7 仍兼容（向后不破坏）', P.archiveResolve('wx7'), 'wx-07');
+  // —— 教学与别名表必须自洽：prompt 教学里点名的每个表情都能解析
+  const prompt9 = P.buildPrompt('你好', null, true);
+  const teachLines = prompt9.split('\n').filter(l => /^\s*·/.test(l));   // 只取分场景的「· 场景：表情、表情」行
+  const seen = [];
+  for (const line of teachLines) {
+    const seg = line.indexOf('：') >= 0 ? line.slice(line.indexOf('：') + 1) : '';   // 只取「：」后面的表情列表
+    for (const w of seg.split(/[、,，]/)) {
+      const t = w.replace(/[\s。；;【】]+/g, '').trim();
+      if (!t || /^\[/.test(t) || t.length > 12) continue;                            // 跳过标记/长句
+      seen.push(t);
+    }
+  }
+  const bad = seen.filter(t => !P.archiveResolve(t));
+  ok('prompt 教学里点名的表情全部可解析（' + seen.length + ' 个）', bad.length === 0, bad.join('、'));
+  ok('教学里含微信新名（抽查）', seen.includes('害羞捂脸') && seen.includes('无语斜眼') && seen.includes('震惊裂开'));
+  ok('教学里含梗图系列名', seen.includes('深度睡眠') && seen.includes('黎曼猜想没证明喵'));
+  ok('教学按情绪/场景分组（含使用时机规则）',
+    /按当下语境挑一张/.test(prompt9) && /情绪对得上才插/.test(prompt9) && /最多 1-2 个/.test(prompt9));
+  ok('平淡场景明确说别插（报数字/清单）', /报数字/.test(prompt9) && /别插/.test(prompt9));
+  // —— 渲染侧：新名能真的渲染成贴纸元素
+  ok('新名渲染成贴纸元素（走 archive 白名单）',
+    /archiveStickerList/.test(js9) || /ARCHIVE\b/.test(js9));
+}
+
 console.log('\n[语音听写 · v3.2]');
 {
   eq('热键文案统一在一处', P.VI_HOTKEY_LABEL, '右 Alt + M');

@@ -316,6 +316,18 @@
     '就一碗': 'dsh-17', '就骚了怎么滴吧': 'dsh-18', '我不更新你们用什么': 'dsh-19', '死掉了': 'dsh-20',
     '深度睡眠': 'dsh-21', '电死你': 'dsh-22', '要不直接骂他': 'dsh-23', '誓死践行开源精神': 'dsh-24',
     '除了调情没啥用': 'dsh-25', '鱼片有资源吗': 'dsh-26', '黎曼猜想没证明喵': 'dsh-27',
+    // v4.9 微信表情包 24 张的新名字（按画面语义命名，说人话就能发：如 [stick:害羞捂脸]）
+    '搓手期待': 'wx-01', '开心笑': 'wx-02', '得意笑': 'wx-03', '抱碗开吃': 'wx-04',
+    '害羞捂脸': 'wx-05', '心动冒爱心': 'wx-06', '打工搬砖': 'wx-07', '端碗乖巧': 'wx-08',
+    '惊喜捧脸': 'wx-09', '点赞没问题': 'wx-10', '开心转圈': 'wx-11', '撒娇求抱': 'wx-12',
+    '生气皱眉': 'wx-13', '吃鱼诶嘿': 'wx-14', '慵懒摆烂': 'wx-15', '委屈抱膝': 'wx-16',
+    '疑惑问号': 'wx-17', '无语斜眼': 'wx-18', '放声大哭': 'wx-19', '眨眼俏皮': 'wx-20',
+    '端着碗等': 'wx-21', '震惊裂开': 'wx-22', '挥手打招呼': 'wx-23', '慌张吓到': 'wx-24',
+    // v4.9 教学里带括号说明的写法也一并可解析（模型照抄括号写法也不会失败）
+    '抱碗（开吃）': 'chatgpt-renwu-jieshao', '抱西瓜（吃瓜）': 'deepseek-bao-xigua',
+    '敷衍（抱扫帚）': 'deepseek-baozhe-saozhou', '发呆（窗边）': 'deepseek-bao-xi-chuang-bian',
+    '抱着小鲸（睡觉）': 'deepseek-bao-jing-shui-jiao', '抱臂（拒绝）': 'deepseek-bao-bi-jujue',
+    '插手（生气）': 'deepseek-chashou-shengqi', '盯着token罐': 'deepseek-baozhe-beizi-kan-token',
   };
   // 档案表（id + 中文名）：表情面板与解析共用同一份真相源，ARCHIVE_IDS 由它派生
   const ARCHIVE = [
@@ -335,8 +347,32 @@
     { id: 'deepseek-bixin',           name: '比心' },
     { id: 'deepseek-baozhe-saozhou',  name: '抱扫帚斜眼敷衍' },
     { id: 'deepseek-chashou-shengqi', name: '插手生气' },
-    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
-    ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
+    // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼女仆装·日常系列）
+    // v4.9：24 张逐张看图重新命名——名字就是"什么情绪/什么场景"，模型才能按讲话逻辑挑（见 chat.js 的贴纸教学）
+    { id: 'wx-01', name: '搓手期待' },
+    { id: 'wx-02', name: '开心笑' },
+    { id: 'wx-03', name: '得意笑' },
+    { id: 'wx-04', name: '抱碗开吃' },
+    { id: 'wx-05', name: '害羞捂脸' },
+    { id: 'wx-06', name: '心动冒爱心' },
+    { id: 'wx-07', name: '打工搬砖' },
+    { id: 'wx-08', name: '端碗乖巧' },
+    { id: 'wx-09', name: '惊喜捧脸' },
+    { id: 'wx-10', name: '点赞没问题' },
+    { id: 'wx-11', name: '开心转圈' },
+    { id: 'wx-12', name: '撒娇求抱' },
+    { id: 'wx-13', name: '生气皱眉' },
+    { id: 'wx-14', name: '吃鱼诶嘿' },
+    { id: 'wx-15', name: '慵懒摆烂' },
+    { id: 'wx-16', name: '委屈抱膝' },
+    { id: 'wx-17', name: '疑惑问号' },
+    { id: 'wx-18', name: '无语斜眼' },
+    { id: 'wx-19', name: '放声大哭' },
+    { id: 'wx-20', name: '眨眼俏皮' },
+    { id: 'wx-21', name: '端着碗等' },
+    { id: 'wx-22', name: '震惊裂开' },
+    { id: 'wx-23', name: '挥手打招呼' },
+    { id: 'wx-24', name: '慌张吓到' },
     // v4.8 大肥鱼模型包（dsh-pet）的 memes 表情：27 张 384×384 PNG → 256px WebP q86（4.6MB → 0.42MB）
     { id: 'dsh-01', name: 'Ciallo' },
     { id: 'dsh-02', name: 'token给妈妈保管' },
