@@ -14,7 +14,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'zipwrite.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -34,6 +34,7 @@ const sandbox = {
   Date, Math, JSON, Object, Array, String, Number, Boolean, Set, Map, Promise, isNaN, parseInt, parseFloat,
   setTimeout, clearTimeout, setInterval, clearInterval,
   TextDecoder, URL, Blob,
+  TextEncoder: globalThis.TextEncoder,
   DecompressionStream,
   btoa: (s) => Buffer.from(String(s), 'latin1').toString('base64'),
   atob: (s) => Buffer.from(String(s), 'base64').toString('latin1'),
@@ -77,6 +78,8 @@ const probe = `
   imgAnimKind, customSkinAnim, customSkinStoreFits, CUSTOM_STATIC_MAX, CUSTOM_ANIM_MAX, CUSTOM_STORE_BUDGET,
   IMG_IDLE_FUNS, pickIdleFunClass, numToZh, numZhValue,
   zipEntries, zipImageEntries, zipExtract, zipBytesToDataUrl,
+  zipCrc32, zipBuild, zipDosStamp,
+  stickerStoreFits, stickerStoreUsed, archiveStickerTotal, archiveStickerList,
   extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
   petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
   WALK_MODES, WALK_SPEEDS, WALK_MARGIN, walkModeOf, walkModeLabel, walkSpeedOf, walkSpeedLabel, walkRnd, walkNextDelay,
@@ -107,7 +110,7 @@ ok('设置对象已按默认值载入', P.settings && P.settings.channel === 'as
 
 console.log('\n[贴纸解析]');
 eq('档案表条目数', P.ARCHIVE_IDS.length, P.ARCHIVE.length);
-ok('档案表 40 条（16 幅档案馆 + 24 张微信）', P.ARCHIVE_IDS.length === 40, `→ ${P.ARCHIVE_IDS.length}`);
+ok('档案表 67 条（16 档案馆 + 24 微信 + 27 大肥鱼模型包）', P.ARCHIVE_IDS.length === 67, `→ ${P.ARCHIVE_IDS.length}`);
 eq('中文语义键 → 文件 id', P.archiveResolve('抱头'), 'deepseek-bao-tou-wei-qu');
 eq('完整 id 原样返回', P.archiveResolve('deepseek-bixin'), 'deepseek-bixin');
 eq('wx 数字简称 → wx-NN', P.archiveResolve('wx7'), 'wx-07');
@@ -1026,6 +1029,65 @@ console.log('\n[v4.7 自行移动（散步）]');
     /walkOn: true/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')));
   ok('朝向镜像与走动起伏的样式在', /\.pb2-pet-wrap\.pb2-face-right \.pb2-vid/.test(cssW) && /pb2-walking-bob/.test(cssW));
   ok('选项 chip 样式在', /button\.pb2-chip/.test(cssW));
+}
+
+console.log('\n[v4.8 表情包扩展与管理 + 弹窗规范]');
+{
+  const js8 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css8 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  // —— 内置表情包扩展（大肥鱼模型包 memes）
+  ok('内置贴纸总数 = 67（16 档案 + 24 微信 + 27 模型包）', P.archiveStickerTotal() === 67, P.archiveStickerTotal());
+  const list = P.archiveStickerList();
+  ok('清单含 dsh-01 … dsh-27', list.filter(a => /^dsh-\d\d$/.test(a.id)).length === 27);
+  ok('清单文件名规范 st-<id>.webp', list.every(a => a.file === 'st-' + a.id + '.webp'));
+  const man = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+  const g = man.groups.find(x => x.id === 'sticker-dsh');
+  ok('素材清单里有 sticker-dsh 组且 27 个文件', !!g && g.count === 27 && g.files.length === 27, g && g.count);
+  ok('清单里列的文件都在磁盘上（install 会校验）', g.files.every(f => existsSync(path.join(ROOT, f))));
+  const totalSt = g.files.reduce((s, f) => s + statSync(path.join(ROOT, f)).size, 0);
+  ok('27 张表情总大小 ≤ 600KB（4.6MB 原图压到 0.42MB）', totalSt <= 600 * 1024, (totalSt / 1024).toFixed(0) + 'KB');
+  // 中文名可解析（说人话就能发贴纸）
+  ok('中文名别名可解析到贴纸（如 [stick:可爱]）', /'可爱': 'dsh-07'/.test(js8) && /'深度睡眠': 'dsh-21'/.test(js8));
+  // —— 自定义表情包存储与容量预检
+  eq('空数组时预算够用', P.stickerStoreFits([], 1024 * 1024), true);
+  eq('塞满 9MB 后放不下', P.stickerStoreFits([('x'.repeat(9 * 1024 * 1024))], 1024), false);
+  eq('占用统计正确', P.stickerStoreUsed(['abc', null, 'de']), 5);
+  eq('null 位不占空间（删除后下标不乱）', P.stickerStoreUsed([null, null]), 0);
+  // —— zip 打包（导出用）
+  const z1 = P.zipBuild([{ name: '自定义/custom-00.png', data: new Uint8Array([1, 2, 3, 4, 5]) }]);
+  ok('zip 头部正确（PK\\x03\\x04）', z1[0] === 0x50 && z1[1] === 0x4b && z1[2] === 3 && z1[3] === 4);
+  ok('zip 尾部是 EOCD（PK\\x05\\x06）', z1[z1.length - 22] === 0x50 && z1[z1.length - 21] === 0x4b && z1[z1.length - 20] === 5 && z1[z1.length - 19] === 6);
+  // 用自家 zipread 回读（自洽：写出来的能读回去）
+  const back = P.zipEntries(z1.buffer.slice(z1.byteOffset, z1.byteOffset + z1.byteLength));
+  eq('写完能被自家 zipread 读回', back.length, 1);
+  eq('回读的文件名带 UTF-8 中文', back[0].name, '自定义/custom-00.png');
+  eq('回读的大小一致', back[0].size, 5);
+  ok('CRC32 标准值校验（"123456789" → 0xCBF43926）',
+    P.zipCrc32(new TextEncoder().encode('123456789')) === 0xCBF43926);
+  // —— 表情包管理 UI 接线
+  ok('设置里有「表情包管理」入口', /label: '表情包管理…'/.test(js8) && /function openStickerManager/.test(js8));
+  ok('批量导入支持 图片 与 zip', /multiple = true/.test(js8) && /importStickers/.test(js8) && /zipImageEntries/.test(js8));
+  ok('导入会把大图缩到 256px（canvas）', /shrinkImageDataUrl/.test(js8) && /toDataURL\('image\/webp', 0\.86\)/.test(js8));
+  ok('导出走 zipwrite（无第三方库）', /zipBuild\(files\)/.test(js8) && /application\/zip/.test(js8));
+  ok('导出含 README（说明怎么再导入）', /README\.json/.test(js8) && /重新导入/.test(js8));
+  ok('点表情复制标记（archive/custom）', /copyMark\(stickerMarkOf\('archive'/.test(js8) && /copyMark\(stickerMarkOf\('custom'/.test(js8));
+  ok('删除自定义表情保留下标（置 null）', /arr\[idx\] = null/.test(js8));
+  ok('管理面板样式在（网格 + 删除角标）', /\.pb2-stk-grid \{/.test(css8) && /\.pb2-stk-del/.test(css8));
+  // —— 试听文本自定义
+  ok('试听文本可编辑（设置项 + 编辑入口）', /speechProbeText/.test(js8) && /function openProbeTextEditor/.test(js8));
+  ok('试听用自定义文本（带默认兜底）', /function probeText\(\)/.test(js8) && /PROBE_DEFAULT/.test(js8));
+  ok('编辑面板有「试听这句」「恢复默认」', /试听这句/.test(js8) && /恢复默认/.test(js8));
+  // —— 弹窗布局统一
+  ok('弹窗统一宽度与最大高度', /\.pb2-dialog \{ width: min\(560px/.test(css8) && /max-height: min\(84vh, 640px\)/.test(css8));
+  ok('内容区 flex + gap 统一次序（不再靠零散 margin）', /\.pb2-dbody \{ padding: 14px 16px; display: flex; flex-direction: column; gap: 9px; \}/.test(css8));
+  ok('分组标题带色条且首个不空行', /\.pb2-dbody > h4::before/.test(css8) && /\.pb2-dbody > h4:first-child/.test(css8));
+  ok('底部按钮右对齐 + 最小宽度', /\.pb2-dfoot \{ padding: 10px 16px 12px/.test(css8) && /\.pb2-dfoot button \{ min-width: 76px/.test(css8));
+  ok('窄屏适配（铺满 + 卡片转竖向）', /@media \(max-width: 560px\)/.test(css8) && /\.pb2-model-card \{ flex-direction: column/.test(css8));
+  ok('日志面板等宽折行样式在', /\.pb2-logrow \{/.test(css8) && /white-space: pre-wrap/.test(css8));
+  ok('逐个弹窗都有分组标题（聊天设置 3 组 / 角色设定 / 常用语 / 试听 / 日志）',
+    ['通道与模型', '额度显示', '网关 / 身份牌', '性格设定', '加一条', '已保存的常用语', '试听时说这一句', '最近 100 条']
+      .every(t => js8.indexOf(t) >= 0));
+  ok('零散 marginTop 的"手工间距"已清掉', !/style\.marginTop/.test(js8));
 }
 
 console.log('\n[语音听写 · v3.2]');

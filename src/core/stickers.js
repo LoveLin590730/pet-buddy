@@ -308,6 +308,14 @@
     '坐罐堆': 'deepseek-baobi-zuo-zai-pingguan-jian', '被抱吓到': 'deepseek-bei-baozhu-jingxia',
     '窗边': 'deepseek-bao-xi-chuang-bian', '抱碗': 'chatgpt-renwu-jieshao', '扫帚': 'deepseek-baozhe-saozhou',
     '插手': 'deepseek-chashou-shengqi', '打游戏': 'deepseek-bao-shoubing',
+    // v4.8 大肥鱼模型包 memes 的中文名（说人话就能解析：如 [stick:可爱]）
+    'Ciallo': 'dsh-01', 'token给妈妈保管': 'dsh-02', '假如给我三天多模态': 'dsh-03', '先养着吧': 'dsh-04',
+    '厉害了我的鲸': 'dsh-05', '压力一只大肥鱼': 'dsh-06', '可爱': 'dsh-07', '吃白饭的大肥鱼': 'dsh-08',
+    '吃饱饱摸肚子': 'dsh-09', '哦鲸鲸': 'dsh-10', '哪来的电脑病毒': 'dsh-11', '大师这个区是什么意思': 'dsh-12',
+    '大烧货': 'dsh-13', '大的药来了': 'dsh-14', '大的要来啦': 'dsh-15', '完蛋了把黄油删了': 'dsh-16',
+    '就一碗': 'dsh-17', '就骚了怎么滴吧': 'dsh-18', '我不更新你们用什么': 'dsh-19', '死掉了': 'dsh-20',
+    '深度睡眠': 'dsh-21', '电死你': 'dsh-22', '要不直接骂他': 'dsh-23', '誓死践行开源精神': 'dsh-24',
+    '除了调情没啥用': 'dsh-25', '鱼片有资源吗': 'dsh-26', '黎曼猜想没证明喵': 'dsh-27',
   };
   // 档案表（id + 中文名）：表情面板与解析共用同一份真相源，ARCHIVE_IDS 由它派生
   const ARCHIVE = [
@@ -329,6 +337,34 @@
     { id: 'deepseek-chashou-shengqi', name: '插手生气' },
     // 微信表情包 640.wxpic 解码裁切（wxgf/HEVC → 6×4=24 格，蓝色大肥鱼系）
     ...Array.from({ length: 24 }, (_, i) => ({ id: 'wx-' + String(i + 1).padStart(2, '0'), name: '微信表情包 ' + String(i + 1).padStart(2, '0') })),
+    // v4.8 大肥鱼模型包（dsh-pet）的 memes 表情：27 张 384×384 PNG → 256px WebP q86（4.6MB → 0.42MB）
+    { id: 'dsh-01', name: 'Ciallo' },
+    { id: 'dsh-02', name: 'token给妈妈保管' },
+    { id: 'dsh-03', name: '假如给我三天多模态' },
+    { id: 'dsh-04', name: '先养着吧' },
+    { id: 'dsh-05', name: '厉害了我的鲸' },
+    { id: 'dsh-06', name: '压力一只大肥鱼' },
+    { id: 'dsh-07', name: '可爱' },
+    { id: 'dsh-08', name: '吃白饭的大肥鱼' },
+    { id: 'dsh-09', name: '吃饱饱摸肚子' },
+    { id: 'dsh-10', name: '哦鲸鲸' },
+    { id: 'dsh-11', name: '哪来的电脑病毒' },
+    { id: 'dsh-12', name: '大师这个区是什么意思' },
+    { id: 'dsh-13', name: '大烧货' },
+    { id: 'dsh-14', name: '大的药来了' },
+    { id: 'dsh-15', name: '大的要来啦' },
+    { id: 'dsh-16', name: '完蛋了把黄油删了' },
+    { id: 'dsh-17', name: '就一碗' },
+    { id: 'dsh-18', name: '就骚了怎么滴吧' },
+    { id: 'dsh-19', name: '我不更新你们用什么' },
+    { id: 'dsh-20', name: '死掉了' },
+    { id: 'dsh-21', name: '深度睡眠' },
+    { id: 'dsh-22', name: '电死你' },
+    { id: 'dsh-23', name: '要不直接骂他' },
+    { id: 'dsh-24', name: '誓死践行开源精神' },
+    { id: 'dsh-25', name: '除了调情没啥用' },
+    { id: 'dsh-26', name: '鱼片有资源吗' },
+    { id: 'dsh-27', name: '黎曼猜想没证明喵' },
   ];
   const ARCHIVE_IDS = ARCHIVE.map(a => a.id);
   function archiveResolve(id) {
@@ -389,8 +425,8 @@
         img.src = ASSET_STICKER + 'st-' + rid + '.webp';
       } else if (kind === 'custom') {
         const idx = Number(id);
-        const arr = (JSON.parse(localStorage.getItem('pb2.settings.v2') || '{}').customStickers) || [];
-        if (isNaN(idx) || !arr[idx]) return null;
+        const arr = (typeof settings !== 'undefined' && settings && settings.customStickers) || [];
+        if (isNaN(idx) || !arr[idx]) return null;      // 删掉的位置是 null：不显示，也不影响后面的下标
         img.src = arr[idx];
       } else {
         return null;
@@ -401,6 +437,29 @@
     }
     return null;
   }
+  /* ---- v4.8 自定义表情包：本机存储、容量预检、批量导入导出用的小工具 ---- */
+  const CUSTOM_STICKER_BUDGET = 9.0e6;   // 与自定义皮肤共用 localStorage（约 10MB 上限），留一点余量
+  /** 还能不能再放一张（addUrl 可为字符串或长度） */
+  function stickerStoreFits(arr, add) {
+    const addLen = typeof add === 'number' ? add : String(add == null ? '' : add).length;
+    const usedSkins = ((typeof settings !== 'undefined' && settings && settings.customSkins) || [])
+      .reduce((s, x) => s + String((x && x.dataUrl) || '').length, 0);
+    const usedStickers = (arr || []).reduce((s, u) => s + String(u || '').length, 0);
+    return usedSkins + usedStickers + addLen <= CUSTOM_STICKER_BUDGET;
+  }
+  /** 自定义表情总占用（字符数，≈ 字节数） */
+  function stickerStoreUsed(arr) {
+    return (arr || []).reduce((s, u) => s + String(u || '').length, 0);
+  }
+  /** 内置档案贴纸总数（表情面板/管理面板显示用） */
+  function archiveStickerTotal() {
+    return ARCHIVE.length;
+  }
+  /** 导出用清单：[{id, name, file}]（内置档案贴纸） */
+  function archiveStickerList() {
+    return ARCHIVE.map(a => ({ id: a.id, name: a.name, file: 'st-' + a.id + '.webp' }));
+  }
+
   /** 富文本渲染：文本走 textNode，贴纸标记走白名单元素（防 XSS 主路径）。
    *  v2.2.2 兜底：标记匹配但白名单查无此项（模型编的名字/缺组名的 [stick:xx]）→ 忽略不显示，不出破碎标记 */
   function renderRich(container, text) {

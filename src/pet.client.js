@@ -868,7 +868,8 @@
   const MENU_ITEMS = [
     { icon: 'chat', label: '气泡聊天', act: openChatPanel },
     { icon: 'speaker', label: 'bibo语音', sub: [
-      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('你好，我是坚祥数字助理！哼哼，记住了吗？'); } },
+      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe(probeText()); } },
+      { icon: 'note', label: '试听文本…', act: openProbeTextEditor },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
@@ -897,7 +898,8 @@
     { icon: 'gear', label: '设置', sub: [
       { icon: 'gear', label: '聊天设置…', act: openChatSettings },
       { icon: 'speaker', label: '声音设置…', act: openChatSettings },
-      { icon: 'brain', label: '查看思考过程', act: openLogViewer },
+      { icon: 'mask', label: '表情包管理…', act: openStickerManager },
+    { icon: 'brain', label: '查看思考过程', act: openLogViewer },
     ] },
   ];
   /** 菜单图标：'ic-xxx' 这样的名字走自绘 PNG；其他字符串当 emoji 用（兼容扩展项） */
@@ -1139,6 +1141,278 @@
   }
   function closeDialog() { if (dialogMask) { dialogMask.remove(); dialogMask = null; } }
 
+  /* ---- v4.8 试听文本（试听语音说什么，自己写） ---- */
+  const PROBE_DEFAULT = '你好，我是坚祥数字助理！哼哼，记住了吗？';
+  function probeText() {
+    const t = String(settings.speechProbeText == null ? PROBE_DEFAULT : settings.speechProbeText).trim();
+    return t || PROBE_DEFAULT;
+  }
+  function openProbeTextEditor() {
+    openDialog('试听文本', body => {
+      body.appendChild($new('h4', null, '试听时说这一句'));
+      body.appendChild($new('div', 'pb2-hint',
+        '点「试听语音」时念的就是这段。写点带数字/标点的句子更能听出效果（数字会念成中文，标点会停顿）。'));
+      const inp = $new('textarea', 'pb2-input pb2-textarea');
+      inp.value = probeText();
+      inp.rows = 3;
+      inp.placeholder = PROBE_DEFAULT;
+      body.appendChild(inp);
+      const row = $new('div', 'pb2-chiprow');
+      row.appendChild(chipBtn('试听这句', false, () => { settings.speechProbeText = inp.value; saveSettings(); speechUnlock(); speechProbe(probeText()); }));
+      row.appendChild(chipBtn('恢复默认', false, () => { inp.value = PROBE_DEFAULT; }));
+      body.appendChild(row);
+      body.appendChild($new('div', 'pb2-hint', '留空 = 用默认那句。'));
+      /* 回车（不按 Shift）保存 */
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); settings.speechProbeText = inp.value; saveSettings(); speechUnlock(); speechProbe(probeText()); closeDialog(); }
+      });
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* 无妨 */ } }, 60);
+      /* 「保存」由底部按钮负责：这里把值挂到 dialog 的确定动作上 */
+      probeCommit = () => { settings.speechProbeText = inp.value; saveSettings(); };
+    }, [{ label: '取消' }, { label: '保存并试听', primary: true, onClick: () => { if (probeCommit) probeCommit(); speechUnlock(); speechProbe(probeText()); } }]);
+  }
+  let probeCommit = null;
+
+  /** 小 chip 按钮（弹窗里常见：一个圆角小按钮） */
+  function chipBtn(label, on, fn) {
+    const b = $new('button', 'pb2-chip' + (on ? ' pb2-chip-on' : ''), label);
+    b.addEventListener('click', fn);
+    return b;
+  }
+
+  /* ================= v4.8 表情包管理（设置里独立入口：批量导入/导出） =================
+   * 内置：档案馆 16 + 微信 24 + 大肥鱼模型包 27 = 67 张（只读，随插件走）
+   * 自定义：存本机 localStorage（settings.customStickers，元素是 dataUrl，用 custom:<下标> 引用，
+   *        删除时把该位清成 null 以保持下标稳定——历史消息里的贴纸不会错位）
+   * 导入：多选图片 或 一个 zip（复用 zipread.js）；大图用 canvas 缩到 256px 再存
+   * 导出：打包成 zip 下载（内置 + 自定义／只自定义），zip 由 core/zipwrite.js 生成（零依赖） */
+  function stickerMarkOf(kind, id) { return '[stick:' + kind + ':' + id + ']'; }
+  function copyMark(mark) {
+    try {
+      const ta = $new('textarea');
+      ta.value = mark;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      bubbleSay('标记已复制：' + mark + '（粘到聊天里就能用）', 3600);
+    } catch (e) { bubbleSay('复制失败，请手动记下：' + mark, 3600); }
+  }
+  /** 大图缩到 maxPx 的 webp dataUrl（浏览器 canvas）；失败就原样返回 */
+  function shrinkImageDataUrl(dataUrl, maxPx) {
+    return new Promise(resolve => {
+      try {
+        const im = new Image();
+        im.onload = () => {
+          const w = im.naturalWidth, h = im.naturalHeight;
+          if (!w || !h || (w <= maxPx && h <= maxPx && dataUrl.length < 300 * 1024)) { resolve(dataUrl); return; }
+          const k = Math.min(1, maxPx / Math.max(w, h));
+          const cv = document.createElement('canvas');
+          cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+          const cx = cv.getContext('2d');
+          cx.drawImage(im, 0, 0, cv.width, cv.height);
+          const out = cv.toDataURL('image/webp', 0.86);
+          resolve(out && out.length < dataUrl.length ? out : dataUrl);
+        };
+        im.onerror = () => resolve(dataUrl);
+        im.src = dataUrl;
+      } catch (e) { resolve(dataUrl); }
+    });
+  }
+  /** dataUrl ↔ Uint8Array（导出 zip 用） */
+  function dataUrlToBytes(u) {
+    const s = String(u || '');
+    const i = s.indexOf(',');
+    if (i < 0) return new Uint8Array(0);
+    const b64 = s.slice(i + 1);
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(0) & 255;
+    return out;
+  }
+  function bytesToDataUrl(bytes, name) {
+    const mime = /\.(gif)$/i.test(name) ? 'image/gif' : /\.(jpe?g)$/i.test(name) ? 'image/jpeg'
+      : /\.(webp)$/i.test(name) ? 'image/webp' : 'image/png';
+    let s = '';
+    const CH = 32768;
+    for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    return 'data:' + mime + ';base64,' + btoa(s);
+  }
+  function stickerSave() { saveSettings(); }
+
+  function openStickerManager() {
+    openDialog('表情包管理', body => {
+      const list = () => (settings.customStickers || []);
+      const info = $new('div', 'pb2-hint', '');
+      function refreshInfo() {
+        const used = stickerStoreUsed(list());
+        info.textContent = '内置 ' + archiveStickerTotal() + ' 张（档案馆 + 微信 + 大肥鱼模型包）｜自定义 ' +
+          list().filter(Boolean).length + ' 张，占 ' + (used / 1024).toFixed(0) + ' KB（与自定义皮肤共用约 10MB 上限）';
+      }
+      refreshInfo();
+      body.appendChild(info);
+      /* 工具行：批量导入 / 导出 */
+      const tools = $new('div', 'pb2-chiprow');
+      const file = $new('input');
+      file.type = 'file';
+      file.multiple = true;
+      file.accept = 'image/*,.zip,application/zip';
+      file.style.display = 'none';
+      file.addEventListener('change', () => { importStickers(Array.from(file.files || []), refreshAll); file.value = ''; });
+      const btnImp = chipBtn('批量导入（图片或 zip）', false, () => file.click());
+      const btnExpAll = chipBtn('导出全部（zip）', false, () => exportStickers(true));
+      const btnExpMine = chipBtn('只导出自定义', false, () => exportStickers(false));
+      tools.appendChild(btnImp); tools.appendChild(btnExpAll); tools.appendChild(btnExpMine); tools.appendChild(file);
+      body.appendChild(tools);
+      body.appendChild($new('div', 'pb2-hint', '点任意表情可复制它的标记（如 [stick:archive:dsh-07] 或 [stick:custom:0]），粘到聊天里就能发。'));
+      /* 自定义 */
+      const h4c = $new('h4', null, '自定义表情');
+      body.appendChild(h4c);
+      const gridC = $new('div', 'pb2-stk-grid');
+      body.appendChild(gridC);
+      /* 内置 */
+      body.appendChild($new('h4', null, '内置表情（' + archiveStickerTotal() + ' 张）'));
+      const gridB = $new('div', 'pb2-stk-grid pb2-stk-grid-big');
+      for (const a of archiveStickerList()) {
+        const cell = $new('div', 'pb2-stk-cell');
+        const im = $new('img');
+        im.src = assetUrl(a.file); im.alt = a.name; im.title = a.name + '（' + stickerMarkOf('archive', a.id) + '）';
+        cell.appendChild(im);
+        cell.addEventListener('click', () => copyMark(stickerMarkOf('archive', a.id)));
+        gridB.appendChild(cell);
+      }
+      body.appendChild(gridB);
+      /** 重画自定义网格（增删后刷新，不用整个弹窗重开） */
+      function refreshAll() {
+        refreshInfo();
+        gridC.textContent = '';
+        const arr = list();
+        if (!arr.filter(Boolean).length) {
+          gridC.appendChild($new('div', 'pb2-hint', '还没有自定义表情——点上面「批量导入」选几张图，或者丢一个 zip 进来。'));
+          return;
+        }
+        arr.forEach((u, idx) => {
+          if (!u) return;                                   // 删过的空位
+          const cell = $new('div', 'pb2-stk-cell');
+          const im = $new('img');
+          im.src = u; im.alt = '自定义 ' + idx; im.title = '自定义 ' + idx + '（' + stickerMarkOf('custom', idx) + '）';
+          cell.appendChild(im);
+          const del = $new('button', 'pb2-stk-del', '×');
+          del.title = '删除这张（历史消息里的位置保持不变，只是不再显示）';
+          del.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            arr[idx] = null; stickerSave(); refreshAll();
+          });
+          cell.appendChild(del);
+          cell.addEventListener('click', () => copyMark(stickerMarkOf('custom', idx)));
+          gridC.appendChild(cell);
+        });
+      }
+      refreshAll();
+    }, [{ label: '关闭' }]);
+  }
+
+  /** 批量导入：图片文件直接读；zip 走 zipread 解出里面所有图片。逐张做容量预检。 */
+  function importStickers(files, done) {
+    const arr = settings.customStickers || (settings.customStickers = []);
+    let added = 0, skipped = 0, failed = 0;
+    const queue = [];
+    const finish = () => {
+      stickerSave();
+      if (done) done();
+      bubbleSay('导入完成：新增 ' + added + ' 张' + (skipped ? '，跳过 ' + skipped + ' 张（存不下或超 200 张）' : '') +
+        (failed ? '，失败 ' + failed + ' 个' : ''), 4600);
+      log('info', '表情包导入：新增 ' + added + ' 跳过 ' + skipped + ' 失败 ' + failed);
+    };
+    const put = (dataUrl) => {
+      const idx = arr.length;
+      if (idx >= 200) { skipped++; return; }
+      if (!stickerStoreFits(arr, dataUrl)) { skipped++; return; }
+      arr[idx] = dataUrl;
+      added++;
+    };
+    const step = () => {
+      const job = queue.shift();
+      if (!job) { finish(); return; }
+      Promise.resolve(job()).then(step, () => { failed++; step(); });
+    };
+    for (const f of files) {
+      const isZip = /\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed';
+      if (isZip) {
+        /* zip：整包读 → 解出图片条目 → 逐个解压（包太大直接跳过，避免拖死页面） */
+        if (f.size > 60 * 1024 * 1024) { skipped++; continue; }
+        queue.push(() => new Promise((res, rej) => {
+          const rd = new FileReader();
+          rd.onload = () => {
+            let entries, imgs;
+            try { entries = zipEntries(rd.result); imgs = zipImageEntries(entries); }
+            catch (e) { rej(e); return; }
+            const jobs2 = imgs.slice(0, 200).map((e, i) => ({
+              file: e.name.replace(/^.*\//, '') || ('zip-' + (i + 1) + '.png'),
+              size: e.size,
+              get: () => zipExtract(rd.result, e).then(b => bytesToDataUrl(b, e.name)),
+            }));
+            for (const j2 of jobs2) {
+              if (j2.size > 4 * 1024 * 1024) { skipped++; continue; }
+              queue.push(() => j2.get().then(u => shrinkImageDataUrl(u, 256)).then(put));
+            }
+            res();
+          };
+          rd.onerror = () => rej(new Error('读 zip 失败'));
+          rd.readAsArrayBuffer(f);
+        }));
+      } else if (/^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name)) {
+        if (f.size > 6 * 1024 * 1024) { skipped++; continue; }
+        queue.push(() => new Promise((res, rej) => {
+          const rd = new FileReader();
+          rd.onload = () => res(shrinkImageDataUrl(String(rd.result), 256).then(put));
+          rd.onerror = () => rej(new Error('读图失败'));
+          rd.readAsDataURL(f);
+        }));
+      } else {
+        skipped++;
+      }
+    }
+    step();
+  }
+
+  /** 导出：打包成 zip 下载（includeBuiltin=true 时把内置素材也打进去） */
+  function exportStickers(includeBuiltin) {
+    const jobs = [];
+    const custom = (settings.customStickers || []).filter(Boolean);
+    if (includeBuiltin) {
+      for (const a of archiveStickerList()) {
+        jobs.push(fetch(assetUrl(a.file)).then(r => r.arrayBuffer())
+          .then(b => ({ name: '内置/st-' + a.id + '.webp', data: new Uint8Array(b), meta: a }))
+          .catch(() => null));
+      }
+    }
+    custom.forEach((u, i) => {
+      const ext = /^data:image\/gif/i.test(u) ? 'gif' : /^data:image\/jpe?g/i.test(u) ? 'jpg' : /^data:image\/webp/i.test(u) ? 'webp' : 'png';
+      jobs.push(Promise.resolve({ name: '自定义/custom-' + String(i).padStart(2, '0') + '.' + ext, data: dataUrlToBytes(u) }));
+    });
+    if (!jobs.length) { bubbleSay('没有可导出的表情（自定义是空的）', 3600); return; }
+    bubbleSay('正在打包 ' + jobs.length + ' 张…', 3000);
+    Promise.all(jobs).then(list => {
+      const files = list.filter(Boolean);
+      const readme = JSON.stringify({
+        plugin: 'pet-buddy', kind: 'stickers',
+        exportedAt: new Date().toISOString(),
+        builtin: includeBuiltin ? archiveStickerTotal() : 0,
+        custom: custom.length,
+        note: '内置/ 来自插件素材（档案馆+微信+大肥鱼模型包）；自定义/ 是本机自传的。' +
+          '重新导入：在「表情包管理 → 批量导入」里选中这些图片即可。',
+      }, null, 2);
+      files.push({ name: 'README.json', data: new TextEncoder().encode(readme) });
+      const zip = zipBuild(files);
+      const blob = new Blob([zip], { type: 'application/zip' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'pet-buddy-表情包-' + (includeBuiltin ? '全部' : '自定义') + '-' + String(Date.now()).slice(-6) + '.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+      bubbleSay('打包好了：' + files.length + ' 个文件已开始下载', 4000);
+    }).catch(e => bubbleSay('导出失败：' + (e && e.message ? e.message : e), 4200));
+  }
+
   /* ---- v4.7 自行移动：模式循环 + 设置面板 ---- */
   /** 菜单里点一下循环：走走停停 → 逛桌面 → 关 → 走走停停… */
   function cycleWalkMode() {
@@ -1193,10 +1467,10 @@
       }
       body.appendChild(spBox);
       /* 一键试跑 */
-      const tryBtn = $new('button', 'pb2-primary', '现在就走两步');
-      tryBtn.style.marginTop = '10px';
-      tryBtn.addEventListener('click', () => { closeDialog(); walkHalt(); walkGo(); });
-      body.appendChild(tryBtn);
+      const tryRow = $new('div', 'pb2-chiprow');
+      const tryBtn = chipBtn('现在就走两步', true, () => { closeDialog(); walkHalt(); walkGo(); });
+      tryRow.appendChild(tryBtn);
+      body.appendChild(tryRow);
       /** 点完刷新所有 chip 的选中态 */
       function refreshWalkChips() {
         modeBox.querySelectorAll('button').forEach((b, i) => b.classList.toggle('pb2-chip-on', walkModeOf(settings.walkMode) === WALK_MODES[i].id && settings.walkOn !== false));
@@ -1336,6 +1610,7 @@
   function openPhraseBook() {
     const getArr = () => (settings.phrases = settings.phrases || []);
     openDialog('常用语（点「说」就念出来）', body => {
+      body.appendChild($new('h4', null, '加一条'));
       body.appendChild($new('div', 'pb2-hint', '存在本机（localStorage），最多 30 条；语音闲聊、试听都用得上。'));
       const inp = $new('input');
       inp.type = 'text'; inp.placeholder = '加一条，例如：今天吃白饭？'; inp.style.flex = '1 1 auto';
@@ -1373,6 +1648,7 @@
       bAdd.addEventListener('click', () => { if (add(inp.value)) { inp.value = ''; render(); } });
       inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); if (add(inp.value)) { inp.value = ''; render(); } } });
       body.appendChild(addRow);
+      body.appendChild($new('h4', null, '已保存的常用语'));
       body.appendChild(listBox);
       const bPreset = $new('button', null, '加几条示例'); bPreset.type = 'button';
       bPreset.addEventListener('click', () => {
@@ -1652,16 +1928,14 @@
       }
       body.appendChild(grid);
       if (hidden.length) {
-        const restore = $new('button', null, '恢复已移除的模型（' + hidden.length + '）');
-        restore.type = 'button';
-        restore.style.marginTop = '6px';
-        restore.addEventListener('click', () => {
+        const restoreRow = $new('div', 'pb2-chiprow');
+        restoreRow.appendChild(chipBtn('恢复已移除的模型（' + hidden.length + '）', false, () => {
           settings.hiddenSkins = [];
           saveSettings(); sfx('ok');
           bubbleSay('都找回来啦～', 2200);
           openModelPicker();
-        });
-        body.appendChild(restore);
+        }));
+        body.appendChild(restoreRow);
       }
       body.appendChild($new('h4', null, '自定义模型（上传图片或 zip 包 · 可改名/导出/删除）'));
       const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
@@ -1758,15 +2032,16 @@
   /* ---- 角色设定（可编辑） ---- */
   function openPersonaEditor() {
     openDialog('角色设定', body => {
+      body.appendChild($new('h4', null, '性格设定'));
       body.appendChild($new('label', null, '大肥鱼的性格设定（留空恢复默认：傲娇搞笑毒舌忠诚挚友）'));
       const ta = $new('textarea');
       ta.value = settings.persona || '';
       ta.placeholder = DEFAULT_PERSONA;
       ta.addEventListener('input', () => { ta.dataset.dirty = '1'; });
       body.appendChild(ta);
-      const reset = $new('button'); reset.type = 'button'; reset.textContent = '恢复默认'; reset.style.marginTop = '8px';
-      reset.addEventListener('click', () => { ta.value = ''; ta.dataset.dirty = '1'; });
-      body.appendChild(reset);
+      const resetRow = $new('div', 'pb2-chiprow');
+      resetRow.appendChild(chipBtn('恢复默认', false, () => { ta.value = ''; ta.dataset.dirty = '1'; }));
+      body.appendChild(resetRow);
       openDialog._personaTA = ta;
     }, [
       { label: '取消' },
@@ -1780,6 +2055,7 @@
   /* ---- 聊天设置：通道 / 模型 / 额度 / 网关 ---- */
   function openChatSettings() {
     openDialog('聊天设置', body => {
+      body.appendChild($new('h4', null, '通道与模型'));
       body.appendChild($new('label', null, '聊天通道'));
       const ch = $new('select');
       [['assistant', '助手子对话（统一）· 默认'], ['gateway', '网关令牌（OpenAI 兼容）'], ['mock', '模拟模式（离线）']].forEach(([v, l]) => {
@@ -1795,6 +2071,7 @@
         mdl.appendChild(op);
       });
       body.appendChild(mdl);
+      body.appendChild($new('h4', null, '额度显示'));
       body.appendChild($new('label', null, '剩余额度（元，自填可选；填了余额报告会带上）'));
       const quota = $new('input'); quota.type = 'number'; quota.min = '0'; quota.step = '0.01';
       quota.value = Number(settings.quota) > 0 ? String(settings.quota) : '';
@@ -1803,6 +2080,7 @@
       const py = $new('input'); py.type = 'number'; py.min = '1'; py.step = '1';
       py.value = perYuanCredits();
       body.appendChild(py);
+      body.appendChild($new('h4', null, '网关 / 身份牌（内部通道用不到，可留空）'));
       body.appendChild($new('label', null, '网关 baseURL（只有 sk- 开头的 API Key 才需要；内部通道看助手额度，不用填）'));
       const gb = $new('input'); gb.type = 'text'; gb.placeholder = 'https://.../v1（可留空）'; gb.value = settings.gatewayBase || '';
       body.appendChild(gb);
@@ -1821,9 +2099,7 @@
         tkExtra.textContent = '';
         if (t.kind === 'inner') {
           const used = settings.nickname === t.name;
-          const b = $new('button', null, used ? '昵称已是「' + t.name + '」' : '用「' + t.name + '」当昵称');
-          b.type = 'button'; b.style.marginTop = '6px';
-          b.addEventListener('click', () => {
+          const b = chipBtn(used ? '昵称已是「' + t.name + '」' : '用「' + t.name + '」当昵称', false, () => {
             settings.nickname = t.name; saveSettings();
             b.textContent = '昵称已是「' + t.name + '」';
             bubbleSay('身份牌收到！以后叫你 ' + t.name + '～', 2800);
@@ -2039,6 +2315,7 @@
   /* ---- 思考过程查看器 ---- */
   function openLogViewer() {
     openDialog('思考过程（后台日志·仅供查看）', body => {
+      body.appendChild($new('h4', null, '最近 100 条'));
       const list = $new('div', 'pb2-loglist');
       if (!logs.length) list.appendChild($new('div', 'pb2-logrow', '（暂无日志）'));
       for (const it of logs.slice(-100).reverse()) {
@@ -2048,9 +2325,9 @@
         list.appendChild(row);
       }
       body.appendChild(list);
-      const clear = $new('button'); clear.type = 'button'; clear.textContent = '清空日志'; clear.style.marginTop = '10px';
-      clear.addEventListener('click', () => { logs = []; try { localStorage.removeItem(LS_LOG); } catch (e) {} openLogViewer(); });
-      body.appendChild(clear);
+      const clearRow = $new('div', 'pb2-chiprow');
+      clearRow.appendChild(chipBtn('清空日志', false, () => { logs = []; try { localStorage.removeItem(LS_LOG); } catch (e) {} openLogViewer(); }));
+      body.appendChild(clearRow);
       body.appendChild($new('div', 'pb2-hint', '模型的思考过程（reasoning）只写进这里，聊天里永远不会显示。'));
     });
   }

@@ -25,7 +25,7 @@ const CHECK = process.argv.includes('--check');
 const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
 const BEGIN = '/* pb:core:begin';
 const END = '/* pb:core:end */';
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'zipwrite.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 第三方原样内联（只去掉行首 export）：先于 core 注入，core 里的模块直接用它的函数。
  * 升级做法：整文件替换 vendor/ 下的原件，跑一次 build 即可（diff 只可能在去 export 那步）。 */
 const VENDOR = [{file: 'vendor/bibibobo.js'}];

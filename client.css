@@ -225,6 +225,63 @@
 }
 .pb2-pet-wrap.pb2-walking { animation: pb2-walking-bob .42s ease-in-out infinite; }
 .pb2-pet-wrap.pb2-walking.pb2-dragging { animation: none; }
+
+/* ============================================================================
+ * v4.8 弹窗布局统一规范（所有弹窗共用；逐个弹窗都按这套来）
+ *   结构：标题（固定）→ 内容（滚动）→ 底部按钮（固定，右对齐）
+ *   内容里的间距交给 .pb2-dbody 的 gap，避免各处 margin 叠加导致参差
+ * ==========================================================================*/
+.pb2-dialog { width: min(560px, calc(100vw - 40px)); max-height: min(84vh, 640px); }
+.pb2-dtitle { padding: 11px 16px; font-size: 14px; }
+.pb2-dtitle .pb2-dclose { width: 26px; height: 26px; border-radius: 8px; font-size: 15px; }
+.pb2-dtitle .pb2-dclose:hover { background: #e8eefc; }
+.pb2-dbody { padding: 14px 16px; display: flex; flex-direction: column; gap: 9px; }
+.pb2-dbody > h4 { margin: 6px 0 0; font-size: 12.5px; font-weight: 650; color: #4a5b86;
+  display: flex; align-items: center; gap: 6px; }
+.pb2-dbody > h4:first-child { margin-top: 0; }
+.pb2-dbody > h4::before { content: ''; width: 3px; height: 13px; border-radius: 2px; background: #8aa8f0; }
+.pb2-dbody > .pb2-hint { margin: 0; }
+.pb2-dbody label { margin: 2px 0 -4px; font-size: 12px; color: #55628e; }
+.pb2-dbody input[type=text], .pb2-dbody input[type=number], .pb2-dbody input[type=password],
+.pb2-dbody select, .pb2-dbody textarea, .pb2-dbody .pb2-input {
+  width: 100%; box-sizing: border-box; border: 1px solid #d7def2; border-radius: 9px; padding: 7px 10px;
+  font-size: 13px; font-family: inherit; color: #2c3554; background: #fff; outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease; }
+.pb2-dbody textarea.pb2-textarea { min-height: 72px; resize: vertical; line-height: 1.6; }
+.pb2-dbody input:focus, .pb2-dbody select:focus, .pb2-dbody textarea:focus {
+  border-color: #8aa8f0; box-shadow: 0 0 0 3px rgba(122,152,240,.16); }
+.pb2-dfoot { padding: 10px 16px 12px; border-top: 1px solid #eef2fb; }
+.pb2-dfoot button { min-width: 76px; padding: 7px 14px; font-size: 13px; }
+/* 内容里成排的小按钮（chip）统一到一行并对齐 */
+.pb2-chiprow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* 窄屏（宿主窗口被拉窄时）：铺满、字号略收、卡片转竖向 */
+@media (max-width: 560px) {
+  .pb2-dialog { width: calc(100vw - 20px); max-height: calc(100vh - 28px); }
+  .pb2-dbody { padding: 12px; font-size: 12.5px; }
+  .pb2-dfoot { padding: 9px 12px 11px; }
+  .pb2-model-card { flex-direction: column; align-items: stretch; }
+}
+
+/* ===== v4.8 表情包管理：缩略图网格（内置/自定义共用） ===== */
+.pb2-stk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+.pb2-stk-cell { position: relative; aspect-ratio: 1 / 1; border: 1px solid #e3e9f7; border-radius: 9px;
+  background: #fbfcff; overflow: hidden; cursor: pointer; transition: border-color .12s ease, transform .12s ease; }
+.pb2-stk-cell:hover { border-color: #9db4e8; transform: translateY(-1px); }
+.pb2-stk-cell img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pb2-stk-del { position: absolute; right: 1px; top: 1px; width: 17px; height: 17px; border-radius: 50%;
+  border: 0; background: rgba(40,50,80,.62); color: #fff; font-size: 12px; line-height: 15px; padding: 0;
+  cursor: pointer; opacity: 0; transition: opacity .12s ease; }
+.pb2-stk-cell:hover .pb2-stk-del { opacity: 1; }
+.pb2-stk-del:hover { background: #d9455f; }
+
+/* 后台日志：等宽、可复制、长行折行（思考过程面板专用） */
+.pb2-logrow { border-left: 2px solid #dde5f7; padding: 4px 8px; margin: 0;
+  font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 11.5px;
+  color: #3c4767; background: #fafcff; border-radius: 0 6px 6px 0;
+  white-space: pre-wrap; word-break: break-word; }
+.pb2-loghead { font-size: 10.5px; color: #8a94b8; margin-bottom: 2px; }
+.pb2-logrow.pb2-t-err { border-left-color: #e8a0ae; color: #8d3a4c; }
+.pb2-logrow.pb2-t-info { border-left-color: #a8c0ee; }
 .pb2-model-card { transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
 .pb2-model-card:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(30,45,90,.14); }
 .pb2-dfoot { border-top: 1px solid #eef2fb; }
