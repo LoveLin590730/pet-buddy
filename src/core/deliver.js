@@ -91,18 +91,23 @@
     } catch (e) { if (onFail) onFail(); }
   }
 
-  /* ---- 卡片（v4.4）：文件名 + 路径 + 「打开文件」「打开文件夹位置」 ----
-   * 打开动作交给宿主（桌宠侧的 act.open / act.reveal 调 /api/sessions/{id}/delivery/open|reveal，
-   * 由系统默认程序打开文件、在资源管理器里定位）；宿主不给力时回落「复制路径」。 */
+  /* ---- 卡片（v4.4 打开/定位；v4.6 加真预览 + 窄面板布局）----
+   * 打开/定位/预览三个动作都由宿主端注入（act.open / act.reveal / act.preview）：
+   *   open    → POST /api/sessions/{id}/delivery/open   （系统默认程序打开）
+   *   reveal  → POST /api/sessions/{id}/delivery/reveal （资源管理器定位）
+   *   preview → GET  /api/md/{id}/{path}                （取文件字节 → blob URL 当缩略图）
+   * 任一步拿不到就退回「类型图标 + 复制路径」，不假装完成。 */
+  const DELIV_PREVIEWABLE = { image: 1, media: 1 };
   function makeDeliverCard(f, act) {
     const a = act || {};
     const card = document.createElement('div');
-    card.className = 'pb2-deliv';
-    card.title = '点击打开文件';
-    const ico = document.createElement('span');
-    ico.className = 'pb2-deliv-ico';
-    ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
-    card.appendChild(ico);
+    card.className = 'pb2-deliv' + (DELIV_PREVIEWABLE[f.kind] && a.preview ? ' pb2-deliv-haspv' : '');
+    card.title = f.path;
+    // 缩略图区（图片/音视频：真预览；其余：类型图标）
+    const thumb = document.createElement('div');
+    thumb.className = 'pb2-deliv-thumb pb2-deliv-ico';
+    thumb.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
+    card.appendChild(thumb);
     const mid = document.createElement('div');
     mid.className = 'pb2-deliv-mid';
     const nm = document.createElement('div');
@@ -110,7 +115,6 @@
     const pt = document.createElement('div');
     pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
     mid.appendChild(nm); mid.appendChild(pt);
-    card.appendChild(mid);
     const acts = document.createElement('div');
     acts.className = 'pb2-deliv-acts';
     const mk = (cls, label, title, fn) => {
@@ -125,34 +129,68 @@
       copyPlainText(f.path, null, null);
       if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
     };
-    mk('pb2-deliv-open', '打开文件', '用系统默认程序打开这个文件', () => {
+    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
-    mk('pb2-deliv-reveal', '打开文件夹位置', '在资源管理器里定位到这个文件', () => {
+    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => {
       if (!a.reveal) return fallback('定位文件');
       try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
       catch (e) { fallback('定位文件'); }
     });
     mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
-    card.appendChild(acts);
+    mid.appendChild(acts);
+    card.appendChild(mid);
     card.addEventListener('click', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
+    // 异步补缩略图（失败就保持图标，不打扰）
+    if (DELIV_PREVIEWABLE[f.kind] && a.preview) {
+      try {
+        Promise.resolve(a.preview(f.path)).then((res) => {
+          const url = res && res.url ? res.url : res;
+          if (!url) return;
+          let el;
+          if (f.kind === 'media' && /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name)) {
+            el = document.createElement('video');
+            el.muted = true; el.preload = 'metadata'; el.playsInline = true;
+            el.setAttribute('muted', ''); el.setAttribute('playsinline', '');
+          } else {
+            el = document.createElement('img');
+            el.alt = '';
+          }
+          el.className = 'pb2-deliv-pv';
+          el.src = url;
+          const show = () => { thumb.textContent = ''; thumb.appendChild(el); };
+          el.addEventListener('load' in el ? 'load' : 'loadeddata', show, { once: true });
+          if (el.tagName === 'VIDEO') el.addEventListener('loadedmetadata', show, { once: true });
+        }).catch(() => { /* 预览拿不到就算了 */ });
+      } catch (e) { /* 同上 */ }
+    }
     return card;
   }
 
   /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
-   *  act（可选）= { open(path), reveal(path), fail(msg) }：由宿主端注入（桌宠/聊天窗口各自实现）。 */
+   *  act（可选）= { open(path), reveal(path), preview(path), fail(msg) }：由宿主端注入。
+   *  单条消息最多 3 张（同一路径去重），免得长回复把面板刷满卡片（v4.6）。 */
   function renderDeliverables(host, text, act) {
     const files = extractFilePaths(text);
     if (!files.length || !host) return 0;
+    const seen = {};
+    const picked = [];
+    for (const f of files) {
+      const k = f.path.toLowerCase();
+      if (seen[k]) continue;
+      seen[k] = 1;
+      picked.push(f);
+      if (picked.length >= 3) break;
+    }
     const box = document.createElement('div');
     box.className = 'pb2-deliv-box';
-    for (const f of files) box.appendChild(makeDeliverCard(f, act));
+    for (const f of picked) box.appendChild(makeDeliverCard(f, act));
     host.appendChild(box);
-    return files.length;
+    return picked.length;
   }

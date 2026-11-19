@@ -233,7 +233,7 @@
 .pb2-chatp-msg.pb2-me { align-self: flex-end; background: linear-gradient(180deg,#5b8cff,#4a7bf0); color: #fff; border-bottom-right-radius: 4px; }
 .pb2-chatp-msg.pb2-pet { align-self: flex-start; background: #f1f5ff; color: #26314d; border-bottom-left-radius: 4px; }
 .pb2-chatp-msg.pb2-sys { align-self: center; background: transparent; color: #8a96b5; font-size: 12px; }
-.pb2-chatp-foot { display: flex; gap: 6px; padding: 8px; background: #fff; border-top: 1px solid #eef2fb; border-radius: 0 0 16px 16px; }
+.pb2-chatp-foot { display: flex; gap: 6px; padding: 8px 8px 6px; background: #fff; border-top: 1px solid #eef2fb; border-radius: 0 0 16px 16px; }
 .pb2-chatp-foot input { flex: 1 1 auto; min-width: 0; border: 1px solid #d7def2; border-radius: 10px; padding: 7px 10px;
   font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
 .pb2-chatp-foot input:focus { border-color: #8aa8f0; box-shadow: 0 0 0 3px rgba(122,152,240,.16); }
@@ -316,31 +316,37 @@
 .pb2-zip-meta { flex: none; font-size: 11.5px; color: #7c88ad; }
 
 /* ===== v4.3 成果卡片：对话产出的文件（图片/表格/文档/网页…）
-   v4.4：点击卡片 = 打开文件；右侧「打开文件 / 打开文件夹位置 / 复制」 ===== */
+   v4.4：点击卡片 = 打开文件；按钮「打开 / 定位 / 复制」
+   v4.6：左侧真缩略图（图片/视频）+ 三行内容（文件名/路径/按钮），适配 322px 窄面板 ===== */
 .pb2-deliv-box { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; width: 100%; }
-.pb2-deliv { display: flex; align-items: center; gap: 9px; border: 1.5px solid #cfdcf7; border-radius: 10px;
-  padding: 8px 10px; background: linear-gradient(180deg, #fbfdff, #eef4ff);
+.pb2-deliv { display: flex; align-items: flex-start; gap: 8px; border: 1.5px solid #cfdcf7; border-radius: 10px;
+  padding: 7px 9px; background: linear-gradient(180deg, #fbfdff, #eef4ff);
   cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
 .pb2-deliv:hover { border-color: #9bb6ee; box-shadow: 0 1px 6px rgba(90, 125, 200, .14); }
-.pb2-deliv-ico { flex: none; width: 26px; height: 26px; color: #4a6fd4; display: flex; }
-.pb2-deliv-ico svg { width: 100%; height: 100%; }
-.pb2-deliv-mid { flex: 1 1 auto; min-width: 0; }
+.pb2-deliv-thumb { flex: none; width: 34px; height: 34px; border-radius: 7px; color: #4a6fd4;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; background: #eaf0ff; }
+.pb2-deliv-thumb svg { width: 20px; height: 20px; }
+.pb2-deliv-pv { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 面板/气泡里的消息图规则（max-width:118px 等）会把缩略图压成原比例，这里提高特异性拉回方形 */
+.pb2-chatp-msg .pb2-deliv .pb2-deliv-pv,
+.pb2-bubble .pb2-deliv .pb2-deliv-pv { width: 100%; height: 100%; object-fit: cover; max-width: none; max-height: none; border-radius: 7px; }
+.pb2-deliv-haspv .pb2-deliv-thumb { width: 52px; height: 52px; background: #f2f6ff; }
+.pb2-deliv-mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pb2-deliv-name { font-size: 12.5px; font-weight: 600; color: #24365f;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pb2-deliv-path { font-size: 11px; color: #7b87ab; margin-top: 1px;
+.pb2-deliv-path { font-size: 11px; color: #7b87ab;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pb2-deliv-acts { flex: none; display: flex; align-items: center; gap: 5px; }
-.pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
+.pb2-deliv-acts { display: flex; align-items: center; gap: 5px; margin-top: 3px; flex-wrap: wrap; }
+.pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 3px 9px; border-radius: 7px; line-height: 1.5;
   border: 1px solid #b9cdf5; background: #fff; color: #3a5bb8; cursor: pointer; transition: background .12s ease; }
 .pb2-deliv-btn:hover { background: #eaf1ff; border-color: #8aa8f0; }
 .pb2-deliv-btn.pb2-deliv-open { background: #4a6fd4; border-color: #4a6fd4; color: #fff; }
 .pb2-deliv-btn.pb2-deliv-open:hover { background: #3d5fc0; }
-.pb2-deliv-btn.pb2-deliv-copy { color: #7b87ab; border-color: #dbe3f5; padding: 4px 6px; }
-/* 气泡里空间小：图标 + 文件名 + 「打开」/「位置」两个短按钮（路径藏起来，title 里有全路径） */
-.pb2-bubble .pb2-deliv { padding: 6px 8px; gap: 7px; }
-.pb2-bubble .pb2-deliv-ico { width: 22px; height: 22px; }
+.pb2-deliv-btn.pb2-deliv-copy { color: #7b87ab; border-color: #dbe3f5; padding: 3px 7px; }
+/* 小气泡里空间更小：路径藏起来（title 里有），缩略图缩到 34px */
+.pb2-bubble .pb2-deliv { padding: 6px 8px; gap: 6px; }
+.pb2-bubble .pb2-deliv-haspv .pb2-deliv-thumb { width: 40px; height: 40px; }
 .pb2-bubble .pb2-deliv-path { display: none; }
-.pb2-bubble .pb2-deliv-btn { font-size: 11px; padding: 3px 6px; }
 .pb2-chatp-msg .pb2-deliv-box { margin-top: 6px; }
 /* v4.5：乐观条目（还没落到会话记录里的那一瞬）淡一点，正式记录到位即恢复 */
 .pb2-chatp-msg.pb2-temp { opacity: .72; }

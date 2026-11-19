@@ -368,6 +368,7 @@
   function refreshLayout() {
     applyPos(settings.pos || placeDefault());
     lastPaint = ''; // 尺寸变化 → 下一帧按新 scale 重画
+    try { chatpFollowPet(); } catch (e) { /* 面板还没建 */ }   // v4.6：桌宠动了，面板跟着贴头顶
   }
   refreshLayout();
   window.addEventListener('resize', refreshLayout);
@@ -453,6 +454,7 @@
       saveSettings();
       petWrap.classList.remove('pb2-dragging');
       applyPos(settings.pos);
+      try { chatpFollowPet(); } catch (e) { /* 面板还没建 */ }   // v4.6：桌宠挪了位置，面板跟着走
       if (left === 8 || left === vw - petSize().w - 8) sfx('drop'); // v3.3：吸附到边缘给一声「唰」
       transient = 'waving'; transientUntil = performance.now() + 1200;
       if (skinMode === 'pack') packPlayIdle();   // v4.3：放下后回到待机动作
@@ -1909,9 +1911,33 @@
       body: JSON.stringify({ path: path }),
     }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(() => ({})); });
   }
+  /** v4.6 文件预览：走宿主的文件服务接口取字节 → blob URL（图片显示缩略图、视频显示首帧）。
+   *  拿不到就抛错，卡片保持类型图标（不假装有预览）。 */
+  const delivPreviewCache = new Map();   // path → blob URL（最多留 24 个）
+  function delivPreview(path) {
+    const key = String(path || '').toLowerCase();
+    if (delivPreviewCache.has(key)) return Promise.resolve(delivPreviewCache.get(key));
+    const sid = deliverSid();
+    if (!sid) return Promise.reject(new Error('no-session'));
+    const url = '/api/md/' + encodeURIComponent(sid) + '/' + String(path).replace(/\\/g, '/');
+    return fetch(url).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).then(b => {
+      const obj = URL.createObjectURL(b);
+      if (delivPreviewCache.size >= 24) {
+        const old = delivPreviewCache.keys().next().value;
+        try { URL.revokeObjectURL(delivPreviewCache.get(old)); } catch (e) { /* 忽略 */ }
+        delivPreviewCache.delete(old);
+      }
+      delivPreviewCache.set(key, obj);
+      return obj;
+    });
+  }
   const DELIV_ACT = {
     open: p => delivApi('open', p),
     reveal: p => delivApi('reveal', p),
+    preview: p => delivPreview(p),
     fail: msg => bubbleSay(msg, 4200),
   };
 
@@ -1966,8 +1992,11 @@
       chatpClearTemps();                                 // 正式记录到位 → 临时条目退场
       for (const m of fresh) {
         chatpLastSeq = Math.max(chatpLastSeq, m.seq || 0);
+        if (m.role !== 'user' && m.role !== 'assistant') continue;   // v4.6：system/工具注入不进面板
+        const raw = String(m.text || '');
+        if (m.role === 'assistant' && looksLikeMetaJson(raw)) continue;   // 调用统计等元数据也跳过
         const mine = m.role === 'user';
-        let text = mine ? sessionUserText(m.text) : String(m.text || '').trim();
+        const text = mine ? sessionUserText(raw) : raw.trim();
         if (!text) continue;                             // 人设块/注入块不进面板
         chatpAdd(mine ? 'me' : 'pet', text);
       }
@@ -1994,12 +2023,33 @@
     } finally { chatpBusy = false; chatpBtn.disabled = false; chatpInput.focus(); }
   }
 
+  /** v4.6：面板始终贴着桌宠头顶——每次打开都按桌宠当前位置重算（不再沿用拖动过的位置），
+   *  桌宠移动/改大小（refreshLayout）时若面板开着也跟着走；水平方向对齐桌宠中线附近。 */
+  function chatpFollowPet() {
+    if (!chatp || chatp.hidden) return;
+    const pr = petWrap.getBoundingClientRect();
+    if (!pr.width || settings.hidden) return;                  // 桌宠量不到（隐藏中）就保持原样
+    chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
+    // 垂直：面板底边贴在桌宠头顶上方 8px（= 发送按钮位于桌宠中线之上）
+    const bottomPx = clamp(Math.round(window.innerHeight - pr.top) + 8, 8, Math.max(60, window.innerHeight - 120));
+    chatp.style.bottom = bottomPx + 'px';
+    chatp.style.top = 'auto';
+    // 水平：面板左对齐桌宠中线往左一点，保证气泡尖角指向桌宠
+    const w = chatp.offsetWidth || 322;
+    const leftPx = clamp(Math.round(pr.left + pr.width / 2 - w + 46), 6, Math.max(6, window.innerWidth - w - 6));
+    chatp.style.left = leftPx + 'px'; chatp.style.right = 'auto';
+    // 高度上限：别顶出屏幕上沿
+    const maxH = Math.max(180, Math.round(pr.top - 24));
+    chatp.style.maxHeight = Math.min(maxH, Math.round(window.innerHeight * 0.62), 470) + 'px';
+  }
+
   function openChatPanel() {
     speechUnlock(); sfx('pop');
     if (chatp) {
       chatp.hidden = false;
       try { chatpInput.focus(); } catch (e) { /* 焦点无所谓 */ }
-      chatpSync();   // v4.5：每次打开都补上双击闲聊等入口产生的新消息（同一会话记录）
+      chatpFollowPet();   // v4.6：每次打开都重新贴合桌宠头顶
+      chatpSync();        // v4.5：每次打开都补上双击闲聊等入口产生的新消息（同一会话记录）
       return;
     }
     chatp = $new('div', 'pb2-chatp');
@@ -2024,21 +2074,8 @@
     chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });
     foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
     chatp.appendChild(foot);
-    /* v3.9：标题栏可拖动（记住位置，下次打开还在原处） */
-    const savedPos = settings.chatpPos || null;
-    if (savedPos && savedPos.left != null) {
-      chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
-      chatp.style.left = savedPos.left + 'px'; chatp.style.top = savedPos.top + 'px';
-    } else {
-      /* v4.1 修复：默认位置不再硬编码 bottom:150px——桌宠大小一变就悬空一截或压住桌宠头顶。
-       * 改成贴着桌宠头顶 8px（桌宠调大调小都跟着）；桌宠隐藏/量不到时回退 150px。 */
-      const pr = petWrap.getBoundingClientRect();
-      const petTop = pr.top || 0;
-      const follow = !settings.hidden && petTop > 0
-        ? clamp(Math.round(window.innerHeight - petTop) + 8, 8, Math.max(60, window.innerHeight - 140))
-        : 150;
-      chatp.style.bottom = follow + 'px';
-    }
+    /* v4.6：位置不再记忆——每次打开都贴桌宠头顶（见 appendChild 后的 chatpFollowPet()）。
+     * 标题栏仍可拖动（临时挪开看内容），松手不保存，下次打开回到贴头顶的位置。 */
     let dragging = false, dragDx = 0, dragDy = 0;
     head.addEventListener('pointerdown', ev => {
       if (ev.target === close) return;
@@ -2059,14 +2096,15 @@
     const endDrag = () => {
       if (!dragging) return;
       dragging = false;
-      settings.chatpPos = { left: Math.round(parseFloat(chatp.style.left) || 0), top: Math.round(parseFloat(chatp.style.top) || 0) };
-      saveSettings(); sfx('tap');
+      sfx('tap');
+      // v4.6：不再记住拖动后的位置——面板的职责是"始终贴桌宠头顶"，下次打开自动回去
     };
     head.addEventListener('pointerup', endDrag);
     head.addEventListener('pointercancel', endDrag);
     document.body.appendChild(chatp);
     chatpAdd('sys', '（试试问我余额还剩多少～）');
-    chatpSync();   // v4.5：把会话记录里的历史（含双击闲聊过的）补进面板
+    chatpFollowPet();   // v4.6：贴桌宠头顶（含水平对齐与最大高度）
+    chatpSync();        // v4.5：把会话记录里的历史（含双击闲聊过的）补进面板
     setTimeout(() => { try { chatpInput.focus(); } catch (e) { /* 同上 */ } }, 60);
   }
   function openChatWindow() {

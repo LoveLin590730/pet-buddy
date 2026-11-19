@@ -125,6 +125,14 @@
     return t;
   }
 
+  /** 会话记录里的「元数据 JSON」（调用统计/env 快照等）不该进气泡聊天面板（v4.6）。
+   *  典型形如 {"envHash":"…","est":128674,"model":"…","ms":3582,"usage":{…}}。 */
+  function looksLikeMetaJson(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (t.charAt(0) !== '{' || t.charAt(t.length - 1) !== '}') return false;
+    return /"(?:usage|envHash|sysHash|outMs|completion|est|msgs|ms|step|type|prompt|env)"\s*:/.test(t);
+  }
+
   async function apiOK() {
     try { const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } }); return r.ok; }
     catch (e) { return false; }

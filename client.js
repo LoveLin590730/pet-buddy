@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.5.0';
+const PB_VERSION = '4.6.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -910,18 +910,23 @@ const CHAT_MODELS = [
     } catch (e) { if (onFail) onFail(); }
   }
 
-  /* ---- 卡片（v4.4）：文件名 + 路径 + 「打开文件」「打开文件夹位置」 ----
-   * 打开动作交给宿主（桌宠侧的 act.open / act.reveal 调 /api/sessions/{id}/delivery/open|reveal，
-   * 由系统默认程序打开文件、在资源管理器里定位）；宿主不给力时回落「复制路径」。 */
+  /* ---- 卡片（v4.4 打开/定位；v4.6 加真预览 + 窄面板布局）----
+   * 打开/定位/预览三个动作都由宿主端注入（act.open / act.reveal / act.preview）：
+   *   open    → POST /api/sessions/{id}/delivery/open   （系统默认程序打开）
+   *   reveal  → POST /api/sessions/{id}/delivery/reveal （资源管理器定位）
+   *   preview → GET  /api/md/{id}/{path}                （取文件字节 → blob URL 当缩略图）
+   * 任一步拿不到就退回「类型图标 + 复制路径」，不假装完成。 */
+  const DELIV_PREVIEWABLE = { image: 1, media: 1 };
   function makeDeliverCard(f, act) {
     const a = act || {};
     const card = document.createElement('div');
-    card.className = 'pb2-deliv';
-    card.title = '点击打开文件';
-    const ico = document.createElement('span');
-    ico.className = 'pb2-deliv-ico';
-    ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
-    card.appendChild(ico);
+    card.className = 'pb2-deliv' + (DELIV_PREVIEWABLE[f.kind] && a.preview ? ' pb2-deliv-haspv' : '');
+    card.title = f.path;
+    // 缩略图区（图片/音视频：真预览；其余：类型图标）
+    const thumb = document.createElement('div');
+    thumb.className = 'pb2-deliv-thumb pb2-deliv-ico';
+    thumb.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
+    card.appendChild(thumb);
     const mid = document.createElement('div');
     mid.className = 'pb2-deliv-mid';
     const nm = document.createElement('div');
@@ -929,7 +934,6 @@ const CHAT_MODELS = [
     const pt = document.createElement('div');
     pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
     mid.appendChild(nm); mid.appendChild(pt);
-    card.appendChild(mid);
     const acts = document.createElement('div');
     acts.className = 'pb2-deliv-acts';
     const mk = (cls, label, title, fn) => {
@@ -944,36 +948,70 @@ const CHAT_MODELS = [
       copyPlainText(f.path, null, null);
       if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
     };
-    mk('pb2-deliv-open', '打开文件', '用系统默认程序打开这个文件', () => {
+    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
-    mk('pb2-deliv-reveal', '打开文件夹位置', '在资源管理器里定位到这个文件', () => {
+    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => {
       if (!a.reveal) return fallback('定位文件');
       try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
       catch (e) { fallback('定位文件'); }
     });
     mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
-    card.appendChild(acts);
+    mid.appendChild(acts);
+    card.appendChild(mid);
     card.addEventListener('click', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
+    // 异步补缩略图（失败就保持图标，不打扰）
+    if (DELIV_PREVIEWABLE[f.kind] && a.preview) {
+      try {
+        Promise.resolve(a.preview(f.path)).then((res) => {
+          const url = res && res.url ? res.url : res;
+          if (!url) return;
+          let el;
+          if (f.kind === 'media' && /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name)) {
+            el = document.createElement('video');
+            el.muted = true; el.preload = 'metadata'; el.playsInline = true;
+            el.setAttribute('muted', ''); el.setAttribute('playsinline', '');
+          } else {
+            el = document.createElement('img');
+            el.alt = '';
+          }
+          el.className = 'pb2-deliv-pv';
+          el.src = url;
+          const show = () => { thumb.textContent = ''; thumb.appendChild(el); };
+          el.addEventListener('load' in el ? 'load' : 'loadeddata', show, { once: true });
+          if (el.tagName === 'VIDEO') el.addEventListener('loadedmetadata', show, { once: true });
+        }).catch(() => { /* 预览拿不到就算了 */ });
+      } catch (e) { /* 同上 */ }
+    }
     return card;
   }
 
   /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
-   *  act（可选）= { open(path), reveal(path), fail(msg) }：由宿主端注入（桌宠/聊天窗口各自实现）。 */
+   *  act（可选）= { open(path), reveal(path), preview(path), fail(msg) }：由宿主端注入。
+   *  单条消息最多 3 张（同一路径去重），免得长回复把面板刷满卡片（v4.6）。 */
   function renderDeliverables(host, text, act) {
     const files = extractFilePaths(text);
     if (!files.length || !host) return 0;
+    const seen = {};
+    const picked = [];
+    for (const f of files) {
+      const k = f.path.toLowerCase();
+      if (seen[k]) continue;
+      seen[k] = 1;
+      picked.push(f);
+      if (picked.length >= 3) break;
+    }
     const box = document.createElement('div');
     box.className = 'pb2-deliv-box';
-    for (const f of files) box.appendChild(makeDeliverCard(f, act));
+    for (const f of picked) box.appendChild(makeDeliverCard(f, act));
     host.appendChild(box);
-    return files.length;
+    return picked.length;
   }
 
   /* ======== src/core/petpack.js ======== */
@@ -3616,6 +3654,14 @@ const CHAT_MODELS = [
     return t;
   }
 
+  /** 会话记录里的「元数据 JSON」（调用统计/env 快照等）不该进气泡聊天面板（v4.6）。
+   *  典型形如 {"envHash":"…","est":128674,"model":"…","ms":3582,"usage":{…}}。 */
+  function looksLikeMetaJson(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (t.charAt(0) !== '{' || t.charAt(t.length - 1) !== '}') return false;
+    return /"(?:usage|envHash|sysHash|outMs|completion|est|msgs|ms|step|type|prompt|env)"\s*:/.test(t);
+  }
+
   async function apiOK() {
     try { const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } }); return r.ok; }
     catch (e) { return false; }
@@ -4205,6 +4251,7 @@ const CHAT_MODELS = [
   function refreshLayout() {
     applyPos(settings.pos || placeDefault());
     lastPaint = ''; // 尺寸变化 → 下一帧按新 scale 重画
+    try { chatpFollowPet(); } catch (e) { /* 面板还没建 */ }   // v4.6：桌宠动了，面板跟着贴头顶
   }
   refreshLayout();
   window.addEventListener('resize', refreshLayout);
@@ -4290,6 +4337,7 @@ const CHAT_MODELS = [
       saveSettings();
       petWrap.classList.remove('pb2-dragging');
       applyPos(settings.pos);
+      try { chatpFollowPet(); } catch (e) { /* 面板还没建 */ }   // v4.6：桌宠挪了位置，面板跟着走
       if (left === 8 || left === vw - petSize().w - 8) sfx('drop'); // v3.3：吸附到边缘给一声「唰」
       transient = 'waving'; transientUntil = performance.now() + 1200;
       if (skinMode === 'pack') packPlayIdle();   // v4.3：放下后回到待机动作
@@ -5746,9 +5794,33 @@ const CHAT_MODELS = [
       body: JSON.stringify({ path: path }),
     }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(() => ({})); });
   }
+  /** v4.6 文件预览：走宿主的文件服务接口取字节 → blob URL（图片显示缩略图、视频显示首帧）。
+   *  拿不到就抛错，卡片保持类型图标（不假装有预览）。 */
+  const delivPreviewCache = new Map();   // path → blob URL（最多留 24 个）
+  function delivPreview(path) {
+    const key = String(path || '').toLowerCase();
+    if (delivPreviewCache.has(key)) return Promise.resolve(delivPreviewCache.get(key));
+    const sid = deliverSid();
+    if (!sid) return Promise.reject(new Error('no-session'));
+    const url = '/api/md/' + encodeURIComponent(sid) + '/' + String(path).replace(/\\/g, '/');
+    return fetch(url).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).then(b => {
+      const obj = URL.createObjectURL(b);
+      if (delivPreviewCache.size >= 24) {
+        const old = delivPreviewCache.keys().next().value;
+        try { URL.revokeObjectURL(delivPreviewCache.get(old)); } catch (e) { /* 忽略 */ }
+        delivPreviewCache.delete(old);
+      }
+      delivPreviewCache.set(key, obj);
+      return obj;
+    });
+  }
   const DELIV_ACT = {
     open: p => delivApi('open', p),
     reveal: p => delivApi('reveal', p),
+    preview: p => delivPreview(p),
     fail: msg => bubbleSay(msg, 4200),
   };
 
@@ -5803,8 +5875,11 @@ const CHAT_MODELS = [
       chatpClearTemps();                                 // 正式记录到位 → 临时条目退场
       for (const m of fresh) {
         chatpLastSeq = Math.max(chatpLastSeq, m.seq || 0);
+        if (m.role !== 'user' && m.role !== 'assistant') continue;   // v4.6：system/工具注入不进面板
+        const raw = String(m.text || '');
+        if (m.role === 'assistant' && looksLikeMetaJson(raw)) continue;   // 调用统计等元数据也跳过
         const mine = m.role === 'user';
-        let text = mine ? sessionUserText(m.text) : String(m.text || '').trim();
+        const text = mine ? sessionUserText(raw) : raw.trim();
         if (!text) continue;                             // 人设块/注入块不进面板
         chatpAdd(mine ? 'me' : 'pet', text);
       }
@@ -5831,12 +5906,33 @@ const CHAT_MODELS = [
     } finally { chatpBusy = false; chatpBtn.disabled = false; chatpInput.focus(); }
   }
 
+  /** v4.6：面板始终贴着桌宠头顶——每次打开都按桌宠当前位置重算（不再沿用拖动过的位置），
+   *  桌宠移动/改大小（refreshLayout）时若面板开着也跟着走；水平方向对齐桌宠中线附近。 */
+  function chatpFollowPet() {
+    if (!chatp || chatp.hidden) return;
+    const pr = petWrap.getBoundingClientRect();
+    if (!pr.width || settings.hidden) return;                  // 桌宠量不到（隐藏中）就保持原样
+    chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
+    // 垂直：面板底边贴在桌宠头顶上方 8px（= 发送按钮位于桌宠中线之上）
+    const bottomPx = clamp(Math.round(window.innerHeight - pr.top) + 8, 8, Math.max(60, window.innerHeight - 120));
+    chatp.style.bottom = bottomPx + 'px';
+    chatp.style.top = 'auto';
+    // 水平：面板左对齐桌宠中线往左一点，保证气泡尖角指向桌宠
+    const w = chatp.offsetWidth || 322;
+    const leftPx = clamp(Math.round(pr.left + pr.width / 2 - w + 46), 6, Math.max(6, window.innerWidth - w - 6));
+    chatp.style.left = leftPx + 'px'; chatp.style.right = 'auto';
+    // 高度上限：别顶出屏幕上沿
+    const maxH = Math.max(180, Math.round(pr.top - 24));
+    chatp.style.maxHeight = Math.min(maxH, Math.round(window.innerHeight * 0.62), 470) + 'px';
+  }
+
   function openChatPanel() {
     speechUnlock(); sfx('pop');
     if (chatp) {
       chatp.hidden = false;
       try { chatpInput.focus(); } catch (e) { /* 焦点无所谓 */ }
-      chatpSync();   // v4.5：每次打开都补上双击闲聊等入口产生的新消息（同一会话记录）
+      chatpFollowPet();   // v4.6：每次打开都重新贴合桌宠头顶
+      chatpSync();        // v4.5：每次打开都补上双击闲聊等入口产生的新消息（同一会话记录）
       return;
     }
     chatp = $new('div', 'pb2-chatp');
@@ -5861,21 +5957,8 @@ const CHAT_MODELS = [
     chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });
     foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
     chatp.appendChild(foot);
-    /* v3.9：标题栏可拖动（记住位置，下次打开还在原处） */
-    const savedPos = settings.chatpPos || null;
-    if (savedPos && savedPos.left != null) {
-      chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
-      chatp.style.left = savedPos.left + 'px'; chatp.style.top = savedPos.top + 'px';
-    } else {
-      /* v4.1 修复：默认位置不再硬编码 bottom:150px——桌宠大小一变就悬空一截或压住桌宠头顶。
-       * 改成贴着桌宠头顶 8px（桌宠调大调小都跟着）；桌宠隐藏/量不到时回退 150px。 */
-      const pr = petWrap.getBoundingClientRect();
-      const petTop = pr.top || 0;
-      const follow = !settings.hidden && petTop > 0
-        ? clamp(Math.round(window.innerHeight - petTop) + 8, 8, Math.max(60, window.innerHeight - 140))
-        : 150;
-      chatp.style.bottom = follow + 'px';
-    }
+    /* v4.6：位置不再记忆——每次打开都贴桌宠头顶（见 appendChild 后的 chatpFollowPet()）。
+     * 标题栏仍可拖动（临时挪开看内容），松手不保存，下次打开回到贴头顶的位置。 */
     let dragging = false, dragDx = 0, dragDy = 0;
     head.addEventListener('pointerdown', ev => {
       if (ev.target === close) return;
@@ -5896,14 +5979,15 @@ const CHAT_MODELS = [
     const endDrag = () => {
       if (!dragging) return;
       dragging = false;
-      settings.chatpPos = { left: Math.round(parseFloat(chatp.style.left) || 0), top: Math.round(parseFloat(chatp.style.top) || 0) };
-      saveSettings(); sfx('tap');
+      sfx('tap');
+      // v4.6：不再记住拖动后的位置——面板的职责是"始终贴桌宠头顶"，下次打开自动回去
     };
     head.addEventListener('pointerup', endDrag);
     head.addEventListener('pointercancel', endDrag);
     document.body.appendChild(chatp);
     chatpAdd('sys', '（试试问我余额还剩多少～）');
-    chatpSync();   // v4.5：把会话记录里的历史（含双击闲聊过的）补进面板
+    chatpFollowPet();   // v4.6：贴桌宠头顶（含水平对齐与最大高度）
+    chatpSync();        // v4.5：把会话记录里的历史（含双击闲聊过的）补进面板
     setTimeout(() => { try { chatpInput.focus(); } catch (e) { /* 同上 */ } }, 60);
   }
   function openChatWindow() {

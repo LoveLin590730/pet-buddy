@@ -65,7 +65,7 @@ const probe = `
   FISH_STICKERS, BEAN, ARCHIVE_ALIAS, normSticker, archiveResolve, stickerEl, renderRich, $new, clamp, nowStr, fmtTok,
   isValley, fmtCredits, fmtMoney, perYuanCredits, priceTier, localDateStr,
   parseGatewayToken, tokenHint, fetchCompanyQuota, quotaLine, fetchCredits, todaySpend,
-  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname, nicknameLooksWrong, sessionUserText,
+  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname, nicknameLooksWrong, sessionUserText, looksLikeMetaJson,
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
@@ -147,6 +147,12 @@ eq('首轮人设块不进面板', P.sessionUserText('【桌宠设定·系统级�
 eq('余额块不进面板', P.sessionUserText('【余额】还剩…\n\n【用户说】嗯'), '嗯');
 eq('JSON 注入不进面板', P.sessionUserText('{"env":"# 运行环境快照…"}'), '');
 eq('空串安全', P.sessionUserText(''), '');
+// v4.6：会话记录里的调用统计/环境快照等元数据不进面板
+ok('识别调用统计 JSON（不进面板）', P.looksLikeMetaJson('{"envHash":"74872a81","est":128674,"usage":{"prompt":92985}}'));
+ok('识别 env 快照 JSON', P.looksLikeMetaJson('{"env":"# 运行环境快照（最新，取代更早的快照）","model":"x"}'));
+eq('正常助手回复不误判', P.looksLikeMetaJson('哦～阳哥终于信了 [stick:archive:卖萌]'), false);
+eq('普通 JSON 短句不误判', P.looksLikeMetaJson('{"a":1}'), false);
+eq('非 JSON 不误判', P.looksLikeMetaJson('你好呀'), false);
 ok('人设指纹首轮需要全量', typeof P.needPersonaFull('smoke-test') === 'string');
 ok('chatSend / 三通道函数就绪', ['chatSend', 'sendViaMock', 'ensureAssistantSession', 'lastAssistantText', 'apiOK'].every(k => typeof P[k] === 'function'));
 ok('离线时 apiOK 返回 false（不抛错）', (await P.apiOK()) === false);
@@ -311,7 +317,7 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const css5 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
-  ok('气泡面板标题栏可拖动并记住位置', /dragDx/.test(t) && /settings\.chatpPos/.test(t) && /pb2-chatp-head \{ cursor: move/.test(css5));
+  ok('气泡面板标题栏可拖动（v4.6 起不再记忆位置，下次打开回到贴桌宠头顶）', /dragDx/.test(t) && !/settings\.chatpPos = \{/.test(t) && /pb2-chatp-head \{ cursor: move/.test(css5));
   ok('贴纸/图片在气泡里限尺寸（不再撑爆）', /\.pb2-chatp-msg img \{[^}]*max-width: 118px/.test(css5));
   ok('桌宠大小可调（菜单档位 + 设置滑块）', /function cyclePetSize/.test(t) && /sizeRange/.test(t) && /settings\.size = clamp/.test(t));
   ok('大小档位含 小/中/大/特大', /label: '小', size: 72/.test(t) && /label: '特大', size: 168/.test(t));
@@ -691,7 +697,8 @@ console.log('\n[v4.1 自定义动图皮肤]');
   ok('上传处理带容量预检（存不下明说，不静默丢）', /customSkinStoreFits/.test(jsV41) && /本机存储放不下/.test(jsV41));
   ok('上传后 anim 标记落进 customSkins', /anim:\s*anim/.test(jsV41));
   ok('单击台词走 renderRich（[bean:sleep] 渲染成图，不再显示方括号文字）', /renderRich\(main,\s*head\)/.test(jsV41));
-  ok('气泡聊天默认位置跟随桌宠头顶（不再硬编码 150px）', /不再硬编码 bottom:150px/.test(jsV41));
+  ok('气泡面板位置跟随桌宠（v4.6：chatpFollowPet 每次打开重算，贴头顶 8px）',
+   /function chatpFollowPet/.test(jsV41) && /window\.innerHeight - pr\.top\) \+ 8/.test(jsV41));
 }
 
 console.log('\n[v4.1 语音数字本地化]');
@@ -832,7 +839,7 @@ console.log('\n[v4.3 交付成果卡片]');
   const card = box.children[0];
   eq('卡片 class', card.className, 'pb2-deliv');
   const names = card.children.map(c => c.className);
-  ok('卡片有 图标/中段/按钮组', names.join(',').indexOf('pb2-deliv-ico') === 0 && names.indexOf('pb2-deliv-acts') >= 0, names.join(','));
+  ok('卡片有 缩略图/中段（按钮组在中间列）', names.join(',').indexOf('pb2-deliv-thumb') === 0 && names.indexOf('pb2-deliv-mid') >= 0, names.join(','));
   const midEl = card.children[1];
   eq('文件名在卡片上', midEl.children[0].textContent, '我的花费折线图_20261106-1119.png');
   eq('路径在卡片上（title 也是全路径）', midEl.children[1].textContent, P1);
@@ -850,8 +857,17 @@ console.log('\n[v4.3 交付成果卡片]');
   ok('人设里带上「交付文件」写法约定（助手会输出路径）', /交付文件/.test(jsD) && /📎/.test(jsD));
   // v4.4：卡片动作走宿主交付接口（打开文件 / 打开文件夹位置）
   const delivSrc = readFileSync(path.join(ROOT, 'src/core/deliver.js'), 'utf8');
-  ok('卡片两个按钮：打开文件 / 打开文件夹位置',
-    delivSrc.indexOf('打开文件') >= 0 && delivSrc.indexOf('打开文件夹位置') >= 0);
+  ok('卡片两个按钮：打开 / 定位（v4.6 短文案省空间）',
+    delivSrc.indexOf("'打开'") >= 0 && delivSrc.indexOf("'定位'") >= 0 && delivSrc.indexOf("'复制'") >= 0);
+  ok('按钮组挂在中间列（窄面板三行布局）', /mid\.appendChild\(acts\)/.test(delivSrc));
+  ok('卡片带真缩略图（图片/视频走 preview）',
+    /pb2-deliv-haspv/.test(delivSrc) && /a\.preview\(f\.path\)/.test(delivSrc) && /pb2-deliv-pv/.test(delivSrc));
+  ok('单条消息最多 3 张卡片（同路径去重）', /picked\.length >= 3/.test(delivSrc) && /seen\[k\]/.test(delivSrc));
+  ok('桌宠侧接上预览接口（/api/md/）', /\/api\/md\//.test(jsD) && /delivPreview/.test(jsD));
+  ok('独立窗口也接上预览', /\/api\/md\//.test(htmlD) && /preview: preview/.test(htmlD));
+  ok('元数据 JSON 不进面板（v4.6 修）', /looksLikeMetaJson/.test(jsD) && /m\.role !== 'user' && m\.role !== 'assistant'/.test(jsD));
+  ok('面板每次打开都贴桌宠头顶（位置不再记忆）', /chatpFollowPet\(\)/.test(jsD) && /位置不再记忆/.test(jsD));
+  ok('桌宠移动/改尺寸时面板跟随', /try \{ chatpFollowPet\(\); \}/.test(jsD));
   ok('点击卡片本体 = 打开文件', /card\.addEventListener\('click'/.test(delivSrc) && /a\.open\(f\.path\)/.test(delivSrc));
   ok('宿主接口不可用时回落复制路径（不静默失败）',
     /copyPlainText\(f\.path/.test(delivSrc) && /fallback\(/.test(delivSrc));

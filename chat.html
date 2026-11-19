@@ -29,15 +29,19 @@
   .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
   .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat; background-size: 800% 1100%; }
  /* v4.3 成果卡片（与 client.css 同款，独立窗口独立声明） */ .pb2-deliv-box { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
- .pb2-deliv { display: flex; align-items: center; gap: 9px; border: 1.5px solid #cfdcf7; border-radius: 10px;
-   padding: 8px 10px; background: linear-gradient(180deg, #fbfdff, #eef4ff); cursor: pointer; }
+ .pb2-deliv { display: flex; align-items: flex-start; gap: 8px; border: 1.5px solid #cfdcf7; border-radius: 10px;
+   padding: 7px 9px; background: linear-gradient(180deg, #fbfdff, #eef4ff); cursor: pointer; }
  .pb2-deliv:hover { border-color: #9bb6ee; }
- .pb2-deliv-ico { flex: none; width: 26px; height: 26px; color: #4a6fd4; display: flex; }
- .pb2-deliv-ico svg { width: 100%; height: 100%; }
- .pb2-deliv-mid { flex: 1 1 auto; min-width: 0; }
+ .pb2-deliv-thumb { flex: none; width: 34px; height: 34px; border-radius: 7px; color: #4a6fd4;
+   display: flex; align-items: center; justify-content: center; overflow: hidden; background: #eaf0ff; }
+ .pb2-deliv-thumb svg { width: 20px; height: 20px; }
+ .pb2-deliv-pv { width: 100%; height: 100%; object-fit: cover; display: block; }
+ .msg .pb2-deliv .pb2-deliv-pv, .bubble2 .pb2-deliv .pb2-deliv-pv { width: 100%; height: 100%; object-fit: cover; max-width: none; max-height: none; border-radius: 7px; }
+ .pb2-deliv-haspv .pb2-deliv-thumb { width: 52px; height: 52px; background: #f2f6ff; }
+ .pb2-deliv-mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
  .pb2-deliv-name { font-size: 12.5px; font-weight: 600; color: #24365f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
- .pb2-deliv-path { font-size: 11px; color: #7b87ab; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
- .pb2-deliv-acts { flex: none; display: flex; align-items: center; gap: 5px; }
+ .pb2-deliv-path { font-size: 11px; color: #7b87ab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .pb2-deliv-acts { display: flex; align-items: center; gap: 5px; margin-top: 3px; flex-wrap: wrap; }
  .pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
    border: 1px solid #b9cdf5; background: #fff; color: #3a5bb8; cursor: pointer; }
  .pb2-deliv-btn:hover { background: #eaf1ff; border-color: #8aa8f0; }
@@ -217,7 +221,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.5.0';
+const PB_VERSION = '4.6.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -985,18 +989,23 @@ const CHAT_MODELS = [
     } catch (e) { if (onFail) onFail(); }
   }
 
-  /* ---- 卡片（v4.4）：文件名 + 路径 + 「打开文件」「打开文件夹位置」 ----
-   * 打开动作交给宿主（桌宠侧的 act.open / act.reveal 调 /api/sessions/{id}/delivery/open|reveal，
-   * 由系统默认程序打开文件、在资源管理器里定位）；宿主不给力时回落「复制路径」。 */
+  /* ---- 卡片（v4.4 打开/定位；v4.6 加真预览 + 窄面板布局）----
+   * 打开/定位/预览三个动作都由宿主端注入（act.open / act.reveal / act.preview）：
+   *   open    → POST /api/sessions/{id}/delivery/open   （系统默认程序打开）
+   *   reveal  → POST /api/sessions/{id}/delivery/reveal （资源管理器定位）
+   *   preview → GET  /api/md/{id}/{path}                （取文件字节 → blob URL 当缩略图）
+   * 任一步拿不到就退回「类型图标 + 复制路径」，不假装完成。 */
+  const DELIV_PREVIEWABLE = { image: 1, media: 1 };
   function makeDeliverCard(f, act) {
     const a = act || {};
     const card = document.createElement('div');
-    card.className = 'pb2-deliv';
-    card.title = '点击打开文件';
-    const ico = document.createElement('span');
-    ico.className = 'pb2-deliv-ico';
-    ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
-    card.appendChild(ico);
+    card.className = 'pb2-deliv' + (DELIV_PREVIEWABLE[f.kind] && a.preview ? ' pb2-deliv-haspv' : '');
+    card.title = f.path;
+    // 缩略图区（图片/音视频：真预览；其余：类型图标）
+    const thumb = document.createElement('div');
+    thumb.className = 'pb2-deliv-thumb pb2-deliv-ico';
+    thumb.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
+    card.appendChild(thumb);
     const mid = document.createElement('div');
     mid.className = 'pb2-deliv-mid';
     const nm = document.createElement('div');
@@ -1004,7 +1013,6 @@ const CHAT_MODELS = [
     const pt = document.createElement('div');
     pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
     mid.appendChild(nm); mid.appendChild(pt);
-    card.appendChild(mid);
     const acts = document.createElement('div');
     acts.className = 'pb2-deliv-acts';
     const mk = (cls, label, title, fn) => {
@@ -1019,36 +1027,70 @@ const CHAT_MODELS = [
       copyPlainText(f.path, null, null);
       if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
     };
-    mk('pb2-deliv-open', '打开文件', '用系统默认程序打开这个文件', () => {
+    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
-    mk('pb2-deliv-reveal', '打开文件夹位置', '在资源管理器里定位到这个文件', () => {
+    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => {
       if (!a.reveal) return fallback('定位文件');
       try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
       catch (e) { fallback('定位文件'); }
     });
     mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
-    card.appendChild(acts);
+    mid.appendChild(acts);
+    card.appendChild(mid);
     card.addEventListener('click', () => {
       if (!a.open) return fallback('打开文件');
       try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
       catch (e) { fallback('打开文件'); }
     });
+    // 异步补缩略图（失败就保持图标，不打扰）
+    if (DELIV_PREVIEWABLE[f.kind] && a.preview) {
+      try {
+        Promise.resolve(a.preview(f.path)).then((res) => {
+          const url = res && res.url ? res.url : res;
+          if (!url) return;
+          let el;
+          if (f.kind === 'media' && /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name)) {
+            el = document.createElement('video');
+            el.muted = true; el.preload = 'metadata'; el.playsInline = true;
+            el.setAttribute('muted', ''); el.setAttribute('playsinline', '');
+          } else {
+            el = document.createElement('img');
+            el.alt = '';
+          }
+          el.className = 'pb2-deliv-pv';
+          el.src = url;
+          const show = () => { thumb.textContent = ''; thumb.appendChild(el); };
+          el.addEventListener('load' in el ? 'load' : 'loadeddata', show, { once: true });
+          if (el.tagName === 'VIDEO') el.addEventListener('loadedmetadata', show, { once: true });
+        }).catch(() => { /* 预览拿不到就算了 */ });
+      } catch (e) { /* 同上 */ }
+    }
     return card;
   }
 
   /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
-   *  act（可选）= { open(path), reveal(path), fail(msg) }：由宿主端注入（桌宠/聊天窗口各自实现）。 */
+   *  act（可选）= { open(path), reveal(path), preview(path), fail(msg) }：由宿主端注入。
+   *  单条消息最多 3 张（同一路径去重），免得长回复把面板刷满卡片（v4.6）。 */
   function renderDeliverables(host, text, act) {
     const files = extractFilePaths(text);
     if (!files.length || !host) return 0;
+    const seen = {};
+    const picked = [];
+    for (const f of files) {
+      const k = f.path.toLowerCase();
+      if (seen[k]) continue;
+      seen[k] = 1;
+      picked.push(f);
+      if (picked.length >= 3) break;
+    }
     const box = document.createElement('div');
     box.className = 'pb2-deliv-box';
-    for (const f of files) box.appendChild(makeDeliverCard(f, act));
+    for (const f of picked) box.appendChild(makeDeliverCard(f, act));
     host.appendChild(box);
-    return files.length;
+    return picked.length;
   }
 
   /* ======== src/core/petpack.js ======== */
@@ -3691,6 +3733,14 @@ const CHAT_MODELS = [
     return t;
   }
 
+  /** 会话记录里的「元数据 JSON」（调用统计/env 快照等）不该进气泡聊天面板（v4.6）。
+   *  典型形如 {"envHash":"…","est":128674,"model":"…","ms":3582,"usage":{…}}。 */
+  function looksLikeMetaJson(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (t.charAt(0) !== '{' || t.charAt(t.length - 1) !== '}') return false;
+    return /"(?:usage|envHash|sysHash|outMs|completion|est|msgs|ms|step|type|prompt|env)"\s*:/.test(t);
+  }
+
   async function apiOK() {
     try { const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } }); return r.ok; }
     catch (e) { return false; }
@@ -3977,7 +4027,7 @@ const CHAT_MODELS = [
     const el = document.createElement('div'); el.className = 'sys'; el.textContent = text;
     msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
   }
-  /* v4.4 成果卡片动作：与桌宠侧同款——走宿主交付接口（打开文件 / 在资源管理器定位） */
+  /* v4.4 成果卡片动作：与桌宠侧同款——走宿主交付接口（打开文件 / 在资源管理器定位）；v4.6 加文件预览 */
   window.__delivAct = (() => {
     const sid = () => { try { return localStorage.getItem(CHAT_LS_SID) || ''; } catch (e) { return ''; } };
     const api = (action, p) => {
@@ -3987,7 +4037,14 @@ const CHAT_MODELS = [
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }),
       }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(() => ({})); });
     };
-    return { open: p => api('open', p), reveal: p => api('reveal', p), fail: m => sys(m) };
+    const preview = (p) => {
+      const id = sid();
+      if (!id) return Promise.reject(new Error('no-session'));
+      return fetch('/api/md/' + encodeURIComponent(id) + '/' + String(p).replace(/\\/g, '/'))
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+        .then(b => URL.createObjectURL(b));
+    };
+    return { open: p => api('open', p), reveal: p => api('reveal', p), preview: preview, fail: m => sys(m) };
   })();
   function addMsg(who, text, via) {
     const row = document.createElement('div'); row.className = 'row' + (who === 'me' ? ' me' : '');
