@@ -209,3 +209,35 @@
 .pb2-model-card { transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
 .pb2-model-card:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(30,45,90,.14); }
 .pb2-dfoot { border-top: 1px solid #eef2fb; }
+
+/* ===== v3.6.1 静态图皮肤定位修复 ===== */
+/* 之前缺 position:absolute，<img> 被上面的 .pb2-viewport 挤到 wrap 下方（实测 dy=104~108px）*/
+.pb2-pet-wrap.pb2-skin-img .pb2-img-skin { position: absolute; left: 0; top: 0; object-position: bottom center; }
+
+/* ===== v3.6 气泡聊天面板（替代带地址栏的独立窗口） ===== */
+.pb2-chatp { position: fixed; right: 18px; bottom: 150px; width: 322px; max-height: min(62vh, 470px);
+  display: flex; flex-direction: column; background: #fff; border: 1px solid #dbe3f5; border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(25,35,75,.20), 0 2px 8px rgba(25,35,75,.07); overflow: visible; z-index: 2147483000; }
+.pb2-chatp::after { content: ''; position: absolute; right: 30px; bottom: -7px; width: 14px; height: 14px;
+  background: #fff; border-right: 1px solid #dbe3f5; border-bottom: 1px solid #dbe3f5; transform: rotate(45deg); }
+.pb2-chatp[hidden] { display: none; }
+.pb2-chatp-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 13px; font-weight: 600;
+  color: #31405f; background: linear-gradient(180deg,#f8fbff,#eef3ff); border-bottom: 1px solid #e6ecf9;
+  border-radius: 16px 16px 0 0; }
+.pb2-chatp-close { border: none; background: transparent; cursor: pointer; color: #7f8cae; font-size: 13px; padding: 2px 4px; }
+.pb2-chatp-close:hover { color: #3b4a70; }
+.pb2-chatp-msgs { flex: 1 1 auto; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: #fbfcff; }
+.pb2-chatp-msgs::-webkit-scrollbar { width: 7px; }
+.pb2-chatp-msgs::-webkit-scrollbar-thumb { background: #d7def2; border-radius: 4px; }
+.pb2-chatp-msg { max-width: 85%; padding: 7px 10px; border-radius: 12px; font-size: 13px; line-height: 1.5; word-break: break-word; }
+.pb2-chatp-msg.pb2-me { align-self: flex-end; background: linear-gradient(180deg,#5b8cff,#4a7bf0); color: #fff; border-bottom-right-radius: 4px; }
+.pb2-chatp-msg.pb2-pet { align-self: flex-start; background: #f1f5ff; color: #26314d; border-bottom-left-radius: 4px; }
+.pb2-chatp-msg.pb2-sys { align-self: center; background: transparent; color: #8a96b5; font-size: 12px; }
+.pb2-chatp-foot { display: flex; gap: 6px; padding: 8px; background: #fff; border-top: 1px solid #eef2fb; border-radius: 0 0 16px 16px; }
+.pb2-chatp-foot input { flex: 1 1 auto; min-width: 0; border: 1px solid #d7def2; border-radius: 10px; padding: 7px 10px;
+  font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
+.pb2-chatp-foot input:focus { border-color: #8aa8f0; box-shadow: 0 0 0 3px rgba(122,152,240,.16); }
+.pb2-chatp-foot button { border: none; border-radius: 10px; padding: 7px 14px; font-size: 13px; color: #fff; cursor: pointer;
+  background: linear-gradient(180deg,#5b8cff,#4a7bf0); transition: transform .1s ease, opacity .15s; }
+.pb2-chatp-foot button:hover { transform: translateY(-1px); }
+.pb2-chatp-foot button:disabled { opacity: .6; cursor: default; transform: none; }

@@ -138,6 +138,8 @@
         if (c) url = c.dataUrl;
       }
       imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
+      // v3.6.1：图加载完之后要重算 wrap 尺寸（切换皮肤时那会儿还拿不到新图尺寸）
+      imgSkin.onload = () => { if (skinMode === 'img') { lastPaint = ''; refreshLayout(); } };
       // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
       imgSkin.onerror = () => {
         if (SKIN_WARNED[s]) return;
@@ -188,13 +190,27 @@
   scheduleIdleFun();
 
   /* ---- 位置：默认右下角，吸附 + 记忆 ---- */
-  function petSize() { return { w: settings.size || 96, h: (settings.size || 96) * SPRITE.CH / SPRITE.CW }; }
+  /** v3.6.1：静态图皮肤按图片自身比例定 wrap 尺寸（否则横图/竖图与交互区对不上，看着"位置偏了"） */
+  function petAspect() {
+    if (skinMode === 'img') {
+      const nw = imgSkin && imgSkin.naturalWidth ? imgSkin.naturalWidth : 0;
+      const nh = imgSkin && imgSkin.naturalHeight ? imgSkin.naturalHeight : 0;
+      if (nw && nh) return clamp(nh / nw, 0.45, 2.2);
+    }
+    return SPRITE.CH / SPRITE.CW;   // 精灵图 192×208
+  }
+  function petSize() {
+    const w = settings.size || 96;
+    return { w: w, h: Math.round(w * petAspect()) };
+  }
   function placeDefault() {
     const s = petSize();
     return { left: window.innerWidth - s.w - 18, bottom: 14 };
   }
   function applyPos(pos) {
     const s = petSize();
+    petWrap.style.width = s.w + 'px';
+    petWrap.style.height = s.h + 'px';
     const left = clamp(pos.left, 4, Math.max(4, window.innerWidth - s.w - 4));
     const bottom = clamp(pos.bottom, 4, Math.max(4, window.innerHeight - s.h - 4));
     petWrap.style.left = left + 'px';
@@ -525,9 +541,9 @@
     }, 650);
   });
 
-  /* ---- 右键菜单（v3.6：图标改为自绘 PNG，风格统一） ---- */
+  /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音 / bibo音效 / 桌宠 / 设置） ---- */
   const MENU_ITEMS = [
-    { icon: 'chat', label: '窗口化聊天', act: openChatWindow },
+    { icon: 'chat', label: '气泡聊天', act: openChatPanel },
     { icon: 'speaker', label: 'bibo语音', sub: [
       { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
@@ -536,18 +552,23 @@
       { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
       { icon: 'palette', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
       { icon: 'speed', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
-      { sep: true },
-      { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
-        act: () => toggleSfx(), keepOpen: true },
-      { icon: 'gear', label: '声音设置…', act: openChatSettings },
     ] },
-    { icon: 'mask', label: '修改桌宠模型', act: openModelPicker },
-    { icon: 'note', label: '角色设定', act: openPersonaEditor },
-    { icon: 'gear', label: '聊天设置', act: openChatSettings },
-    { icon: 'brain', label: '查看思考过程', act: openLogViewer },
-    { sep: true },
-    { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
-    { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+    { icon: 'bell', label: 'bibo音效', sub: [
+      { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'), act: () => toggleSfx(), keepOpen: true },
+      { icon: 'speed', label: () => '音效音量：' + Math.round(sfxVolume() * 100) + '%', act: () => cycleSfxVolume(), keepOpen: true },
+      { icon: 'speaker', label: '试听音效', act: () => { speechUnlock(); ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320)); } },
+    ] },
+    { icon: 'mask', label: '桌宠', sub: [
+      { icon: 'mask', label: '修改模型…', act: openModelPicker },
+      { icon: 'note', label: '角色设定…', act: openPersonaEditor },
+      { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+      { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
+    ] },
+    { icon: 'gear', label: '设置', sub: [
+      { icon: 'gear', label: '聊天设置…', act: openChatSettings },
+      { icon: 'speaker', label: '声音设置…', act: openChatSettings },
+      { icon: 'brain', label: '查看思考过程', act: openLogViewer },
+    ] },
   ];
   /** 菜单图标：'ic-xxx' 这样的名字走自绘 PNG；其他字符串当 emoji 用（兼容扩展项） */
   function menuIcon(host, spec) {
@@ -565,13 +586,22 @@
     }
   }
   /* v3.5 朗读三件套：菜单里点一下循环切换，当前值直接写在菜单文字上（子菜单不关，就地刷新） */
+  /* v3.6 朗读三档：语调引导 / 经典合成 / 普通朗读（真人声） */
+  const SPEECH_MODES = [
+    { id: 'guided', label: '语调引导' },
+    { id: 'classic', label: '经典合成' },
+    { id: 'tts', label: '普通朗读' },
+  ];
   const SPEECH_SPEEDS = [
     { label: '慢', step: 0.18 },
     { label: '正常', step: 0.13 },
     { label: '快', step: 0.10 },
     { label: '很快', step: 0.08 },
   ];
-  function speechStyleLabel() { return settings.speechFollow !== false ? '语调引导' : '经典合成'; }
+  function speechStyleLabel() {
+    const m = SPEECH_MODES.find(x => x.id === speechMode());
+    return m ? m.label : '语调引导';
+  }
   function speechVoiceLabel() { return SPEECH_VOICE_NAMES[settings.speechVoice || 'fish'] || '大肥鱼（高）'; }
   function nearestSpeed(step) {
     const v = clamp(Number(step) || 0.13, 0.04, 0.4);
@@ -584,10 +614,26 @@
     return n.item.label + '（' + (0.13 / n.item.step).toFixed(2).replace(/0$/, '') + '×）';
   }
   function cycleSpeechStyle() {
-    settings.speechFollow = settings.speechFollow === false;
+    const ids = SPEECH_MODES.map(x => x.id);
+    const i = Math.max(0, ids.indexOf(speechMode()));
+    settings.speechMode = ids[(i + 1) % ids.length];
+    settings.speechFollow = settings.speechMode !== 'classic';   // 老字段同步（兼容）
     saveSettings(); ttsCache.clear(); trackCache.clear();
-    bubbleSay('朗读模式：' + speechStyleLabel() + (settings.speechFollow !== false ? '（音高跟着真人语调走）' : '（音高按字固定）'), 3200);
-    speechProbe(settings.speechFollow !== false ? '这样说话，是不是更像在聊天？' : '嗯，这样也很有味道。');
+    const tip = settings.speechMode === 'tts' ? '（真人声直接播，不改音色）'
+      : settings.speechMode === 'guided' ? '（音高跟着真人语调走）' : '（音高按字固定）';
+    bubbleSay('朗读模式：' + speechStyleLabel() + tip, 3200);
+    sfx('tap');
+    speechProbe(settings.speechMode === 'tts' ? '这就是普通朗读，喜欢吗？'
+      : settings.speechMode === 'guided' ? '这样说话，是不是更像在聊天？' : '嗯，这样也很有味道。');
+  }
+  /** 音效音量循环（30% / 60% / 90%） */
+  function cycleSfxVolume() {
+    const steps = [0.3, 0.6, 0.9];
+    const cur = sfxVolume();
+    let i = steps.findIndex(v => Math.abs(v - cur) < 0.06);
+    settings.sfxVolume = steps[(i + 1) % steps.length];
+    saveSettings(); sfxApplyVolume(); sfx('pop', { force: true });
+    bubbleSay('音效音量：' + Math.round(settings.sfxVolume * 100) + '%', 2200);
   }
   function cycleSpeechVoice() {
     const keys = Object.keys(SPEECH_VOICE_NAMES);
@@ -1038,11 +1084,13 @@
       const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
       spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
       body.appendChild(spMax);
-      body.appendChild($new('label', null, '声音 · 风格（引导＝经典音色 + 按真人语调选音；经典＝完全按字）'));
+      body.appendChild($new('label', null, '声音 · 风格（引导＝经典音色+按真人语调选音；普通朗读＝直接用真人声）'));
       const spFollow = $new('select');
-      [['1', '语调引导（还是哔哔啵啵的音色，音高贴真人语调）'], ['0', '经典合成（完全按字，音高固定几档）']].forEach(([v, l]) => {
+      [['guided', '语调引导（还是哔哔啵啵的音色，音高贴真人语调）'],
+       ['classic', '经典合成（完全按字，音高固定几档）'],
+       ['tts', '普通朗读（真人声直接播，不改音色）']].forEach(([v, l]) => {
         const op = $new('option', null, l); op.value = v;
-        if ((settings.speechFollow !== false ? '1' : '0') === v) op.selected = true;
+        if (speechMode() === v) op.selected = true;
         spFollow.appendChild(op);
       });
       body.appendChild(spFollow);
@@ -1062,7 +1110,8 @@
         settings.speechVolume = Number(spVol.value);
         settings.speechStep = Number(spStep.value) || 0.13;
         settings.speechMaxChars = Number(spMax.value) || 60;
-        settings.speechFollow = spFollow.value === '1';
+        settings.speechMode = spFollow.value;
+        settings.speechFollow = spFollow.value !== 'classic';
         settings.ttsVoice = ttsVoiceInp.value.trim();
         settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
         speechApplyVolume(); saveSettings();
@@ -1114,7 +1163,8 @@
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
-          settings.speechFollow = f.spFollow.value === '1';
+          settings.speechMode = f.spFollow.value;
+          settings.speechFollow = f.spFollow.value !== 'classic';
           settings.ttsVoice = f.ttsVoiceInp.value.trim();
           settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
           settings.sfxOn = f.sfxOnSel.value === '1';
@@ -1148,8 +1198,69 @@
   }
 
   /* ---- 窗口化聊天 ----
-   * v3.1.0：不再硬编码 '/_plugins/pet-buddy/chat.html'——用素材目录推导（与该页同目录），
-   * 插件改名 / 换宿主 / 被人拿去装到自己宿主里都仍然找得到。 */
+   * v3.6：默认改成**页面内气泡聊天面板**（没有浏览器地址栏、没有窗口边框、可随处拖动）；
+   * 老做法（独立窗口 chat.html）保留在「设置 → 打开独立聊天窗口」里。 */
+  let chatp = null, chatpMsgs = null, chatpInput = null, chatpBtn = null, chatpBusy = false;
+
+  function chatpAdd(kind, text) {
+    const row = $new('div', 'pb2-chatp-msg pb2-' + kind);
+    if (kind === 'pet' || kind === 'me') { try { renderRich(row, text); } catch (e) { row.textContent = text; } }
+    else row.textContent = text;
+    chatpMsgs.appendChild(row);
+    chatpMsgs.scrollTop = chatpMsgs.scrollHeight;
+    return row;
+  }
+
+  async function chatpSend() {
+    const text = (chatpInput.value || '').trim();
+    if (!text || chatpBusy) return;
+    chatpInput.value = '';
+    chatpBusy = true; chatpBtn.disabled = true;
+    chatpAdd('me', text);
+    const typing = chatpAdd('sys', '大肥鱼思考中…');
+    try {
+      speechUnlock();
+      const r = await chatSend(text);
+      typing.remove();
+      chatpAdd('pet', r.text);
+      speak(r.text);
+    } catch (e) {
+      typing.remove();
+      sfx('err');
+      chatpAdd('pet', '出错了：' + e.message);
+    } finally { chatpBusy = false; chatpBtn.disabled = false; chatpInput.focus(); }
+  }
+
+  function openChatPanel() {
+    speechUnlock(); sfx('pop');
+    if (chatp) { chatp.hidden = false; try { chatpInput.focus(); } catch (e) { /* 焦点无所谓 */ } return; }
+    chatp = $new('div', 'pb2-chatp');
+    const head = $new('div', 'pb2-chatp-head');
+    const ttl = $new('span', null, '和大肥鱼聊天');
+    ttl.style.flex = '1 1 auto';
+    head.appendChild(ttl);
+    const close = $new('button', 'pb2-chatp-close', '✕');
+    close.type = 'button';
+    close.title = '收起来（右键 →「气泡聊天」可再打开）';
+    close.addEventListener('click', () => { chatp.hidden = true; sfx('tap'); });
+    head.appendChild(close);
+    chatp.appendChild(head);
+    chatpMsgs = $new('div', 'pb2-chatp-msgs');
+    chatp.appendChild(chatpMsgs);
+    const foot = $new('div', 'pb2-chatp-foot');
+    chatpInput = $new('input');
+    chatpInput.type = 'text';
+    chatpInput.placeholder = '说点什么…（回车发送）';
+    chatpBtn = $new('button', null, '发送');
+    chatpBtn.type = 'button';
+    chatpBtn.addEventListener('click', chatpSend);
+    chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });
+    foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
+    chatp.appendChild(foot);
+    document.body.appendChild(chatp);
+    chatpAdd('sys', '（试试问我余额还剩多少～）');
+    setTimeout(() => { try { chatpInput.focus(); } catch (e) { /* 同上 */ } }, 60);
+  }
   function openChatWindow() {
     window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
@@ -1191,6 +1302,10 @@
       verifySkinImage, spriteSkinClass,
       mixToMono, resampleLinear, prosodyTrack, analyzeFrame, synthFollow, ttsPcm, trackCache, ttsCache,
       synth, toWav, synthGuided, guidedTargets, guidedPickList, pickScaleMidi, VOICES,
+      setSkin: (id) => { settings.skin = id; saveSettings(); applySkin(); refreshLayout(); },
+      settingsRef: settings,
+      openChatPanel, cycleSfxVolume, speechMode,
+      cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

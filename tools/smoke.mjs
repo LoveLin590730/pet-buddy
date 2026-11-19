@@ -251,7 +251,30 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[自绘图标 + 菜单/弹窗风格 · v3.6]');
+console.log('\n[定位修复 + 气泡聊天 + 三档朗读 + 菜单分栏 · v3.6.1]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css4 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('静态图皮肤已绝对定位（不再被 viewport 挤到 wrap 下方）',
+    /\.pb2-skin-img \.pb2-img-skin\s*\{[^}]*position:\s*absolute/.test(css4));
+  ok('静态图贴底对齐（object-position: bottom center）', /\.pb2-skin-img \.pb2-img-skin\s*\{[^}]*object-position:\s*bottom center/.test(css4));
+  ok('wrap 尺寸按图片比例自适应（petAspect）', /function petAspect/.test(t) && /petWrap\.style\.height = s\.h/.test(t));
+  ok('图片加载完成后重算布局（切换皮肤不再用旧图比例）', /imgSkin\.onload = \(\) => \{[^}]*refreshLayout/.test(t));
+
+  ok('气泡聊天面板已实现（无地址栏/无边框/圆角气泡）',
+    /function openChatPanel/.test(t) && /pb2-chatp/.test(t) && /\.pb2-chatp\s*\{[^}]*position:\s*fixed/.test(css4));
+  ok('气泡面板支持发送/渲染/朗读联动', /chatpSend/.test(t) && /renderRich\(row, text\)/.test(t) && /speak\(r\.text\)/.test(t));
+  ok('菜单第一项是「气泡聊天」', /label: '气泡聊天', act: openChatPanel/.test(t));
+
+  ok('朗读三档（语调引导 / 经典合成 / 普通朗读）',
+    /id: 'guided'/.test(t) && /id: 'classic'/.test(t) && /id: 'tts'/.test(t));
+  ok('普通朗读走 TTS 原始人声（via=tts，不改采样率）',
+    /via = 'tts'/.test(readFileSync(path.join(ROOT, 'src/core/speech.js'), 'utf8')));
+  ok('菜单按栏整理：bibo语音 / bibo音效 / 桌宠 / 设置',
+    /label: 'bibo语音'/.test(t) && /label: 'bibo音效'/.test(t) && /label: '桌宠'/.test(t) && /label: '设置'/.test(t));
+  ok('音效音量可在菜单里循环调节', /function cycleSfxVolume/.test(t) && /音效音量：/.test(t));
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const css3 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');

@@ -63,7 +63,7 @@
     return {
       enabled: speechEnabled(), volume: speechVolume(), hasCtx: !!(SPEECH && SPEECH.ctx),
       ctxState: SPEECH && SPEECH.ctx ? SPEECH.ctx.state : 'none', speaking: !!(SPEECH && SPEECH.src),
-      follow: speechFollowEnabled(), ttsVoice: ttsVoicePref(), ttsRate: ttsRatePref(),
+      follow: speechFollowEnabled(), mode: speechMode(), ttsVoice: ttsVoicePref(), ttsRate: ttsRatePref(),
       ttsCached: ttsCache.size,
     };
   }
@@ -88,6 +88,12 @@
   const trackCache = new Map();        // 文本 → 韵律轨
 
   function speechFollowEnabled() { return settings.speechFollow !== false; }
+  /** v3.6：三种朗读模式 —— guided（语调引导）/ classic（经典合成）/ tts（普通朗读，真人声直接播） */
+  function speechMode() {
+    const m = String(settings.speechMode || '');
+    if (m === 'guided' || m === 'classic' || m === 'tts') return m;
+    return settings.speechFollow === false ? 'classic' : 'guided';
+  }
   function ttsVoicePref() { return String(settings.ttsVoice || ''); }
   function ttsRatePref() { return clamp(Number(settings.ttsRate) || 1, 0.5, 2); }
 
@@ -115,7 +121,7 @@
     const buf = await ctx.decodeAudioData(ab);
     const mono = mixToMono(buf);
     const pcm = buf.sampleRate === ANALYZE_SR ? mono : resampleLinear(mono, buf.sampleRate, ANALYZE_SR);
-    const rec = { pcm: pcm, durSec: pcm.length / ANALYZE_SR, srcSampleRate: buf.sampleRate };
+    const rec = { pcm: pcm, durSec: pcm.length / ANALYZE_SR, srcSampleRate: buf.sampleRate, mono: mono };
     if (ttsCache.size >= TTS_CACHE_MAX) ttsCache.delete(ttsCache.keys().next().value);
     ttsCache.set(text, rec);
     return rec;
@@ -386,9 +392,21 @@
     const ctx = speechCtx();
     if (!ctx) return { ok: false, reason: 'no-ctx' };
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 等手势 */ } }
-    // ① 韵律跟读（默认）：向宿主后端 TTS 要一遍真语音 → 量出语调/轻重/口型 → 用锯齿+带通重唱
-    let samples = null, via = 'classic';
-    if (speechFollowEnabled() && o.style !== 'classic') {
+    // ① 三种模式（v3.6）：
+    //    tts     = 普通朗读，直接用宿主 TTS 的真人声播（不走合成器、不改音色）
+    //    guided  = 语调引导（经典音色 + 按真人语调选音）
+    //    classic = 经典合成（完全按字）
+    let samples = null, via = 'classic', sampleRate = SPEECH_SR;
+    const mode = o.style || speechMode();
+    if (mode === 'tts') {
+      try {
+        const rec = await ttsPcm(text, { rate: o.rate });
+        if (rec.mono && rec.srcSampleRate) { samples = rec.mono; sampleRate = rec.srcSampleRate; via = 'tts'; }
+      } catch (e) {
+        log('info', '普通朗读不可用，回退语调引导：' + (e && e.message ? e.message : e));
+      }
+    }
+    if (!samples && mode !== 'classic') {
       try {
         const rec = await ttsPcm(text, { rate: o.rate });
         let track = trackCache.get(text);
@@ -419,10 +437,10 @@
         return { ok: false, reason: 'synth' };
       }
     }
-    const durSec = samples.length / SPEECH_SR;
+    const durSec = samples.length / sampleRate;
     let buf;
     try {
-      buf = ctx.createBuffer(1, samples.length, SPEECH_SR);
+      buf = ctx.createBuffer(1, samples.length, sampleRate);
       buf.copyToChannel(samples, 0);
     } catch (e) {
       log('error', '语音缓冲准备失败: ' + e.message);
