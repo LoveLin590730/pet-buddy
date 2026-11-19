@@ -64,15 +64,55 @@
     return Math.max(8, Math.round(base * (0.65 + r * 0.8)));
   }
 
-  /** 缓动 0..1：easeInOutSine（起步与收尾都慢，中间快） */
+  /** 缓动 0..1：easeInOutSine（起步与收尾都慢，中间快）
+   *  v5.4：位移默认改用下面的梯形速度曲线（见 walkTrapezoid），这个函数保留给"想用老曲线"的调用与自检。 */
   function walkEase(t) {
     const x = clamp(Number(t) || 0, 0, 1);
     return 0.5 - Math.cos(Math.PI * x) / 2;
   }
 
-  /** 某一刻的位置（线性插值 + 缓动） */
-  function walkPosAt(from, to, t) {
-    const e = walkEase(t);
+  /* ---- v5.4 起步/收尾速度曲线（用户要的"先加速再跑、最后收住"） ----
+   * 之前用 easeInOutSine：起步与收尾都在变，但"加速段"和"整段"绑死（段越长加速越久）。
+   * 现在改成**梯形速度曲线**：起步固定用 WALK_ACCEL_MS 线性加速到正常速度 → 匀速 → 收尾 WALK_DECEL_MS 减速停下。
+   * 传入的是归一化时长（a = 加速段占比、b = 减速段占比），自动夹到 a+b ≤ 0.9 并归一化总位移为 1。 */
+  const WALK_ACCEL_MS = 1000;      // 起步加速：速度从 0 → 正常，用 1 秒（用户要求）
+  const WALK_DECEL_MS = 450;       // 收尾减速（停下不突兀）
+  const WALK_WARMUP_SLOW = 1000;   // "左转 / 奔跑"类动作：先原地 1 秒再起（前摇更长）
+
+  /** 原地前摇时长（毫秒）：动作越"重"起手越慢。
+   *  ① 名字里带关键词优先（奔跑/左转 → 1s；走路/漂浮/蟹步 → 0.5s）；
+   *  ② 认不出名字就看位置：动作池的**最后一个**按"左转奔跑"处理（本地模型包最后一个正是它）；
+   *  ③ 都没有就用默认 0.5s。 */
+  function walkWarmupFor(name, index, count) {
+    const s = String(name == null ? '' : name);
+    if (/奔跑|跑步|冲刺|疾走|左转|狂跑/.test(s)) return WALK_WARMUP_SLOW;
+    if (/走路|行走|散步|踏步|漂浮|漂|蟹|横行|横走/.test(s)) return WALK_WARMUP_MS;
+    const n = Math.round(Number(count) || 0);
+    const i = Math.round(Number(index));
+    if (n > 1 && !isNaN(i) && i === n - 1) return WALK_WARMUP_SLOW;
+    return WALK_WARMUP_MS;
+  }
+
+  /** 梯形速度曲线的位移（0..1）：a=加速段占比、b=减速段占比（都按整段时长归一化）。 */
+  function walkTrapezoid(t, a, b) {
+    let ta = clamp(Number(a) || 0, 0, 0.45);
+    let tb = clamp(Number(b) || 0, 0, 0.45);
+    if (ta + tb > 0.9) { const k = 0.9 / (ta + tb); ta *= k; tb *= k; }
+    const x = clamp(Number(t) || 0, 0, 1);
+    const total = 1 - ta / 2 - tb / 2;       // 梯形面积（= 面积归一化分母）
+    if (total <= 0) return x;
+    let pos;
+    if (ta > 0 && x < ta) pos = x * x / (2 * ta);                        // 加速段：速度 0→1
+    else if (tb > 0 && x > 1 - tb) { const u = 1 - x; pos = total - u * u / (2 * tb); }   // 减速段：速度 1→0
+    else pos = ta / 2 + (x - ta);                                        // 匀速段
+    return clamp(pos / total, 0, 1);
+  }
+
+  /** 某一刻的位置：默认走梯形曲线（起步加速 + 收尾减速）。
+   *  a/b 可传归一化的加速/减速占比；给 0 就是"立刻满速"（老行为，便于对比）。 */
+  function walkPosAt(from, to, t, a, b) {
+    const hasCurve = a != null || b != null;
+    const e = hasCurve ? walkTrapezoid(t, a == null ? 0 : a, b == null ? 0 : b) : walkEase(t);
     return {
       left: (Number(from && from.left) || 0) + ((Number(to && to.left) || 0) - (Number(from && from.left) || 0)) * e,
       bottom: (Number(from && from.bottom) || 0) + ((Number(to && to.bottom) || 0) - (Number(from && from.bottom) || 0)) * e,

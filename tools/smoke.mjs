@@ -83,7 +83,7 @@ const probe = `
   extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
   petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
   WALK_MODES, WALK_SPEEDS, WALK_MARGIN, walkModeOf, walkModeLabel, walkSpeedOf, walkSpeedLabel, walkRnd, walkNextDelay,
-  WALK_WARMUP_MS,
+  WALK_WARMUP_MS, WALK_ACCEL_MS, WALK_DECEL_MS, WALK_WARMUP_SLOW, walkWarmupFor, walkTrapezoid,
   walkEase, walkPosAt, walkPlan, walkSegCount, walkPauseMs,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
@@ -1217,8 +1217,8 @@ console.log('\n[v5.2 表情格布局 + 行走前摇]');
   ok('窗口里那条 scale(0.82) 已去掉（撑破格子的元凶）', !/\.cell \.sticker \{ transform: scale\(0\.82\)/.test(html2));
   // —— 行走前摇
   eq('前摇常量 500ms（至少 0.5s）', P.WALK_WARMUP_MS, 500);
-  ok('前摇期间原地踏步不位移（时钟推后 500ms）',
-    /const t0 = performance\.now\(\) \+ WALK_WARMUP_MS/.test(js2) && /if \(t <= 0\) \{ walkRaf = requestAnimationFrame\(tick\); return; \}/.test(js2));
+  ok('前摇期间原地踏步不位移（时钟推后 warmupMs）',
+    /const t0 = performance\.now\(\) \+ warmupMs/.test(js2) && /if \(t <= 0\) \{ walkRaf = requestAnimationFrame\(tick\); return; \}/.test(js2));
   ok('前摇常量在 core 里（可自检）', /const WALK_WARMUP_MS = 500;/.test(readFileSync(path.join(ROOT, 'src/core/petwalk.js'), 'utf8')));
 }
 
@@ -1264,6 +1264,62 @@ console.log('\n[v5.3 设置拆分为 通用/聊天/声音]');
   ok('三个开关有默认值（开/开/60）', /quickChat: true,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')) &&
     /chatSync: true,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')) &&
     /chatKeep: 60,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')));
+}
+
+console.log('\n[v5.4 散步起步节奏（前摇 + 加速）]');
+{
+  const js4 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  // —— 前摇分档
+  eq('加速时长 1 秒（速度 0→正常）', P.WALK_ACCEL_MS, 1000);
+  eq('普通行走前摇 0.5 秒', P.WALK_WARMUP_MS, 500);
+  eq('"左转/奔跑"类前摇 1 秒', P.WALK_WARMUP_SLOW, 1000);
+  eq('名字带"左转" → 1 秒前摇', P.walkWarmupFor('原地左转奔跑', 0, 3), 1000);
+  eq('名字带"奔跑" → 1 秒前摇', P.walkWarmupFor('简直在奔跑', 1, 3), 1000);
+  eq('名字带"漂浮" → 0.5 秒前摇', P.walkWarmupFor('原地漂浮踏步', 1, 3), 500);
+  eq('名字带"蟹走路" → 0.5 秒前摇', P.walkWarmupFor('螃蟹走路', 0, 3), 500);
+  eq('名字认不出但排在池子最后 → 按左转类 1 秒', P.walkWarmupFor('动作A', 2, 3), 1000);
+  eq('名字认不出排在中间 → 默认 0.5 秒', P.walkWarmupFor('动作A', 1, 3), 500);
+  eq('只有一个动作且认不出 → 默认 0.5 秒（不会把唯一的动作当左转）', P.walkWarmupFor('动作A', 0, 1), 500);
+  // —— 梯形速度曲线：端点正确、单调、前段慢后段快、中段匀速
+  {
+    const a = 0.25, b = 0.1;                      // 加速占 1/4、减速占 1/10
+    const at = (x) => P.walkTrapezoid(x, a, b);
+    eq('起点 = 0', Math.round(at(0) * 1000) / 1000, 0);
+    eq('终点 = 1', Math.round(at(1) * 1000) / 1000, 1);
+    let mono = true;
+    for (let i = 1; i <= 200; i++) if (at(i / 200) < at((i - 1) / 200) - 1e-9) mono = false;
+    ok('全程单调不回头', mono);
+    // 加速段：前 1/4 位移应明显小于"匀速走 1/4" 的 0.25
+    ok('加速段走得比匀速少（说明确实在加速）', at(0.25) < 0.25 - 0.01, 'at(0.25)=' + at(0.25).toFixed(3));
+    // 匀速段：中段瞬时速度应接近 1（用相邻两点的位移/步长衡量）
+    const v = (x) => (at(x + 0.01) - at(x)) / 0.01;
+    ok('中段速度接近满速（≥0.9）', v(0.5) >= 0.9, 'v(0.5)=' + v(0.5).toFixed(3));
+    ok('起步瞬间速度很小（≤0.2）', v(0.002) <= 0.2, 'v(0.002)=' + v(0.002).toFixed(3));
+    ok('收尾速度又降下来（≤0.6）', v(0.995) <= 0.6, 'v(0.995)=' + v(0.995).toFixed(3));
+    // a+b 过大时自动压缩，不会超过 0.9
+    ok('a+b 超限时自动压缩（仍单调到 1）', (() => {
+      const f = (x) => P.walkTrapezoid(x, 0.8, 0.8);
+      return Math.abs(f(1) - 1) < 1e-6 && f(0.5) > 0 && f(0.5) < 1;
+    })());
+    // 与老曲线对比：同样 t，梯形在加速段走得更少
+    ok('给 0/0 就是"立刻满速"（老行为可复现）', Math.abs(P.walkTrapezoid(0.5, 0, 0) - 0.5) < 1e-6);
+  }
+  // —— 位移函数接上曲线
+  {
+    const from = { left: 100, bottom: 50 }, to = { left: 500, bottom: 50 };
+    eq('walkPosAt 端点（起点）', P.walkPosAt(from, to, 0, 0.25, 0.1).left, 100);
+    eq('walkPosAt 端点（终点）', P.walkPosAt(from, to, 1, 0.25, 0.1).left, 500);
+    ok('walkPosAt 加速段位移 < 线性', P.walkPosAt(from, to, 0.25, 0.25, 0.1).left < 100 + 400 * 0.25);
+    ok('walkPosAt 不传曲线参数时保持老行为（easeInOutSine）',
+      Math.abs(P.walkPosAt(from, to, 0.5).left - 300) < 1);
+  }
+  // —— 产物接线
+  ok('前摇按时长取（至少 0.5s，左转类 1s）',
+    /const warmupMs = Math\.max\(WALK_WARMUP_MS, Number\(walkAnimStart\(\)\) \|\| WALK_WARMUP_MS\)/.test(js4));
+  ok('位移传入加速/减速占比', /const a = \(WALK_ACCEL_MS \/ Math\.max\(1, plan\.durMs\)\)/.test(js4) &&
+    /walkPosAt\(plan\.from, plan\.to, t, a, b\)/.test(js4));
+  ok('行走动作轮着用（三个动作都有上场机会）', /walkMoveIdx = \(walkMoveIdx \+ 1\) % pool\.length/.test(js4));
+  ok('起步节奏写进日志（可查）', /散步起步：动作=/.test(js4));
 }
 
 console.log('\n[语音听写 · v3.2]');

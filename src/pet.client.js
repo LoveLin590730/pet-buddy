@@ -263,15 +263,20 @@
       settings.walkMode, settings.walkSpeed, Math.random());
     if (!plan) { walkFinish(); return; }
     walkFace(plan.dir);
-    walkAnimStart();
-    /* v5.2：行走动作有**前摇**（起手抬脚那几帧）——先原地踏步 WALK_WARMUP_MS 再开始位移，
-     * 看着才是"先迈步再走"；位移本身照旧，只是把时钟推后一点。 */
-    const t0 = performance.now() + WALK_WARMUP_MS;
+    /* v5.4 起步节奏（用户要求）：
+     *   ① 先原地踏步 warmupMs（动作有前摇；"左转/奔跑"类 1s，普通行走 0.5s）；
+     *   ② 然后位移起步，用 WALK_ACCEL_MS（1 秒）把速度从 0 平滑加到正常；
+     *   ③ 中段匀速跑，最后 WALK_DECEL_MS 收住停下。 */
+    const warmupMs = Math.max(WALK_WARMUP_MS, Number(walkAnimStart()) || WALK_WARMUP_MS);
+    const a = (WALK_ACCEL_MS / Math.max(1, plan.durMs));      // 加速段占比
+    const b = (WALK_DECEL_MS / Math.max(1, plan.durMs));      // 减速段占比
+    log('info', '散步起步：动作=' + (walkMoveName || '（非动作包）') + ' 原地=' + warmupMs + 'ms 加速=' + WALK_ACCEL_MS + 'ms 段时长=' + Math.round(plan.durMs) + 'ms');
+    const t0 = performance.now() + warmupMs;
     const tick = (now) => {
       if (walkStopped) return;
       const t = clamp((now - t0) / plan.durMs, 0, 1);
       if (t <= 0) { walkRaf = requestAnimationFrame(tick); return; }   // 前摇期：原地踏步
-      const p = walkPosAt(plan.from, plan.to, t);
+      const p = walkPosAt(plan.from, plan.to, t, a, b);
       settings.pos = { left: Math.round(p.left), bottom: Math.round(p.bottom) };
       applyPos(settings.pos);
       if (t < 1) walkRaf = requestAnimationFrame(tick);
@@ -301,10 +306,24 @@
   function walkFace(dir) {
     petWrap.classList.toggle('pb2-face-right', dir === 'right');
   }
+  /** v5.4：挑一个"行走"动作播，并返回它的原地前摇时长（毫秒）。
+   *  动作包皮肤走 moves 池（三个原地动作各有节奏）；其他皮肤用默认 0.5s。 */
+  let walkMoveIdx = 0, walkMoveName = '';
   function walkAnimStart() {
-    if (skinMode === 'pack') { packRole('moves', { loop: true }); return; }
-    if (skinMode === 'sprite') { transient = 'running-right'; transientUntil = Infinity; return; }
+    if (skinMode === 'pack') {
+      const pack = packOf(settings.skin) || packOf(packCur);
+      const pool = petpackRolePool(pack, 'moves');
+      if (pool.length) {
+        walkMoveIdx = Math.min(walkMoveIdx, pool.length - 1);
+        walkMoveName = pool[walkMoveIdx] || '';
+        packPlay(walkMoveName, true);
+        walkMoveIdx = (walkMoveIdx + 1) % pool.length;   // 下次换一个（三个动作轮着用）
+      } else { packRole('moves', { loop: true }); walkMoveName = ''; }
+      return walkWarmupFor(walkMoveName, walkMoveIdx, pool.length);
+    }
+    if (skinMode === 'sprite') { transient = 'running-right'; transientUntil = Infinity; return WALK_WARMUP_MS; }
     petWrap.classList.add('pb2-walking');
+    return WALK_WARMUP_MS;
   }
   function walkAnimStop() {
     if (skinMode === 'pack') { packPlayIdle(); return; }

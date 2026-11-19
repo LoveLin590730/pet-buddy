@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '5.3.0';
+const PB_VERSION = '5.4.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -2582,15 +2582,55 @@ const CHAT_MODELS = [
     return Math.max(8, Math.round(base * (0.65 + r * 0.8)));
   }
 
-  /** 缓动 0..1：easeInOutSine（起步与收尾都慢，中间快） */
+  /** 缓动 0..1：easeInOutSine（起步与收尾都慢，中间快）
+   *  v5.4：位移默认改用下面的梯形速度曲线（见 walkTrapezoid），这个函数保留给"想用老曲线"的调用与自检。 */
   function walkEase(t) {
     const x = clamp(Number(t) || 0, 0, 1);
     return 0.5 - Math.cos(Math.PI * x) / 2;
   }
 
-  /** 某一刻的位置（线性插值 + 缓动） */
-  function walkPosAt(from, to, t) {
-    const e = walkEase(t);
+  /* ---- v5.4 起步/收尾速度曲线（用户要的"先加速再跑、最后收住"） ----
+   * 之前用 easeInOutSine：起步与收尾都在变，但"加速段"和"整段"绑死（段越长加速越久）。
+   * 现在改成**梯形速度曲线**：起步固定用 WALK_ACCEL_MS 线性加速到正常速度 → 匀速 → 收尾 WALK_DECEL_MS 减速停下。
+   * 传入的是归一化时长（a = 加速段占比、b = 减速段占比），自动夹到 a+b ≤ 0.9 并归一化总位移为 1。 */
+  const WALK_ACCEL_MS = 1000;      // 起步加速：速度从 0 → 正常，用 1 秒（用户要求）
+  const WALK_DECEL_MS = 450;       // 收尾减速（停下不突兀）
+  const WALK_WARMUP_SLOW = 1000;   // "左转 / 奔跑"类动作：先原地 1 秒再起（前摇更长）
+
+  /** 原地前摇时长（毫秒）：动作越"重"起手越慢。
+   *  ① 名字里带关键词优先（奔跑/左转 → 1s；走路/漂浮/蟹步 → 0.5s）；
+   *  ② 认不出名字就看位置：动作池的**最后一个**按"左转奔跑"处理（本地模型包最后一个正是它）；
+   *  ③ 都没有就用默认 0.5s。 */
+  function walkWarmupFor(name, index, count) {
+    const s = String(name == null ? '' : name);
+    if (/奔跑|跑步|冲刺|疾走|左转|狂跑/.test(s)) return WALK_WARMUP_SLOW;
+    if (/走路|行走|散步|踏步|漂浮|漂|蟹|横行|横走/.test(s)) return WALK_WARMUP_MS;
+    const n = Math.round(Number(count) || 0);
+    const i = Math.round(Number(index));
+    if (n > 1 && !isNaN(i) && i === n - 1) return WALK_WARMUP_SLOW;
+    return WALK_WARMUP_MS;
+  }
+
+  /** 梯形速度曲线的位移（0..1）：a=加速段占比、b=减速段占比（都按整段时长归一化）。 */
+  function walkTrapezoid(t, a, b) {
+    let ta = clamp(Number(a) || 0, 0, 0.45);
+    let tb = clamp(Number(b) || 0, 0, 0.45);
+    if (ta + tb > 0.9) { const k = 0.9 / (ta + tb); ta *= k; tb *= k; }
+    const x = clamp(Number(t) || 0, 0, 1);
+    const total = 1 - ta / 2 - tb / 2;       // 梯形面积（= 面积归一化分母）
+    if (total <= 0) return x;
+    let pos;
+    if (ta > 0 && x < ta) pos = x * x / (2 * ta);                        // 加速段：速度 0→1
+    else if (tb > 0 && x > 1 - tb) { const u = 1 - x; pos = total - u * u / (2 * tb); }   // 减速段：速度 1→0
+    else pos = ta / 2 + (x - ta);                                        // 匀速段
+    return clamp(pos / total, 0, 1);
+  }
+
+  /** 某一刻的位置：默认走梯形曲线（起步加速 + 收尾减速）。
+   *  a/b 可传归一化的加速/减速占比；给 0 就是"立刻满速"（老行为，便于对比）。 */
+  function walkPosAt(from, to, t, a, b) {
+    const hasCurve = a != null || b != null;
+    const e = hasCurve ? walkTrapezoid(t, a == null ? 0 : a, b == null ? 0 : b) : walkEase(t);
     return {
       left: (Number(from && from.left) || 0) + ((Number(to && to.left) || 0) - (Number(from && from.left) || 0)) * e,
       bottom: (Number(from && from.bottom) || 0) + ((Number(to && to.bottom) || 0) - (Number(from && from.bottom) || 0)) * e,
@@ -4521,15 +4561,20 @@ const CHAT_MODELS = [
       settings.walkMode, settings.walkSpeed, Math.random());
     if (!plan) { walkFinish(); return; }
     walkFace(plan.dir);
-    walkAnimStart();
-    /* v5.2：行走动作有**前摇**（起手抬脚那几帧）——先原地踏步 WALK_WARMUP_MS 再开始位移，
-     * 看着才是"先迈步再走"；位移本身照旧，只是把时钟推后一点。 */
-    const t0 = performance.now() + WALK_WARMUP_MS;
+    /* v5.4 起步节奏（用户要求）：
+     *   ① 先原地踏步 warmupMs（动作有前摇；"左转/奔跑"类 1s，普通行走 0.5s）；
+     *   ② 然后位移起步，用 WALK_ACCEL_MS（1 秒）把速度从 0 平滑加到正常；
+     *   ③ 中段匀速跑，最后 WALK_DECEL_MS 收住停下。 */
+    const warmupMs = Math.max(WALK_WARMUP_MS, Number(walkAnimStart()) || WALK_WARMUP_MS);
+    const a = (WALK_ACCEL_MS / Math.max(1, plan.durMs));      // 加速段占比
+    const b = (WALK_DECEL_MS / Math.max(1, plan.durMs));      // 减速段占比
+    log('info', '散步起步：动作=' + (walkMoveName || '（非动作包）') + ' 原地=' + warmupMs + 'ms 加速=' + WALK_ACCEL_MS + 'ms 段时长=' + Math.round(plan.durMs) + 'ms');
+    const t0 = performance.now() + warmupMs;
     const tick = (now) => {
       if (walkStopped) return;
       const t = clamp((now - t0) / plan.durMs, 0, 1);
       if (t <= 0) { walkRaf = requestAnimationFrame(tick); return; }   // 前摇期：原地踏步
-      const p = walkPosAt(plan.from, plan.to, t);
+      const p = walkPosAt(plan.from, plan.to, t, a, b);
       settings.pos = { left: Math.round(p.left), bottom: Math.round(p.bottom) };
       applyPos(settings.pos);
       if (t < 1) walkRaf = requestAnimationFrame(tick);
@@ -4559,10 +4604,24 @@ const CHAT_MODELS = [
   function walkFace(dir) {
     petWrap.classList.toggle('pb2-face-right', dir === 'right');
   }
+  /** v5.4：挑一个"行走"动作播，并返回它的原地前摇时长（毫秒）。
+   *  动作包皮肤走 moves 池（三个原地动作各有节奏）；其他皮肤用默认 0.5s。 */
+  let walkMoveIdx = 0, walkMoveName = '';
   function walkAnimStart() {
-    if (skinMode === 'pack') { packRole('moves', { loop: true }); return; }
-    if (skinMode === 'sprite') { transient = 'running-right'; transientUntil = Infinity; return; }
+    if (skinMode === 'pack') {
+      const pack = packOf(settings.skin) || packOf(packCur);
+      const pool = petpackRolePool(pack, 'moves');
+      if (pool.length) {
+        walkMoveIdx = Math.min(walkMoveIdx, pool.length - 1);
+        walkMoveName = pool[walkMoveIdx] || '';
+        packPlay(walkMoveName, true);
+        walkMoveIdx = (walkMoveIdx + 1) % pool.length;   // 下次换一个（三个动作轮着用）
+      } else { packRole('moves', { loop: true }); walkMoveName = ''; }
+      return walkWarmupFor(walkMoveName, walkMoveIdx, pool.length);
+    }
+    if (skinMode === 'sprite') { transient = 'running-right'; transientUntil = Infinity; return WALK_WARMUP_MS; }
     petWrap.classList.add('pb2-walking');
+    return WALK_WARMUP_MS;
   }
   function walkAnimStop() {
     if (skinMode === 'pack') { packPlayIdle(); return; }
