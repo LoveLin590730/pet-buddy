@@ -158,3 +158,20 @@
 /* 贴纸/角色设定提示等小字 */
 .pb2-hint { font-size: 11.5px; color: #8a94b8; margin-top: 4px; }
 .pb2-ok { color: #2e8b57; }
+
+/* ===== v3.5 右键菜单显示优化 ===== */
+/* 菜单限高可滚：桌宠贴屏幕边缘时也不会顶出可视区；长文字省略不换行 */
+.pb2-menu { max-height: min(72vh, 540px); overflow-y: auto; overflow-x: hidden; min-width: 208px; }
+.pb2-menu::-webkit-scrollbar { width: 6px; }
+.pb2-menu::-webkit-scrollbar-thumb { background: #d7def2; border-radius: 3px; }
+.pb2-menu .pb2-mlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 图标列对齐（有无 emoji 都对齐） */
+.pb2-menu .pb2-mi > span:first-child { flex: none; width: 17px; text-align: center; font-size: 13px; }
+/* 子菜单更紧凑，层次更清楚 */
+.pb2-submenu { max-height: 60vh; overflow-y: auto; }
+.pb2-submenu .pb2-mi { padding: 5px 8px; font-size: 12.5px; }
+.pb2-submenu .pb2-mi:hover { background: #f2f6ff; }
+/* 可切换项的当前值用比色标出来 */
+.pb2-menu .pb2-mi.pb2-cycle .pb2-mlabel { color: #3b4a72; }
+/* 菜单最大宽度：窄屏也不横向溢出（长条目靠省略号收） */
+.pb2-menu { max-width: min(90vw, 430px); }

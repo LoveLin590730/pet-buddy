@@ -532,8 +532,13 @@
       { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: '📚', label: '常用语…', act: openPhraseBook },
       { sep: true },
+      // v3.5：朗读三件套（点一下循环切换，当前值直接写在菜单上，不关菜单）
+      { icon: '🗣', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
+      { icon: '🎨', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: '⏩', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
+      { sep: true },
       { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
-        act: () => toggleSfx() },
+        act: () => toggleSfx(), keepOpen: true },
       { icon: '⚙️', label: '声音设置…', act: openChatSettings },
     ] },
     { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
@@ -544,8 +549,49 @@
     { icon: '👁', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     { icon: '📍', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
   ];
-  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */
-  function toggleSfx() {
+  /* v3.5 朗读三件套：菜单里点一下循环切换，当前值直接写在菜单文字上（子菜单不关，就地刷新） */
+  const SPEECH_SPEEDS = [
+    { label: '慢', step: 0.18 },
+    { label: '正常', step: 0.13 },
+    { label: '快', step: 0.10 },
+    { label: '很快', step: 0.08 },
+  ];
+  function speechStyleLabel() { return settings.speechFollow !== false ? '语调引导' : '经典合成'; }
+  function speechVoiceLabel() { return SPEECH_VOICE_NAMES[settings.speechVoice || 'fish'] || '大肥鱼（高）'; }
+  function nearestSpeed(step) {
+    const v = clamp(Number(step) || 0.13, 0.04, 0.4);
+    let best = SPEECH_SPEEDS[1], bestD = Infinity, idx = 1;
+    SPEECH_SPEEDS.forEach((s, i) => { const d = Math.abs(s.step - v); if (d < bestD) { bestD = d; best = s; idx = i; } });
+    return { item: best, index: idx };
+  }
+  function speechSpeedLabel() {
+    const n = nearestSpeed(settings.speechStep);
+    return n.item.label + '（' + (0.13 / n.item.step).toFixed(2).replace(/0$/, '') + '×）';
+  }
+  function cycleSpeechStyle() {
+    settings.speechFollow = settings.speechFollow === false;
+    saveSettings(); ttsCache.clear(); trackCache.clear();
+    bubbleSay('朗读模式：' + speechStyleLabel() + (settings.speechFollow !== false ? '（音高跟着真人语调走）' : '（音高按字固定）'), 3200);
+    speechProbe(settings.speechFollow !== false ? '这样说话，是不是更像在聊天？' : '嗯，这样也很有味道。');
+  }
+  function cycleSpeechVoice() {
+    const keys = Object.keys(SPEECH_VOICE_NAMES);
+    const i = Math.max(0, keys.indexOf(settings.speechVoice || 'fish'));
+    settings.speechVoice = keys[(i + 1) % keys.length];
+    saveSettings();
+    bubbleSay('朗读音色：' + speechVoiceLabel(), 2800);
+    speechProbe('这个声线，你觉得怎么样？');
+  }
+  function cycleSpeechSpeed() {
+    const n = nearestSpeed(settings.speechStep);
+    const next = SPEECH_SPEEDS[(n.index + 1) % SPEECH_SPEEDS.length];
+    settings.speechStep = next.step;
+    saveSettings();
+    bubbleSay('朗读速度：' + speechSpeedLabel(), 2800);
+    speechProbe('这个速度，跟得上吗？');
+  }
+
+  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */  function toggleSfx() {
     settings.sfxOn = settings.sfxOn === false;
     saveSettings();
     if (settings.sfxOn) { sfx('pop', { force: true }); bubbleSay('音效开啦，听见没？', 2200); }
@@ -566,7 +612,16 @@
           const r2 = $new('div', 'pb2-mi');
           r2.appendChild($new('span', null, s.icon));
           r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
-          r2.addEventListener('click', ev => { ev.stopPropagation(); menu.hidden = true; s.act(); });
+          r2.addEventListener('click', ev => {
+            ev.stopPropagation();
+            if (!s.keepOpen) menu.hidden = true;
+            s.act();
+            if (s.keepOpen) {                       // v3.5：切换类项目就地刷新文字、不关菜单
+              const l2 = r2.querySelector('.pb2-mlabel');
+              if (l2) l2.textContent = typeof s.label === 'function' ? s.label() : s.label;
+              sfx('tap');
+            }
+          });
           sub.appendChild(r2);
         }
         row.appendChild(sub);
@@ -578,7 +633,14 @@
           if (arrow) arrow.textContent = row.classList.contains('pb2-sub-open') ? '▴' : '▾';
         });
       } else {
-        row.addEventListener('click', () => { menu.hidden = true; it.act(); });
+        row.addEventListener('click', () => {
+          if (it.keepOpen) {
+            it.act();
+            const lbl = row.querySelector('.pb2-mlabel');
+            if (lbl) lbl.textContent = typeof it.label === 'function' ? it.label() : it.label;
+            sfx('tap');
+          } else { menu.hidden = true; it.act(); }
+        });
       }
       menu.appendChild(row);
     }

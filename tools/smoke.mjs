@@ -251,7 +251,26 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[增删改查 · v3.4]');
+console.log('\n[右键菜单：朗读三件套 + 显示优化 · v3.5]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('菜单里有朗读模式 / 音色 / 速度三项（当前值写在文字上）',
+    /朗读模式：/.test(t) && /朗读音色：/.test(t) && /朗读速度：/.test(t));
+  ok('三项都是"点一下循环切换"且不关菜单（keepOpen）',
+    (t.match(/keepOpen: true/g) || []).length >= 4);
+  ok('音色在 fish / lumo 之间切换', /function cycleSpeechVoice/.test(t) && /SPEECH_VOICE_NAMES/.test(t));
+  ok('速度有档位表（慢/正常/快/很快）',
+    /慢', step: 0\.18/.test(t) && /很快', step: 0\.08/.test(t));
+  ok('模式切换会清掉 TTS/韵律缓存（换了马上生效）',
+    /cycleSpeechStyle/.test(t) && /ttsCache\.clear\(\)/.test(t));
+  ok('切换时给气泡反馈并试听一句', /朗读模式：' \+ speechStyleLabel/.test(t) && /speechProbe\(/.test(t));
+  ok('菜单限高可滚（贴屏幕边缘不顶出可视区）',
+    /\.pb2-menu\s*\{[^}]*max-height/.test(css) && /\.pb2-menu\s*\{[^}]*overflow-y:\s*auto/.test(css));
+  ok('长菜单项省略号，不换行撑破', /\.pb2-menu \.pb2-mlabel\s*\{[^}]*text-overflow:\s*ellipsis/.test(css));
+  ok('子菜单也限高可滚', /\.pb2-submenu\s*\{[^}]*max-height/.test(css));
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   ok('模型：改名（小输入弹窗，不依赖 window.prompt）', /function askText/.test(t) && /给这张模型起个名字/.test(t));
