@@ -4,6 +4,19 @@
   "note": "插件素材清单。为什么必须平铺：宿主对 /_plugins/<id>/ 只服务插件根目录下的文件，子目录一律 404（v3.1.0 实测：assets/x.png、assets/sprites/x.png、/./assets/x.png、assets%2Fx.png 全部 404，根级新建文件立即 200），所以素材不能放进 assets/ 之类的子目录。本清单是素材的唯一索引：tools/install.ps1 -WithAssets 与 tools/pack.ps1 按它复制，tools/smoke.mjs 校验齐全。",
   "groups": [
     {
+      "id": "icons",
+      "prefix": "ic-",
+      "count": 14,
+      "files": [
+        "ic-chat.png", "ic-mic.png", "ic-speaker.png", "ic-book.png", "ic-talk.png",
+        "ic-palette.png", "ic-speed.png", "ic-bell.png", "ic-gear.png", "ic-mask.png",
+        "ic-note.png", "ic-brain.png", "ic-eyeoff.png", "ic-pin.png"
+      ],
+      "use": "右键菜单自绘图标：chat 窗口聊天 / mic 语音闲聊 / speaker 试听·语音菜单 / book 常用语 / talk 朗读模式 / palette 朗读音色 / speed 朗读速度 / bell 音效 / gear 设置 / mask 模型 / note 角色设定 / brain 思考过程 / eyeoff 隐藏 / pin 位置重置。96×96 透明 PNG，界面里显示 17px",
+      "source": "豆包生图技能（Seedream 5.0 Pro）按统一风格提示词生成一张 4×4 图标总表，本地按格裁切 + 白底转透明 + 统一缩放到 96×96",
+      "license": "本项目自用（AI 生成图，无第三方素材）"
+    },
+    {
       "id": "sprite",
       "prefix": "feiyu-",
       "count": 1,

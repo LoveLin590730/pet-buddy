@@ -251,7 +251,29 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[社区桌宠形象接入 · v3.5.1]');
+console.log('\n[自绘图标 + 菜单/弹窗风格 · v3.6]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css3 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  const mf3 = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+  const iconGroup = mf3.groups.find((g) => g.id === 'icons');
+  ok('图标组已登记（14 个）', !!iconGroup && iconGroup.files.length === 14);
+  ok('14 个图标文件都在仓库里', iconGroup.files.every((f) => existsSync(path.join(ROOT, f))));
+  ok('菜单项改用自绘图标名（不再用 emoji）',
+    /icon: 'chat'/.test(t) && /icon: 'speaker'/.test(t) && /icon: 'mic'/.test(t) && !/icon: '💬'/.test(t));
+  ok('图标渲染走 menuIcon（带加载失败兜底）', /function menuIcon/.test(t) && /im\.onerror/.test(t));
+  ok('CSS 有图标尺寸规则（17px，object-fit: contain）',
+    /\.pb2-mico\s*\{[^}]*width:\s*17px/.test(css3) && /\.pb2-mico\s*\{[^}]*object-fit:\s*contain/.test(css3));
+  ok('菜单风格优化：毛玻璃 + 渐变分隔 + 悬停微动',
+    /\.pb2-menu\s*\{[^}]*backdrop-filter/.test(css3) && /\.pb2-mico\s*\{[^}]*transition/.test(css3) &&
+    /\.pb2-menu \.pb2-mi:hover \.pb2-mico/.test(css3));
+  ok('弹窗风格优化：遮罩柔化 + 标题栏渐变 + 控件聚焦环',
+    /\.pb2-mask\s*\{[^}]*backdrop-filter/.test(css3) &&
+    /\.pb2-dtitle\s*\{[^}]*linear-gradient/.test(css3) &&
+    /\.pb2-dbody input:focus/.test(css3));
+  ok('按钮/卡片有悬停动效', /\.pb2-dbody button:hover/.test(css3) && /\.pb2-model-card:hover/.test(css3));
+}
+
 {
   ok('和大人皮肤已登记（动画 WebP，120 帧）', !!P.IMAGE_SKINS.hedaren && P.IMAGE_SKINS.hedaren.file === 'pet-hedaren.webp' && P.IMAGE_SKINS.hedaren.anim === true);
   ok('RYANFFY 大肥鱼立绘已登记（静态）', !!P.IMAGE_SKINS.ryan && P.IMAGE_SKINS.ryan.file === 'pet-dafeiyu-ryan.png' && !P.IMAGE_SKINS.ryan.anim);

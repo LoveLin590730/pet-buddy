@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.5.1';
+const PB_VERSION = '3.6.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -2489,31 +2489,45 @@ const CHAT_MODELS = [
     }, 650);
   });
 
-  /* ---- 右键菜单 ---- */
+  /* ---- 右键菜单（v3.6：图标改为自绘 PNG，风格统一） ---- */
   const MENU_ITEMS = [
-    { icon: '💬', label: '窗口化聊天', act: openChatWindow },
-    { icon: '🎙', label: 'bibo语音', sub: [
-      { icon: '🔊', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
-      { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
-      { icon: '📚', label: '常用语…', act: openPhraseBook },
+    { icon: 'chat', label: '窗口化聊天', act: openChatWindow },
+    { icon: 'speaker', label: 'bibo语音', sub: [
+      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+      { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+      { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
-      // v3.5：朗读三件套（点一下循环切换，当前值直接写在菜单上，不关菜单）
-      { icon: '🗣', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
-      { icon: '🎨', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
-      { icon: '⏩', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
+      { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
+      { icon: 'palette', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: 'speed', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
       { sep: true },
-      { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
+      { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
         act: () => toggleSfx(), keepOpen: true },
-      { icon: '⚙️', label: '声音设置…', act: openChatSettings },
+      { icon: 'gear', label: '声音设置…', act: openChatSettings },
     ] },
-    { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
-    { icon: '📝', label: '角色设定', act: openPersonaEditor },
-    { icon: '⚙️', label: '聊天设置', act: openChatSettings },
-    { icon: '🧠', label: '查看思考过程', act: openLogViewer },
+    { icon: 'mask', label: '修改桌宠模型', act: openModelPicker },
+    { icon: 'note', label: '角色设定', act: openPersonaEditor },
+    { icon: 'gear', label: '聊天设置', act: openChatSettings },
+    { icon: 'brain', label: '查看思考过程', act: openLogViewer },
     { sep: true },
-    { icon: '👁', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
-    { icon: '📍', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+    { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
+    { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
   ];
+  /** 菜单图标：'ic-xxx' 这样的名字走自绘 PNG；其他字符串当 emoji 用（兼容扩展项） */
+  function menuIcon(host, spec) {
+    if (spec && /^[a-z0-9-]+$/.test(spec)) {
+      const im = document.createElement('img');
+      im.className = 'pb2-mico';
+      im.alt = '';
+      im.src = assetUrl('ic-' + spec + '.png');
+      im.onerror = () => { im.replaceWith($new('span', null, '·')); };   // 图标缺了就退成小点，不塌版
+      host.appendChild(im);
+    } else if (spec) {
+      host.appendChild($new('span', null, spec));
+    } else {
+      host.appendChild($new('span', null, ''));
+    }
+  }
   /* v3.5 朗读三件套：菜单里点一下循环切换，当前值直接写在菜单文字上（子菜单不关，就地刷新） */
   const SPEECH_SPEEDS = [
     { label: '慢', step: 0.18 },
@@ -2567,7 +2581,7 @@ const CHAT_MODELS = [
     for (const it of MENU_ITEMS) {
       if (it.sep) { menu.appendChild($new('div', 'pb2-msep')); continue; }
       const row = $new('div', 'pb2-mi');
-      row.appendChild($new('span', null, it.icon));
+      menuIcon(row, it.icon);
       row.appendChild($new('span', 'pb2-mlabel', typeof it.label === 'function' ? it.label() : it.label));
       if (it.sub) {
         row.appendChild($new('span', 'pb2-marrow', '▾'));   // 折叠标记：点一下就地展开
@@ -2575,7 +2589,7 @@ const CHAT_MODELS = [
         for (const s of it.sub) {
           if (s.sep) { sub.appendChild($new('div', 'pb2-msep')); continue; }
           const r2 = $new('div', 'pb2-mi');
-          r2.appendChild($new('span', null, s.icon));
+          menuIcon(r2, s.icon);
           r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
           r2.addEventListener('click', ev => {
             ev.stopPropagation();
