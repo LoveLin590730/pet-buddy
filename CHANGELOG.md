@@ -7,6 +7,60 @@
 
 本文件承接自 v2.2.3 之前塞在 `manifest.json` 里 description 字段的版本历史。
 
+## v4.17.0 — 2026-11-19 · 代码质量重构（拆函数 / 收封装 / 补健壮性）
+
+**一句话**：不动功能，把功能实现代码过了一遍——**修了 1 个功能回归**、把 4 个超大函数拆成 17 个职责单一的函数、
+清掉 4 处死代码、消掉"字段挂全局弹窗"的反模式、补了两处健壮性保护。自检从 602 项涨到 618 项。
+
+### 一、扫描先行：先出清单再动手
+
+用结构化扫描（函数规模 / 隐式全局 / 松散比较 / 无引用函数 / innerHTML / try 覆盖 / 定时器与监听）+ 人工核对，
+得到问题清单后再逐项改。关键结论：**松散比较只剩 `== null` 惯用法（0 处其它）**、
+`console` 残留 0、`TODO` 0、`innerHTML` 仅 4 处且都是自家常量 SVG。
+
+### 二、修了一个功能回归（扫描发现的）
+
+`openChatWindow`（**独立聊天窗口**）在之前某轮改菜单时**把入口弄丢了**——函数还在、没人调用，
+而 README 与安装提示都还写着它。→ 在「设置」分栏补回 **「独立聊天窗口…」**。
+
+### 三、拆函数：4 个大函数 → 17 个职责单一函数
+
+| 原函数 | 行数 | 拆成 |
+|---|---|---|
+| `openModelPicker` | 191 | `builtinModelList` / `skinAssetFileOf` / `skinListToggle` / `makeBuiltinModelCard` / `buildModelImportArea` / `makeCustomModelCard` + 编排（≈30 行） |
+| `openSoundSettings` | 138 | `buildSpeechFields` / `buildSfxFields` / `buildVoiceChatSection` / `applySoundSettings` + 编排 |
+| `openLineEditor` | 106 | `buildGreetingSection` / `buildPokeLinesSection` / `buildLineAutoSection` + 编排 |
+| `renderChatpStickers` | 76 | `pickStickerFiles` / `buildStickerTabs` / `makeStickerCell` / `buildStickerGrid` + 编排 |
+
+- 顺手**消掉重复**：名单增删（移除 / 彻底删除 / 恢复）原来各写一遍 → 统一 `skinListToggle`；
+  "选表情文件"在 tab 与网格里写了两遍 → 统一 `pickStickerFiles`。
+- 拆分后**每个函数都能单独读**，未来改某一块不用翻 190 行。
+- 剩余 >90 行的只有 3 个（`speak` 音频状态机 / `assetUrl` 候选探测 / …），都是**内聚逻辑**，拆了反而难读，保留。
+
+### 四、封装：去掉"字段挂全局弹窗"的反模式
+
+原来 6 个弹窗把表单字段挂在 `openDialog._gen / _pet / _chat / _lineFields / _personaTA / probeCommit` 上——
+是全局挂载，多次开弹窗有串台风险。现在统一改成**弹窗自己的局部字段表**（`const F = {}` + `Object.assign`），
+`openDialog._` 用法归零。
+
+### 五、健壮性补两处
+
+1. **弹窗按钮防连点**：保存类按钮快速双击原来会跑两遍保存 → 现在点击先判 `disabled`、关窗前锁住。
+2. **文件选择回调异常保护**：`onPick` 抛错会让"文件名显示"与选中状态不一致 → 现在捕获并写日志。
+
+### 六、死代码清理（扫描确认无引用）
+
+`cycleBalanceStyle` / `balanceStyleLabel`（余额格式菜单快捷键，已并入桌宠设置）／
+`openGreetingEditor`（开场白弹窗，已并入台词与开场白）／`guidedShift`（未使用的音高偏移）——共 **67 行**删除。
+另给 `isImageSkin` / `pathToFileUrl` / `walkSpeedLabel` 三个"自检专用纯函数"补了说明注释，避免下次又被当死代码。
+
+### 七、自检
+
+- `smoke.mjs` **618 项全绿**（4.16.0 的 602 项 + 16 项）：拆出的 17 个函数"必须有调用"（防"抽了不用"）、
+  四个编排函数都在合理长度、`openDialog._` = 0、局部字段表 ≥5、防连点与回调保护、死代码 0、
+  独立窗口入口在、以及延续的代码底线（console/TODO/松散比较）。
+- 宿主实机验证：版本 4.17.0 三处一致、拆出函数 15/15 在位、挂载残留 0、**运行时错误 0**。
+
 ## v4.16.0 — 2026-11-19 · 菜单与弹窗收口 + 全量代码体检
 
 **一句话**：① 点菜单项（如试听语音）菜单**彻底收起**；② **二级弹窗的「← 返回」回来了**（上一轮入口"先关后开"
@@ -576,7 +630,7 @@ stick 图 38×38 且 `naturalWidth > 0`、fish 元素 34×37 **未溢出格子**
 - 浏览器实测（注入真实面板 DOM + 真实接口）：缩略图 52×52、预览 ok、长名/长路径均截断、
   三张卡片总高 262px、发送按钮到面板底 7px。
 
-## v4.4.10 — 2026-11-19 · 双击闲聊 ↔ 气泡聊天联动
+## v4.5.0 — 2026-11-19 · 双击闲聊 ↔ 气泡聊天联动
 
 **一句话**：双击就地输入框说的、和气泡聊天面板里说的，是**同一个助手子对话**——
 面板打开（或每次问答结束）会从会话记录里把增量补进来，所以双击闲聊过的内容会出现在面板历史里；

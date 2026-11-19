@@ -45,6 +45,7 @@
     for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.pxPerSec;
     return 74;
   }
+  /** 速度档中文名（供自检与文案用） */
   function walkSpeedLabel(id) {
     const s = String(id == null ? '' : id);
     for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.label;

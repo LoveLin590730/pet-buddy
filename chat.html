@@ -227,7 +227,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.16.0';
+const PB_VERSION = '4.17.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -2648,6 +2648,7 @@ const CHAT_MODELS = [
     for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.pxPerSec;
     return 74;
   }
+  /** 速度档中文名（供自检与文案用） */
   function walkSpeedLabel(id) {
     const s = String(id == null ? '' : id);
     for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.label;
@@ -3315,26 +3316,6 @@ const CHAT_MODELS = [
       }
     }
     return best;
-  }
-
-  /** 整句统一的八度平移量：真人音域（~100–350Hz）比这些"小人声线"（~660–1050Hz）低得多，
-   *  必须整句一起挪，才能在保留**相对**音高走向的同时让每个音都落在音阶上（否则全被吸到同一个音）。 */
-  function guidedShift(f0list, scale) {
-    const sc = (scale && scale.length) ? scale : VOICES.fish.scale;
-    const targets = (f0list || []).filter(v => v > 0).map(v => 69 + 12 * Math.log2(v / 440));
-    if (!targets.length) return -12;
-    let bestShift = -12, bestErr = Infinity;
-    for (const sh of [-24, -12, 0, 12, 24]) {
-      let err = 0;
-      for (const t of targets) {
-        let near = Infinity;
-        for (const s of sc) near = Math.min(near, Math.abs(s + sh - t));
-        err += near;
-      }
-      err /= targets.length;
-      if (err < bestErr) { bestErr = err; bestShift = sh; }
-    }
-    return bestShift;
   }
 
   /** 把一串目标音高"放进音阶"：按**相对句中位**的高低去选档。

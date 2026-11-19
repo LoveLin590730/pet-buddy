@@ -240,26 +240,6 @@
     return best;
   }
 
-  /** 整句统一的八度平移量：真人音域（~100–350Hz）比这些"小人声线"（~660–1050Hz）低得多，
-   *  必须整句一起挪，才能在保留**相对**音高走向的同时让每个音都落在音阶上（否则全被吸到同一个音）。 */
-  function guidedShift(f0list, scale) {
-    const sc = (scale && scale.length) ? scale : VOICES.fish.scale;
-    const targets = (f0list || []).filter(v => v > 0).map(v => 69 + 12 * Math.log2(v / 440));
-    if (!targets.length) return -12;
-    let bestShift = -12, bestErr = Infinity;
-    for (const sh of [-24, -12, 0, 12, 24]) {
-      let err = 0;
-      for (const t of targets) {
-        let near = Infinity;
-        for (const s of sc) near = Math.min(near, Math.abs(s + sh - t));
-        err += near;
-      }
-      err /= targets.length;
-      if (err < bestErr) { bestErr = err; bestShift = sh; }
-    }
-    return bestShift;
-  }
-
   /** 把一串目标音高"放进音阶"：按**相对句中位**的高低去选档。
    *  真人音域（一两百 Hz 到三百多 Hz，跨度常在 15 个半音以上）比这些小人声线（5 档、跨度 8 个半音）宽得多，
    *  直接按绝对值挑最近音，会把大半的字都挤到同一个音上（起伏全丢）——

@@ -328,7 +328,7 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
   ok('桌宠大小可调（菜单档位 + 设置滑块）', /function cyclePetSize/.test(t) && /sizeRange/.test(t) && /settings\.size = clamp/.test(t));
   ok('大小档位含 小/中/大/特大', /label: '小', size: 72/.test(t) && /label: '特大', size: 168/.test(t));
   ok('彻底删除（deletedSkins，永久）', /deletedSkins/.test(t) && /彻底删除/.test(t));
-  ok('已彻底删除的不再出现在列表', /deleted\.indexOf\(m\.id\) < 0/.test(t));
+  ok('已彻底删除的不再出现在列表', /deleted\.indexOf\(m\.id\) >= 0/.test(t));
   ok('互动形变（果冻）与开关', /function jellyPulse/.test(t) && /@keyframes pb2-jelly/.test(css5) && /function toggleJelly/.test(t));
   ok('果冻形变幅度较小（0.93~1.06 区间）', /scale\(1\.06, \.93\)/.test(css5) && !/scale\(1\.[2-9]/.test(css5));
   // 称呼
@@ -349,9 +349,9 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   ok('余额格式三种（简洁/详细/傲娇）', /id: 'short'/.test(t) && /id: 'detail'/.test(t) && /id: 'playful'/.test(t));
   ok('默认用简洁格式（不再一长串）', P.DEFAULTS.balanceStyle === 'short');
-  ok('可循环切换余额格式并立即展示', /function cycleBalanceStyle/.test(t) && /onPetSingleClick\(\);/.test(t));
-  ok('菜单里有「余额格式」和「开场白…」', /余额格式：/.test(t) && /开场白…/.test(t));
-  ok('开场白可在设置里编辑（带变量说明）', /function openGreetingEditor/.test(t) && /\{greet\}/.test(t) && /\{nickname\}/.test(t));
+  ok('余额格式在桌宠设置里可改，且单击立刻按新格式展示', /balanceStyleId\(\)/.test(t) && /onPetSingleClick\(\);/.test(t) && /余额气泡格式/.test(t));
+  ok('余额格式与开场白各有明确去处（v4.16 起在「桌宠设置」弹窗，不再占菜单）', /余额气泡格式/.test(t) && /开场白（启动第一句/.test(t));
+  ok('开场白可在设置里编辑（带变量说明 {greet}/{nickname}）', /\{greet\}/.test(t) && /\{nickname\}/.test(t) && /开场白/.test(t));
   ok('开场白默认空（空=用默认那句）', P.DEFAULTS.greeting === '');
   ok('启动时走 openLine（自定义优先）', /function openLine/.test(t) && /bubbleSay\(openLine\(\)/.test(t));
 
@@ -1418,6 +1418,54 @@ console.log('\n[v4.16 菜单精简 + 二级弹窗回退修复 + 整体扫描]');
     return true;   // 细节见各模块的 try（此处只作人工确认标记）
   })());
   ok('版本号仍是 4.x 小版本（不跳大版本）', /PB_VERSION\s*=\s*'4\.\d+\.\d+'/.test(cfg16));
+}
+
+console.log('\n[v4.17 代码质量重构]');
+{
+  const js17 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cfg17 = readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8');
+  const lines17 = js17.split('\n');
+  // ① 大函数拆分：每个被拆出的函数都要"有定义 + 有调用"
+  const split = ['builtinModelList', 'skinAssetFileOf', 'skinListToggle', 'makeBuiltinModelCard', 'buildModelImportArea',
+    'makeCustomModelCard', 'buildSpeechFields', 'buildSfxFields', 'buildVoiceChatSection', 'applySoundSettings',
+    'pickStickerFiles', 'buildStickerTabs', 'makeStickerCell', 'buildStickerGrid',
+    'buildGreetingSection', 'buildPokeLinesSection', 'buildLineAutoSection'];
+  const orphan = split.filter(n => (js17.match(new RegExp('\\b' + n + '\\b', 'g')) || []).length < 2);
+  ok('拆出的函数全部有调用（无"抽了不用"的新死代码）', orphan.length === 0, orphan.join(',') || '全部在用');
+  ok('模型选择器：190 行 → 编排 + 4 块', (() => {
+    const i = js17.indexOf('function openModelPicker()');
+    const rest = js17.slice(i);
+    const body = rest.slice(0, rest.indexOf('\n  }') + 4);
+    return body.split('\n').length < 45;
+  })());
+  ok('声音设置：138 行 → 5 函数', /function buildSpeechFields/.test(js17) && /function buildSfxFields/.test(js17) && /function applySoundSettings/.test(js17));
+  ok('台词与开场白：106 行 → 4 函数', /function buildGreetingSection/.test(js17) && /function buildPokeLinesSection/.test(js17) && /function buildLineAutoSection/.test(js17));
+  ok('表情面板：76 行 → 5 函数（选文件逻辑不再写两遍）',
+    /function pickStickerFiles/.test(js17) && (js17.match(/pickStickerFiles\)\(|pickStickerFiles\)/g) || []).length >= 2);
+  // ② 封装：字段不再挂在 openDialog 上（6 个弹窗都改成局部）
+  eq('openDialog 挂字段的反模式已清零', (js17.match(/openDialog\._/g) || []).length, 0);
+  ok('各弹窗用局部字段表（const F = {}）', (js17.match(/const F = \{\}/g) || []).length >= 5);
+  eq('模块级 probeCommit 已清除（改成弹窗局部 commit）', (js17.match(/probeCommit/g) || []).length, 0);
+  // ③ 健壮性
+  ok('弹窗按钮防连点（点击先判 disabled 再锁）',
+    /if \(btn\.disabled\) return;/.test(js17) && /btn\.disabled = true;/.test(js17));
+  ok('文件选择回调有异常保护（不再让 UI 状态错乱）', /文件选择回调出错/.test(js17));
+  ok('名单增删只有一份实现（移除/彻底删除/恢复共用）', /function skinListToggle/.test(js17) &&
+    (js17.match(/skinListToggle\(/g) || []).length >= 3);
+  // ④ 死代码清零
+  const dead = ['cycleBalanceStyle', 'balanceStyleLabel', 'openGreetingEditor', 'guidedShift', 'probeCommit']
+    .filter(n => js17.indexOf(n) >= 0);
+  eq('本轮识别的死代码已清理', dead.length, 0, dead.join(','));
+  // ⑤ 功能回归修复：独立聊天窗口入口回来了
+  ok('「独立聊天窗口…」入口已恢复（死代码检查发现的回归）',
+    /label: '独立聊天窗口…', act: openChatWindow/.test(js17));
+  // ⑥ 代码底线（延续上一轮）
+  ok('无 console 残留 / 无 TODO', !/console\.(log|warn|error)\(/.test(js17) && !/\b(TODO|FIXME)\b/.test(js17));
+  ok('松散比较只保留 `== null` 惯用法', (() => {
+    const all = js17.match(/[^\n]*[^=!<>]==[^=][^\n]*/g) || [];
+    return all.filter(m => m.indexOf('== null') < 0).length === 0;
+  })());
+  ok('版本仍是 4.x 小版本', /PB_VERSION\s*=\s*'4\.\d+\.\d+'/.test(cfg17));
 }
 
 console.log('\n[语音听写 · v3.2]');
