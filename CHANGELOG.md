@@ -3,6 +3,25 @@
 版本号唯一来源：`src/core/config.js` 的 `PB_VERSION`；`node build.mjs` 会写回 `manifest.json`。
 本文件承接自 v2.2.3 之前塞在 `manifest.json` 里 description 字段的版本历史。
 
+## v3.3.3 — 2026-11-19 · 换掉有问题的女仆模型，接入 BongoCat 键盘猫
+
+**一句话**：按你反馈删掉那份显示违和的女仆素材，换成正经的 BongoCat 键盘猫（原版素材，MIT）。
+
+- **下线 `pet-deepseek.webp`（女仆）**：那张图自带桌子和手，再叠插件的浮空双爪图层就变成"飘着的肉垫"
+  （就是你截图里那样）。素材文件、素材清单、皮肤条目一并移除；老设置里的 `skin=maid` **自动迁移**到 `bongo`。
+- **接入 BongoCat 键盘猫**（皮肤名「BongoCat 猫猫」，`skin=bongo`）：素材取自原版
+  [kuroni/bongocat-osu](https://github.com/kuroni/bongocat-osu)（**MIT**，原样未改）：
+  - `pet-bongocat.png`（612×354，键盘 + 猫的默认画面）
+  - `pet-bongocat-down.png`（612×352，爪子按下帧）
+  - 互动：**敲键盘 / 动鼠标 → 切成按下帧，110ms 后切回**（140ms 节流，不会闪）——
+    这就是原版 BongoCat 的核心手感。
+- **浮空爪图层改为按皮肤决定**（`currentPawEnabled()`）：素材自带爪子的内置皮肤（BongoCat）**不叠**、
+  精灵图皮肤不叠，只有用户自传的图才叠（那种图通常没有手）。从此不再出现"飘着的肉垫"。
+- **素材镜像会清理下线素材**：`install.ps1 -WithAssets` 现在会对比素材清单，把已下线的旧素材备份到
+  `dist\backup-<时间戳>\stale-assets-<时间戳>\` 后从插件目录删除（不再残留）。
+- **实测**：皮肤 bongo 下图片加载成功 612×354、`pb2-monitor-on` 不出现（爪图层已关闭）、
+  敲键后 40ms 内切到按下帧、160ms 后切回默认帧。`smoke.mjs` 共 **118 项全绿**。
+
 ## v3.3.2 — 2026-11-19 · 素材基准改实测探测 + 语音菜单就地展开
 
 **一句话**：按你反馈修两处——① 所有皮肤都提示"图没加载出来"（v3.3.1 把基准算成了 `http://127.0.0.1:8788/`，少了插件目录）；

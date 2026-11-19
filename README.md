@@ -21,6 +21,8 @@
   和语音同一套合成器造的短音，独立开关与音量（默认开、0.6）
 - **可插拔精灵图皮肤（v3.3）**：内置「大肥鱼·社区桌宠包」（社区二创图集，8×11 / 192×208 同规格，
   直接换图即用）；新增社区图集只要把图平铺放插件根目录 + 在 `SPRITE_SKINS` 里加一条 + 登记素材清单与许可
+- **BongoCat 猫猫（v3.3.3）**：原版键盘猫画面（MIT 素材），敲键盘 / 动鼠标时**爪子亮一下**
+  （切按下帧，110ms 后切回）；素材自带爪子，所以不叠插件的浮空爪图层
 
 ---
 
@@ -123,9 +125,11 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 9. **音效与社区皮肤（v3.3）**：
    - 点桌宠/开右键菜单/拖到边缘吸附/开始收音/出错 各有短音；聊天设置里「试听音效」能连着响五个；
      关掉音效开关后完全安静（语音不受影响，两者独立）
-   - 右键 →「修改桌宠模型」应看到两张卡：**「大肥鱼·鲸鲸娘」（官方图集）** 与
-     **「大肥鱼·社区桌宠包」（社区图集，卡片上带署名）**；切到社区包后桌宠换成该画风，
-     拖动/动画/吸附一切照旧（同网格规格）；切回官方图集也应正常
+   - 右键 →「修改桌宠模型」应看到三张卡：**「大肥鱼·鲸鲸娘」（官方图集）**、**「大肥鱼·社区桌宠包」（社区图集，带署名）**、
+     **「BongoCat 猫猫」（键盘猫，带署名 MIT 来源）**；切到社区包后换成该画风、切到 BongoCat 后显示键盘猫，
+     拖动/吸附一切照旧；切回官方图集也应正常
+   - **BongoCat 皮肤下敲键盘/动鼠标**：应看到猫爪亮一下（切成按下帧再切回）；
+     并且**不再有飘在半空的粉色肉垫**（那是旧女仆素材叠加图层造成的，这套素材自带爪子所以不叠）
    - **右键 →「bibo语音」**：悬停向右展开，含「试听语音 / 语音闲聊 / 音效：开·关 / 声音设置…」；
      点「音效：开」应变成「音效：关」并配一声反馈音
    - **兼容回归（v3.3.1 修的坑，务必过一遍）**：贴纸面板里点一张贴纸 → 应正常出图
@@ -138,7 +142,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 | 素材 | 来源 | 许可 |
 |---|---|---|
 | `feiyu-spritesheet.png`（8×11=88 格，192×208/格） | zhouwu97/ds-pet 官方 v2 精灵图 | MIT（见 `LICENSE-dspet.txt`） |
-| `pet-deepseek.webp`（内置女仆皮肤） | 上游 ds-pet 素材 | MIT（见 `LICENSE-dspet.txt`） |
+| `pet-bongocat.png` + `pet-bongocat-down.png`（BongoCat 键盘猫：默认帧 + 爪子按下帧） | kuroni/bongocat-osu（原样未改；作者：kuroni） | MIT（见 `LICENSE-bongocat.txt`） |
 | `pet-whale-codex.webp`（社区桌宠包图集，同 8×11 / 192×208 规格） | YunYueSama/codex-deepseek-pet 的 `spritesheet.webp`（原样未改；作者：YunYueSama） | 大肥鱼项目署名许可 1.0：允许使用/修改/分享/商用，**须署名作者与仓库**（见 `LICENSE-deepseekpet.txt`） |
 | `st-deepseek-*.webp`、`st-chatgpt-renwu-jieshao.webp` 等 16 张 | 蓝色大肥鱼档案馆（fisharchive.cc） | CC BY-NC-SA 4.0 |
 | `st-wx-01..24.webp` | 微信表情包 640.wxpic（wxgf/HEVC）解码后 6×4 网格裁切 | 二创，非商用 |

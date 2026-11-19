@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $RUNTIME = @('client.js', 'chat.html', 'client.css', 'manifest.json')
-$DOCS = @('icon.png', 'LICENSE-dspet.txt', 'LICENSE-deepseekpet.txt', 'README.md', 'CHANGELOG.md', 'LICENSE', 'assets.manifest.json')
+$DOCS = @('icon.png', 'LICENSE-dspet.txt', 'LICENSE-deepseekpet.txt', 'LICENSE-bongocat.txt', 'README.md', 'CHANGELOG.md', 'LICENSE', 'assets.manifest.json')
 function Get-AssetFiles {
   $mf = Get-Content (Join-Path $root 'assets.manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
   return @($mf.groups | ForEach-Object { $_.files })
@@ -73,6 +73,25 @@ try {
     }
     $msg = "[4/4] 已同步：" + ($RUNTIME + $DOCS -join ', ')
     if ($WithAssets) {
+      # 素材按清单镜像：先复制清单里的，再清理"清单外"的旧素材（下线素材不会残留）
+      $assetFiles = Get-AssetFiles
+      foreach ($a in $assetFiles) {
+        $srcf = Join-Path $root $a
+        if (-not (Test-Path $srcf)) { throw "清单里的素材不存在：$a" }
+        Copy-Item $srcf (Join-Path $Dest $a) -Force
+      }
+      $stale = @()
+      foreach ($pat in 'pet-*', 'st-*', 'feiyu-*') {
+        foreach ($f in (Get-ChildItem $Dest -Filter $pat -File -ErrorAction SilentlyContinue)) {
+          if ($assetFiles -notcontains $f.Name) { $stale += $f.Name }
+        }
+      }
+      if ($stale.Count) {
+        $bkDir = Join-Path $backup ('stale-assets-' + $stamp)
+        New-Item -ItemType Directory -Path $bkDir -Force | Out-Null
+        foreach ($a in $stale) { Copy-Item (Join-Path $Dest $a) (Join-Path $bkDir $a) -Force; Remove-Item (Join-Path $Dest $a) -Force }
+        $msg += "；已清理下线素材 $($stale.Count) 个（备份在 $bkDir）"
+      }
       $msg += "；素材 $($assetFiles.Count) 个"
     } else {
       $msg += "（素材未动：需要时加 -WithAssets）"

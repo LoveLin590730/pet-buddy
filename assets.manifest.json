@@ -17,14 +17,15 @@
     {
       "id": "skin",
       "prefix": "pet-",
-      "count": 2,
+      "count": 3,
       "files": [
-        "pet-deepseek.webp",
-        "pet-whale-codex.webp"
+        "pet-whale-codex.webp",
+        "pet-bongocat.png",
+        "pet-bongocat-down.png"
       ],
-      "use": "桌宠皮肤：pet-deepseek.webp＝内置女仆（静态图 + 呼吸动画 + BongoCat 式键鼠监控）；pet-whale-codex.webp＝社区桌宠包图集（8 列 × 11 行同规格，可直接按网格播动画，作为可选皮肤 codex）",
-      "source": "pet-deepseek.webp：上游 ds-pet 素材；pet-whale-codex.webp：社区项目 YunYueSama/codex-deepseek-pet 的 spritesheet.webp（原样未改）",
-      "license": "pet-deepseek.webp：MIT（见 LICENSE-dspet.txt）；pet-whale-codex.webp：大肥鱼项目署名许可 1.0（允许使用/修改/分享/商用，须署名作者与仓库——见 LICENSE-deepseekpet.txt）"
+      "use": "桌宠皮肤：pet-whale-codex.webp＝社区桌宠包图集（8 列 × 11 行同规格，按网格播动画，皮肤 codex）；pet-bongocat.png + pet-bongocat-down.png＝BongoCat 键盘猫（默认帧 + 键鼠按下帧，皮肤 bongo；素材自带爪子，不叠浮空爪图层）",
+      "source": "pet-whale-codex.webp：社区项目 YunYueSama/codex-deepseek-pet 的 spritesheet.webp（原样未改）；pet-bongocat*.png：kuroni/bongocat-osu 的 img/catch/bg.png 与 left.png（原样未改）",
+      "license": "pet-whale-codex.webp：大肥鱼项目署名许可 1.0（见 LICENSE-deepseekpet.txt）；pet-bongocat*.png：MIT（见 LICENSE-bongocat.txt）"
     },
     {
       "id": "icon",

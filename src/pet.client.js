@@ -88,6 +88,8 @@
      第一个真能加载的才算数；探测完成后按最终前缀重画一次皮肤。 */
   const assetProbe = { ok: false, base: '', how: '', tried: [] };
   const SKIN_WARNED = {};   // 同一会话里每种皮肤只提示一次，避免反复弹同样的提示
+  // v3.3.3：旧的女仆皮肤已下线（素材自带桌子与手，叠浮空爪图层很违和）——老设置自动切到 BongoCat
+  if (settings.skin === 'maid') { settings.skin = 'bongo'; saveSettings(); }
 
   /** 皮肤图可用性预检：失败不改用户设置、只临时穿回官方形象并说明一次 */
   function verifySkinImage(skin, done) {
@@ -127,13 +129,14 @@
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
+      const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat）
       let url = '';
-      if (s === 'maid') url = assetUrl('pet-deepseek.webp');
+      if (im) url = assetUrl(im.file);
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
         if (c) url = c.dataUrl;
       }
-      imgSkin.src = url || assetUrl('pet-deepseek.webp');
+      imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
       // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
       imgSkin.onerror = () => {
         if (SKIN_WARNED[s]) return;
@@ -441,8 +444,29 @@
      · 敲键盘（非输入框时）→ 头顶弹出键帽徽章 + 爪子按下弹跳
      说明：浏览器安全模型限制，键盘/鼠标监听只在助手页面聚焦时生效。 */
   function applyMonitor() {
-    const on = settings.monitor !== false && skinMode === 'img';
+    const on = settings.monitor !== false && skinMode === 'img' && currentPawEnabled();
     petWrap.classList.toggle('pb2-monitor-on', on);
+  }
+  /** 浮空爪图层要不要叠（v3.3.3）：素材自带爪子/桌面的内置皮肤不叠，只保留它自己的互动 */
+  function currentPawEnabled() {
+    const s = settings.skin || 'fish';
+    const im = IMAGE_SKINS[s];
+    if (im) return im.paw !== false;      // 内置静态皮肤自己声明（BongoCat = 不叠）
+    if (SPRITE_SKINS[s]) return false;    // 精灵图皮肤不用爪图层
+    return true;                          // 用户上传的图：默认叠（适合没有手的角色图）
+  }
+  /** BongoCat 皮肤专属互动：键鼠一动就切到「爪子按下帧」，110ms 后切回 */
+  let pawFrameTimer = null, pawPulseAt = 0;
+  function pawFramePulse() {
+    const im = IMAGE_SKINS[settings.skin || ''];
+    if (!im || !im.fileDown || skinMode !== 'img') return false;
+    const now = performance.now();
+    if (now - pawPulseAt < 140) return true;   // 节流：别把图切成高频闪烁
+    pawPulseAt = now;
+    imgSkin.src = assetUrl(im.fileDown);
+    if (pawFrameTimer) clearTimeout(pawFrameTimer);
+    pawFrameTimer = setTimeout(() => { if (skinMode === 'img') imgSkin.src = assetUrl(im.file); }, 110);
+    return true;
   }
   function keyLabel(e) {
     const k = e.key;
@@ -463,6 +487,7 @@
   }
   document.addEventListener('pointermove', e => {
     if (!monitorInteractive()) { paws.style.transform = 'rotate(0deg)'; return; }
+    pawFramePulse();                       // BongoCat 皮肤：鼠标一动爪子亮一下
     const r = petWrap.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height * 0.55;
     const dx = e.clientX - cx, dy = e.clientY - cy;
@@ -473,6 +498,7 @@
   }, { passive: true });
   document.addEventListener('mousedown', e => {
     if (!monitorInteractive()) return;
+    pawFramePulse();
     if (e.button === 0) pawL.classList.add('pb2-down');
     if (e.button === 2) pawR.classList.add('pb2-down');
   }, true);
@@ -483,6 +509,7 @@
     if (!monitorInteractive()) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return; // 打字不弹
+    pawFramePulse();                       // BongoCat 皮肤：敲键盘爪子亮一下
     keycap.textContent = keyLabel(e);
     keycap.classList.remove('pb2-show');
     void keycap.offsetWidth; // 重启动画
@@ -606,14 +633,19 @@
         desc: SPRITE_SKINS[id].desc + (SPRITE_SKINS[id].credit ? ' · ' + SPRITE_SKINS[id].credit : ''),
         thumb: SPRITE_SKINS[id].url,
         bgPos: '-192px -208px',
-      })).concat([
-        { id: 'maid', name: 'DeepSeek 女仆', desc: '内置皮肤 pet-deepseek.webp · 呼吸动画 · BongoCat 式鼠标/键盘监控', thumb: ASSET_SKIN_DEFAULT },
-      ]);
+      })).concat(Object.keys(IMAGE_SKINS).map(id => ({
+        id,
+        name: IMAGE_SKINS[id].name,
+        desc: IMAGE_SKINS[id].desc + (IMAGE_SKINS[id].credit ? ' · ' + IMAGE_SKINS[id].credit : ''),
+        thumb: assetUrl(IMAGE_SKINS[id].file),
+        contain: true,
+      })));
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
         const th = $new('div', 'pb2-model-thumb');
         th.style.backgroundImage = 'url("' + m.thumb + '")';
         if (m.bgPos) { th.style.backgroundSize = '1536px 2288px'; th.style.backgroundPosition = m.bgPos; }
+        else if (m.contain) { th.style.backgroundSize = 'contain'; th.style.backgroundPosition = 'center'; th.style.backgroundRepeat = 'no-repeat'; }
         const info = $new('div');
         info.appendChild($new('div', 'pb2-model-name', m.name));
         info.appendChild($new('div', 'pb2-model-desc', m.desc));

@@ -68,7 +68,7 @@ const probe = `
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
-  SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX,
+  SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
@@ -182,8 +182,31 @@ console.log('\n[余额来源：内部通道额度 + 缓存命中计价 · v3.1.0
   ok('身份牌不再去打网关账单，且原因说人话', cr.ok === false && /内部通道身份牌/.test(cr.reason), cr.reason);
   P.settings.gatewayKey = '';
   ok('素材常量指向插件根（宿主只服务根级文件，素材必须平铺）',
-    P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.png' && P.ASSET_STICKER === P.ASSET_DIR && P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'pet-deepseek.webp',
+    P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.png' && P.ASSET_STICKER === P.ASSET_DIR &&
+    P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'pet-bongocat.png',
     P.ASSET_SPRITE);
+}
+
+console.log('\n[皮肤：BongoCat 与浮空爪图层 · v3.3.3]');
+{
+  const im = P.IMAGE_SKINS.bongo;
+  ok('内置静态皮肤换成 BongoCat 键盘猫', !!im && im.file === 'pet-bongocat.png' && /BongoCat/.test(im.name));
+  ok('BongoCat 皮肤：默认帧 + 按下帧 + 声明不叠浮空爪',
+    im.fileDown === 'pet-bongocat-down.png' && im.paw === false);
+  ok('皮肤分类判断（精灵图 / 静态图 / 自定义）',
+    P.isSpriteSkin('codex') && P.isImageSkin('bongo') && !P.isImageSkin('codex') && !P.isImageSkin('custom:1'));
+  ok('女仆素材已下线（文件与清单都不再有它）',
+    !existsSync(path.join(ROOT, 'pet-deepseek.webp')) &&
+    JSON.stringify(JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'))).indexOf('pet-deepseek') < 0);
+  const clientTxt = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('老设置 maid 自动迁移到 bongo', /settings\.skin === 'maid'/.test(clientTxt) && /settings\.skin = 'bongo'/.test(clientTxt));
+  ok('浮空爪图层对自带爪子的皮肤关闭（不再出现飘着的肉垫）',
+    /currentPawEnabled/.test(clientTxt) && /im\.paw !== false/.test(clientTxt));
+  ok('键鼠互动改走按下帧（pawFramePulse + 节流）',
+    /pawFramePulse/.test(clientTxt) && /pawPulseAt/.test(clientTxt));
+  ok('BongoCat 素材已登记进素材清单',
+    JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8')).groups
+      .flatMap((g) => g.files).indexOf('pet-bongocat.png') >= 0);
 }
 
 console.log('\n[素材清单 · v3.1.0]');

@@ -1,0 +1,26 @@
+BongoCat 素材许可与署名
+================================================================================
+
+素材来源：kuroni/bongocat-osu
+          https://github.com/kuroni/bongocat-osu
+用到的文件：
+  pet-bongocat.png       ← img/catch/bg.png   （612×354，BongoCat 默认画面：键盘 + 猫）
+  pet-bongocat-down.png  ← img/catch/left.png （612×352，爪子按下帧）
+取得日期：2026-11-19
+
+许可
+--------------------------------------------------------------------------------
+该仓库整体使用 MIT License（见上游 LICENSE，Copyright (c) 2018 kuroni）。
+MIT 允许使用、复制、修改、合并、发布、分发、再许可与销售，须保留版权声明与许可文本。
+
+    原项目：Bongo Cat (bongocat-osu) — https://github.com/kuroni/bongocat-osu
+    Copyright (c) 2018 kuroni，MIT License
+
+本插件的使用方式
+--------------------------------------------------------------------------------
+· 两张图**原样未改**（直接复制，未做裁切、重绘或压缩以外的任何修改）；
+· 作为 pet-buddy 的可选皮肤「BongoCat 猫猫」（设置值 skin = bongo）：
+  平时显示默认画面，敲键盘/动鼠标时切成爪子按下帧（110ms 后切回）——
+  这就是原版 BongoCat 的核心互动；
+· 该素材**自带键盘与爪子**，所以插件不再叠加自己的浮空爪图层（叠上去会像"飘着的肉垫"）；
+· 署名同时显示在「修改桌宠模型」弹窗与 assets.manifest.json 里。
