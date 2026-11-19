@@ -34,10 +34,13 @@ pet-buddy/
 │  └─ chat.template.html  #   聊天窗口源码（注入 core 后 = chat.html）
 ├─ build.mjs              # 构建：core → 两份产物（标记注入，失配即报错）
 ├─ assets.manifest.json   # 素材清单（42 个：精灵图 / 皮肤 / 图标 / 40 张贴纸）：install 与 pack 按它复制，smoke 按它校验
+├─ 一键构建并同步.cmd      # 开发机一条命令：build → smoke → install → pack → pack-oneclick
 ├─ tools/
 │  ├─ smoke.mjs           # 离线冒烟自检（不依赖宿主）
 │  ├─ install.ps1         # 同步到宿主插件目录（带备份）
-│  └─ pack.ps1            # 打社区发布包 dist/pet-buddy-v<版本>.zip
+│  ├─ pack.ps1            # 打标准发布包 dist/pet-buddy-v<版本>.zip
+│  ├─ pack-oneclick.ps1   # 打一键安装形态（zip + 单文件 .cmd 安装器）
+│  └─ oneclick/           # 一键安装器素材：install-plugin.ps1 / 安装.cmd / 卸载.cmd / 安装说明.txt / 单文件头部
 ├─ vendor/                # 第三方原样引入（bibibobo.js · MIT）：v3.1 语音升级预留，尚未接入
 └─ 素材（必须平铺）        # feiyu-spritesheet.png / pet-deepseek.webp / st-*.webp（40 张）/ icon.png
 ```
@@ -103,9 +106,34 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1    # 校验 + 备份 
 ## 五、打包发布
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\pack.ps1              # dist\pet-buddy-v3.0.0.zip
+# ① 标准包（包根＝插件目录，自己手动装/给懂行的人）
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1              # dist\pet-buddy-v<版本>.zip
 powershell -ExecutionPolicy Bypass -File tools\pack.ps1 -WithSource  # 连源码一起打（二次开发用）
+
+# ② 一键安装形态（给不用懂技术的同事）
+powershell -ExecutionPolicy Bypass -File tools\pack-oneclick.ps1     # 详见下一节
 ```
 
 包根 = 插件目录：对方解压到 `…\插件兼容层\`（目录名 `pet-buddy`）后刷新助手即可用，
 不需要装 Node、不联网、无第三方依赖。
+
+## 六、一键安装（给对方双击就装好）
+
+`tools\pack-oneclick.ps1` 产出两个"对方不用懂技术"的形态（内容完全一致）：
+
+| 产物 | 给谁 | 怎么用 |
+|---|---|---|
+| `dist\pet-buddy-v<版本>-一键安装.zip` | 愿意解压的人 | 解压 → 双击 **`安装.cmd`** |
+| `dist\一键安装-pet-buddy-v<版本>.cmd` | 只想收**一个文件**的人 | 双击即装（安装包以 base64 内联在文件末尾，运行时自解压到临时目录） |
+
+安装器（`tools\oneclick\install-plugin.ps1`）做的事：**自动找宿主安装目录**（`%LOCALAPPDATA%\Programs\坚祥数字助理GO`，
+找不到时在 `Programs` 下按 `坚祥数字助理GO.exe` 兜底搜索）→ 校验来源完整性 → 把旧版本备份到
+`%TEMP%\pet-buddy-backup-<时间戳>` → **`robocopy /MIR` 镜像复制**到 `插件兼容层\pet-buddy`
+（目标与来源完全一致，不会留旧版残余文件）→ 提示按 F5。
+
+- 不需要管理员权限、不需要 Node、不需要联网；
+- 卸载：`卸载.cmd`（把插件目录移到 `%TEMP%\pet-buddy-removed-<时间戳>`，想恢复移回来即可）；
+- 找不到宿主时脚本会明说，并提示"手动把 `pet-buddy` 文件夹拷到 `助手安装目录\插件兼容层\` 下"；
+- 手动装法也可以指定目录：`install-plugin.ps1 -Source ".\pet-buddy" -Dest "…\插件兼容层"`。
+
+开发机改完代码、要一条命令走完"构建 → 自检 → 同步 → 打两种包"：仓库根双击 **`一键构建并同步.cmd`**。

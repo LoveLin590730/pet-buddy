@@ -1,0 +1,41 @@
+余额宠物·大肥鱼 pet-buddy —— 一键安装说明
+================================================
+
+【怎么装】
+1. 把本压缩包解压到任意位置（桌面也行）；
+2. 双击「安装.cmd」（或右键「以管理员身份运行」——不需要，普通双击即可）；
+3. 看到「装好了」之后，切到助手窗口按 F5 刷新，桌宠出现在右下角。
+
+要求：本机已装「坚祥数字助理GO」。不需要联网、不需要装 Node、不需要管理员权限。
+
+【怎么卸】
+双击「卸载.cmd」→ 插件目录被移到 系统临时目录\pet-buddy-removed-<时间戳>
+（想恢复就把它移回 插件兼容层 下，改名 pet-buddy），然后助手窗口按 F5。
+
+【装到哪了】
+用户目录\AppData\Local\Programs\坚祥数字助理GO\插件兼容层\pet-buddy
+若已存在旧版本，安装前会自动备份到 系统临时目录\pet-buddy-backup-<时间戳>。
+
+【装完怎么用】
+- 单击桌宠：看余额（公司内部通道额度 + 今日消耗两个口径）
+- 双击桌宠：就地聊天输入框
+- 右键桌宠：窗口化聊天 / 修改桌宠模型 / 角色设定 / 聊天设置 / 查看思考过程 / 隐藏 / 位置重置
+- 聊天设置里的「网关令牌」：sk- 开头＝网关 API Key；jxai-姓名-设备号＝公司内部通道身份牌
+  （填了身份牌会出现「用它当昵称」的按钮；不填也能看余额）
+
+【包内容】
+pet-buddy\             插件本体：client.js / chat.html / client.css / manifest.json /
+                        icon.png / feiyu-spritesheet.png / pet-deepseek.webp / st-*.webp（40 张）/
+                        assets.manifest.json / README.md / CHANGELOG.md / LICENSE*
+install-plugin.ps1      安装逻辑（也可以手动跑：
+                        powershell -ExecutionPolicy Bypass -File install-plugin.ps1 -Source ".\pet-buddy"）
+安装.cmd                双击安装
+卸载.cmd                双击卸载
+安装说明.txt            本文件
+
+【装不上怎么办】
+- 提示「没找到坚祥数字助理GO的安装目录」：手动把 pet-buddy 文件夹拷到
+  助手安装目录\插件兼容层\ 下（目录名保持 pet-buddy），再按 F5。
+- 提示来源目录不完整：压缩包没解压全，重新解压一次。
+
+版本与更新记录见 pet-buddy\CHANGELOG.md；源码仓在开发机 Documents\new\pet-buddy。
