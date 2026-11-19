@@ -420,8 +420,9 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
     /id: 'guided'/.test(t) && /id: 'classic'/.test(t) && /id: 'tts'/.test(t));
   ok('普通朗读走 TTS 原始人声（via=tts，不改采样率）',
     /via = 'tts'/.test(readFileSync(path.join(ROOT, 'src/core/speech.js'), 'utf8')));
-  ok('菜单按栏整理：bibo语音 / bibo音效 / 桌宠 / 设置',
-    /label: 'bibo语音'/.test(t) && /label: 'bibo音效'/.test(t) && /label: '桌宠'/.test(t) && /label: '设置'/.test(t));
+  ok('菜单按栏整理：bibo语音与音效（语音+音效合并栏）/ 桌宠 / 设置',
+    /label: 'bibo语音与音效'/.test(t) && /label: '桌宠'/.test(t) && /label: '设置'/.test(t) &&
+    !/label: 'bibo语音',/.test(t) && !/label: 'bibo音效',/.test(t));
   ok('音效音量可在菜单里循环调节', /function cycleSfxVolume/.test(t) && /音效音量：/.test(t));
 }
 
@@ -607,8 +608,8 @@ console.log('\n[桌面版兼容修复 · v3.3.1]');
   const clientSrc = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   ok('皮肤图加载失败会回退官方图集并提示（不再静默消失）',
     /verifySkinImage/.test(clientTxt) && /临时穿回原来的/.test(clientTxt));
-  ok('右键菜单有「bibo语音」折叠子菜单 + 音效开关项',
-    /bibo语音/.test(clientSrc) && /pb2-submenu/.test(clientSrc) && /音效：/.test(clientSrc));
+  ok('右键菜单有「bibo语音与音效」折叠子菜单（语音+音效合并栏）+ 音效开关项',
+    /bibo语音与音效/.test(clientSrc) && /pb2-submenu/.test(clientSrc) && /音效：/.test(clientSrc));
   ok('托盘菜单里保留语音与音效入口（试听/闲聊/开关/设置）',
     /试听语音/.test(clientSrc) && /语音闲聊/.test(clientSrc) && /toggleSfx/.test(clientSrc));
 }
@@ -1399,12 +1400,61 @@ console.log('\n[v4.16 菜单精简 + 二级弹窗回退修复 + 整体扫描]');
       const seg = js16.slice(i, i + 1400);
       return seg.indexOf('自行移动设置…') < 0 && seg.indexOf('余额格式：') < 0;   // 这两项收进弹窗了
     })());
-  ok('bibo音效 里的「互动形变」已移走（它不属于音效）', (() => {
-    const i = js16.indexOf("label: 'bibo音效', sub: [");
-    const seg = js16.slice(i, i + 900);
-    return seg.indexOf('互动形变') < 0;
+  ok('音效那一组里没有「互动形变」（它不属于音效）', (() => {
+    const i = js16.indexOf("label: 'bibo语音与音效', sub: [");
+    const j = js16.indexOf("label: '桌宠', sub: [");
+    if (i < 0 || j <= i) return false;
+    return js16.slice(i, j).indexOf('互动形变') < 0;
   })());
-  ok('bibo语音/音效 里各留「声音设置…」入口', (js16.match(/label: '声音设置…', act: openSoundSettings/g) || []).length >= 2);
+  ok('合并栏里保留「声音设置…」入口（设置栏之外还有第二处）',
+    (js16.match(/label: '声音设置…', act: openSoundSettings/g) || []).length >= 2);
+  // —— 5.x：bibo语音 + bibo音效 合并为一栏（栏内分组，功能一项不丢）
+  ok('语音与音效只剩一栏（旧的 bibo语音 / bibo音效 两栏已消失）',
+    /label: 'bibo语音与音效', sub: \[/.test(js16) && js16.indexOf("label: 'bibo语音',") < 0 && js16.indexOf("label: 'bibo音效',") < 0);
+  const mergeSeg = (() => {
+    const i = js16.indexOf("label: 'bibo语音与音效', sub: [");
+    const j = js16.indexOf("label: '桌宠', sub: [");
+    return (i >= 0 && j > i) ? js16.slice(i, j) : '';
+  })();
+  ok('合并栏能定位到（栏内分段校验才有意义）', mergeSeg.length > 0 && mergeSeg.length < 3200, String(mergeSeg.length));
+  ok('栏内有两个分组小标题：语音 / 音效', /head: '语音'/.test(mergeSeg) && /head: '音效'/.test(mergeSeg));
+  ok('语音组与音效组之间有分隔线（sep ≥ 2：组间 + 声音设置前）',
+    (mergeSeg.match(/sep: true/g) || []).length >= 2);
+  ok('语音那几项在前、音效三项在后（小标题各在其位）',
+    mergeSeg.indexOf("head: '语音'") < mergeSeg.indexOf('试听语音') &&
+    mergeSeg.indexOf('试听语音') < mergeSeg.indexOf('朗读速度：') &&
+    mergeSeg.indexOf("head: '音效'") < mergeSeg.indexOf('音效：') &&
+    mergeSeg.indexOf('音效：') < mergeSeg.indexOf('试听音效'));
+  {
+    const need = ['试听语音', '试听文本…', "'语音闲聊（按住 '", '常用语…', '朗读模式：', 'bibo音色：',
+      '朗读音色：', '朗读速度：', '音效：', '音效音量：', '试听音效', '声音设置…'];
+    const lost = need.filter((t) => mergeSeg.indexOf(t) < 0);
+    eq('合并后菜单项一个没丢（11 个功能项 + 声音设置…）', lost.length, 0, lost.join(','));
+  }
+  ok('切换类 6 项仍是 keepOpen: true（点一下就地刷新、菜单不关）',
+    (mergeSeg.match(/keepOpen: true/g) || []).length === 6);
+  ok('各项行为仍指向原函数（act 一个都没换）',
+    /'试听文本…', act: openProbeTextEditor/.test(mergeSeg) &&
+    /act: \(\) => voiceChatByButton\(\)/.test(mergeSeg) &&
+    /'常用语…', act: openPhraseBook/.test(mergeSeg) &&
+    /act: \(\) => cycleSpeechStyle\(\), keepOpen: true/.test(mergeSeg) &&
+    /act: \(\) => cycleSpeechVoice\(\), keepOpen: true/.test(mergeSeg) &&
+    /act: \(\) => cycleTtsVoice\(\), keepOpen: true/.test(mergeSeg) &&
+    /act: \(\) => cycleSpeechSpeed\(\), keepOpen: true/.test(mergeSeg) &&
+    /act: \(\) => toggleSfx\(\), keepOpen: true/.test(mergeSeg) &&
+    /act: \(\) => cycleSfxVolume\(\), keepOpen: true/.test(mergeSeg) &&
+    /'声音设置…', act: openSoundSettings/.test(mergeSeg));
+  ok('语音闲聊热键文案未动（仍取自 VI_HOTKEY_LABEL）',
+    /label: '语音闲聊（按住 ' \+ VI_HOTKEY_LABEL \+ '）'/.test(mergeSeg));
+  ok('buildMenu 支持栏内小标题（新增 head 分支 → 渲染 pb2-mhead）',
+    /if \(s\.head\) \{ sub\.appendChild\(\$new\('div', 'pb2-mhead', s\.head\)\); continue; \}/.test(js16));
+  ok('CSS 有小标题样式（灰色小字、不可点、不参与悬停高亮）', (() => {
+    const cssM = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+    return /\.pb2-menu \.pb2-mhead\s*\{[^}]*font-size:\s*11px[^}]*cursor:\s*default/.test(cssM.replace(/\s+/g, ' '));
+  })());
+  ok('声音设置弹窗文案与合并栏对齐（同一处入口 = 语音播报 + 音效 + 语音闲聊三组）',
+    /openDialog\('声音设置'/.test(js16) && /buildSpeechFields/.test(js16) && /buildSfxFields/.test(js16) &&
+    /buildVoiceChatSection/.test(js16));
   // ④ 整体扫描硬指标（不看模型，只看实现代码的质量底线）
   ok('无 console.log 残留', !/console\.(log|warn|error)\(/.test(js16));
   ok('无 TODO/FIXME 遗留', !/\b(TODO|FIXME|XXX|HACK)\b/.test(js16));
