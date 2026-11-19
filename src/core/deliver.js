@@ -73,7 +73,7 @@
 
   /** 复制文本：优先 clipboard API，失败回落 textarea + execCommand（老内核/非安全上下文） */
   function copyPlainText(s, btn, onFail) {
-    const done = () => { if (btn) { btn.textContent = '已复制'; setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制路径'; }, 1500); } };
+    const done = () => { if (btn) { btn.textContent = '已复制'; setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制'; }, 1500); } };
     try {
       if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(s).then(done, () => legacyCopyText(s, done, onFail));
@@ -91,18 +91,14 @@
     } catch (e) { if (onFail) onFail(); }
   }
 
-  /** 尝试打开本地文件：先把路径复制好，再试 file://（多数宿主页不允许，失败由 onFail 提示） */
-  function openLocalPath(p, onFail) {
-    copyPlainText(p, null, null);
-    let opened = false;
-    try { opened = !!window.open(pathToFileUrl(p), '_blank'); } catch (e) { opened = false; }
-    if (!opened && onFail) onFail();
-  }
-
-  /** 单张成果卡片（DOM）：图标 + 文件名 + 路径 + 复制/打开 */
-  function makeDeliverCard(f, onFail) {
+  /* ---- 卡片（v4.4）：文件名 + 路径 + 「打开文件」「打开文件夹位置」 ----
+   * 打开动作交给宿主（桌宠侧的 act.open / act.reveal 调 /api/sessions/{id}/delivery/open|reveal，
+   * 由系统默认程序打开文件、在资源管理器里定位）；宿主不给力时回落「复制路径」。 */
+  function makeDeliverCard(f, act) {
+    const a = act || {};
     const card = document.createElement('div');
     card.className = 'pb2-deliv';
+    card.title = '点击打开文件';
     const ico = document.createElement('span');
     ico.className = 'pb2-deliv-ico';
     ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
@@ -115,26 +111,48 @@
     pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
     mid.appendChild(nm); mid.appendChild(pt);
     card.appendChild(mid);
-    const copy = document.createElement('button');
-    copy.type = 'button'; copy.className = 'pb2-deliv-btn'; copy.textContent = '复制路径'; copy.title = '复制完整路径';
-    copy.addEventListener('click', (ev) => { ev.stopPropagation(); copyPlainText(f.path, copy, onFail); });
-    card.appendChild(copy);
-    const open = document.createElement('button');
-    open.type = 'button'; open.className = 'pb2-deliv-btn'; open.textContent = '打开';
-    open.title = '尝试用默认程序打开（本页可能不允许；失败时路径已复制）';
-    open.addEventListener('click', (ev) => { ev.stopPropagation(); openLocalPath(f.path, onFail); });
-    card.appendChild(open);
+    const acts = document.createElement('div');
+    acts.className = 'pb2-deliv-acts';
+    const mk = (cls, label, title, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'pb2-deliv-btn ' + cls; b.textContent = label; b.title = title;
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(); });
+      acts.appendChild(b);
+      return b;
+    };
+    /** 打开动作的兜底：宿主打不开就复制路径并说明（绝不静默失败） */
+    const fallback = (label) => {
+      copyPlainText(f.path, null, null);
+      if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
+    };
+    mk('pb2-deliv-open', '打开文件', '用系统默认程序打开这个文件', () => {
+      if (!a.open) return fallback('打开文件');
+      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
+      catch (e) { fallback('打开文件'); }
+    });
+    mk('pb2-deliv-reveal', '打开文件夹位置', '在资源管理器里定位到这个文件', () => {
+      if (!a.reveal) return fallback('定位文件');
+      try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
+      catch (e) { fallback('定位文件'); }
+    });
+    mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
+    card.appendChild(acts);
+    card.addEventListener('click', () => {
+      if (!a.open) return fallback('打开文件');
+      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
+      catch (e) { fallback('打开文件'); }
+    });
     return card;
   }
 
   /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
-   *  onFail = 打不开本地文件时的提示回调（各端文案不同：桌宠弹气泡，网页窗口用页内提示）。 */
-  function renderDeliverables(host, text, onFail) {
+   *  act（可选）= { open(path), reveal(path), fail(msg) }：由宿主端注入（桌宠/聊天窗口各自实现）。 */
+  function renderDeliverables(host, text, act) {
     const files = extractFilePaths(text);
     if (!files.length || !host) return 0;
     const box = document.createElement('div');
     box.className = 'pb2-deliv-box';
-    for (const f of files) box.appendChild(makeDeliverCard(f, onFail));
+    for (const f of files) box.appendChild(makeDeliverCard(f, act));
     host.appendChild(box);
     return files.length;
   }

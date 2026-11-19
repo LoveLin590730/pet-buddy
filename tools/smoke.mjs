@@ -137,6 +137,9 @@ ok('buildPrompt 带桌宠设定', P.buildPrompt('你好', null, true).includes('
 ok('buildPrompt 带贴纸教学', P.buildPrompt('你好', null, true).includes('[stick:archive:'));
 ok('buildPrompt 首轮带用户资料', P.buildPrompt('你好', null, true).includes('用户资料'));
 ok('buildPrompt 非首轮只带用户消息', !P.buildPrompt('你好', null, false).includes('桌宠设定'));
+ok('交付文件约定只在首轮人设里（不再每轮重发）',
+  P.buildPrompt('你好', null, true).includes('【交付文件】') && !P.buildPrompt('你好', null, false).includes('交付文件'));
+ok('每轮都带用户消息本体', P.buildPrompt('你好', null, false).includes('【用户说】你好'));
 ok('人设指纹首轮需要全量', typeof P.needPersonaFull('smoke-test') === 'string');
 ok('chatSend / 三通道函数就绪', ['chatSend', 'sendViaMock', 'ensureAssistantSession', 'lastAssistantText', 'apiOK'].every(k => typeof P[k] === 'function'));
 ok('离线时 apiOK 返回 false（不抛错）', (await P.apiOK()) === false);
@@ -686,17 +689,23 @@ console.log('\n[v4.1 自定义动图皮肤]');
 
 console.log('\n[v4.1 语音数字本地化]');
 {
-  eq('67834 → 六万七千八百三十四', P.numToZh('67834'), '六万七千八百三十四');
+  eq('67834 → 六点八万（v4.4 口语简读，念得更快）', P.numToZh('67834'), '六点八万');
   eq('67.83 → 六十七点八三', P.numToZh('67.83'), '六十七点八三');
   eq('0.5 → 零点五', P.numToZh('0.5'), '零点五');
   eq('10 → 十（一十省略）', P.numToZh('10'), '十');
   eq('14 → 十四', P.numToZh('14'), '十四');
   eq('10000 → 一万', P.numToZh('10000'), '一万');
-  eq('10001 → 一万零一', P.numToZh('10001'), '一万零一');
+  eq('10001 → 一万（简读丢掉零头，语音够用）', P.numToZh('10001'), '一万');
+  eq('60000 → 六万（整万不拖小数）', P.numToZh('60000'), '六万');
+  eq('12345 → 一点二万', P.numToZh('12345'), '一点二万');
+  eq('四位数仍精确读（6783 → 六千七百八十三）', P.numToZh('6783'), '六千七百八十三');
+  eq('1234567（7 位）保持精确读法', P.numToZh('1234567'), '一百二十三万四千五百六十七');
   eq('9 → 九', P.numToZh('9'), '九');
   eq('0 → 零', P.numToZh('0'), '零');
-  ok('≥8 位长号码逐位读（不按位值）', P.numToZh('13800001111') === '一三八零零零零一一一一');
-  ok('speechClean 把余额数字念成中文', P.speechClean('还剩 67834 分 ≈¥67.83').indexOf('六万七千八百三十四') >= 0 && P.speechClean('还剩 67834 分').indexOf('67834') < 0);
+  ok('≥9 位长号码逐位读（不按位值）', P.numToZh('13800001111') === '一三八零零零零一一一一');
+  ok('speechClean 把余额数字念成中文（短读法）',
+    P.speechClean('还剩 67834 分 ≈¥67.83').indexOf('六点八万') >= 0 && P.speechClean('还剩 67834 分').indexOf('67834') < 0);
+  ok('数字简读后比精确读法短一半（语音提速）', P.numToZh('67834').length <= 5, P.numToZh('67834') + ' / ' + P.numToZh('67834').length + ' 字');
   eq('无数字的句子原样通过', P.speechClean('你好，我是坚祥数字助理'), '你好，我是坚祥数字助理');
 }
 
@@ -816,7 +825,7 @@ console.log('\n[v4.3 交付成果卡片]');
   const card = box.children[0];
   eq('卡片 class', card.className, 'pb2-deliv');
   const names = card.children.map(c => c.className);
-  ok('卡片有 图标/中段/复制/打开 四件套', names.join(',').indexOf('pb2-deliv-ico') === 0 && names.indexOf('pb2-deliv-btn') >= 0, names.join(','));
+  ok('卡片有 图标/中段/按钮组', names.join(',').indexOf('pb2-deliv-ico') === 0 && names.indexOf('pb2-deliv-acts') >= 0, names.join(','));
   const midEl = card.children[1];
   eq('文件名在卡片上', midEl.children[0].textContent, '我的花费折线图_20261106-1119.png');
   eq('路径在卡片上（title 也是全路径）', midEl.children[1].textContent, P1);
@@ -827,11 +836,20 @@ console.log('\n[v4.3 交付成果卡片]');
   const jsD = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const cssD = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
   const htmlD = readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
-  ok('气泡聊天回复挂成果卡片（桌宠侧）', /renderDeliverables\(row, text, delivFailHint\)/.test(jsD));
-  ok('单击/双击气泡也挂卡片', /renderDeliverables\(b, text, delivFailHint\)/.test(jsD));
+  ok('气泡聊天回复挂成果卡片（桌宠侧）', /renderDeliverables\(row, text, DELIV_ACT\)/.test(jsD));
+  ok('单击/双击气泡也挂卡片', /renderDeliverables\(b, text, DELIV_ACT\)/.test(jsD));
   ok('独立聊天窗口同款（chat.html）', /renderDeliverables\(b, text,/.test(htmlD));
   ok('卡片样式在 client.css 与 chat.html 都在', /\.pb2-deliv-btn/.test(cssD) && /\.pb2-deliv-btn/.test(htmlD));
-  ok('人设里带上「交付文件」写法约定（助手会输出路径）', /交付文件 · 重要/.test(jsD) && /📎/.test(jsD));
+  ok('人设里带上「交付文件」写法约定（助手会输出路径）', /交付文件/.test(jsD) && /📎/.test(jsD));
+  // v4.4：卡片动作走宿主交付接口（打开文件 / 打开文件夹位置）
+  const delivSrc = readFileSync(path.join(ROOT, 'src/core/deliver.js'), 'utf8');
+  ok('卡片两个按钮：打开文件 / 打开文件夹位置',
+    delivSrc.indexOf('打开文件') >= 0 && delivSrc.indexOf('打开文件夹位置') >= 0);
+  ok('点击卡片本体 = 打开文件', /card\.addEventListener\('click'/.test(delivSrc) && /a\.open\(f\.path\)/.test(delivSrc));
+  ok('宿主接口不可用时回落复制路径（不静默失败）',
+    /copyPlainText\(f\.path/.test(delivSrc) && /fallback\(/.test(delivSrc));
+  ok('桌宠侧接上宿主交付接口', /delivery\/' \+ action/.test(jsD) && /DELIV_ACT/.test(jsD));
+  ok('独立聊天窗口也接上（chat.html）', /delivery\/' \+ action/.test(htmlD) && /__delivAct/.test(htmlD));
 }
 
 console.log('\n[v4.3 动作包（petpack）]');

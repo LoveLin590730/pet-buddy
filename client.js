@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.3.0';
+const PB_VERSION = '4.4.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -892,7 +892,7 @@ const CHAT_MODELS = [
 
   /** 复制文本：优先 clipboard API，失败回落 textarea + execCommand（老内核/非安全上下文） */
   function copyPlainText(s, btn, onFail) {
-    const done = () => { if (btn) { btn.textContent = '已复制'; setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制路径'; }, 1500); } };
+    const done = () => { if (btn) { btn.textContent = '已复制'; setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制'; }, 1500); } };
     try {
       if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(s).then(done, () => legacyCopyText(s, done, onFail));
@@ -910,18 +910,14 @@ const CHAT_MODELS = [
     } catch (e) { if (onFail) onFail(); }
   }
 
-  /** 尝试打开本地文件：先把路径复制好，再试 file://（多数宿主页不允许，失败由 onFail 提示） */
-  function openLocalPath(p, onFail) {
-    copyPlainText(p, null, null);
-    let opened = false;
-    try { opened = !!window.open(pathToFileUrl(p), '_blank'); } catch (e) { opened = false; }
-    if (!opened && onFail) onFail();
-  }
-
-  /** 单张成果卡片（DOM）：图标 + 文件名 + 路径 + 复制/打开 */
-  function makeDeliverCard(f, onFail) {
+  /* ---- 卡片（v4.4）：文件名 + 路径 + 「打开文件」「打开文件夹位置」 ----
+   * 打开动作交给宿主（桌宠侧的 act.open / act.reveal 调 /api/sessions/{id}/delivery/open|reveal，
+   * 由系统默认程序打开文件、在资源管理器里定位）；宿主不给力时回落「复制路径」。 */
+  function makeDeliverCard(f, act) {
+    const a = act || {};
     const card = document.createElement('div');
     card.className = 'pb2-deliv';
+    card.title = '点击打开文件';
     const ico = document.createElement('span');
     ico.className = 'pb2-deliv-ico';
     ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
@@ -934,26 +930,48 @@ const CHAT_MODELS = [
     pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
     mid.appendChild(nm); mid.appendChild(pt);
     card.appendChild(mid);
-    const copy = document.createElement('button');
-    copy.type = 'button'; copy.className = 'pb2-deliv-btn'; copy.textContent = '复制路径'; copy.title = '复制完整路径';
-    copy.addEventListener('click', (ev) => { ev.stopPropagation(); copyPlainText(f.path, copy, onFail); });
-    card.appendChild(copy);
-    const open = document.createElement('button');
-    open.type = 'button'; open.className = 'pb2-deliv-btn'; open.textContent = '打开';
-    open.title = '尝试用默认程序打开（本页可能不允许；失败时路径已复制）';
-    open.addEventListener('click', (ev) => { ev.stopPropagation(); openLocalPath(f.path, onFail); });
-    card.appendChild(open);
+    const acts = document.createElement('div');
+    acts.className = 'pb2-deliv-acts';
+    const mk = (cls, label, title, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'pb2-deliv-btn ' + cls; b.textContent = label; b.title = title;
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(); });
+      acts.appendChild(b);
+      return b;
+    };
+    /** 打开动作的兜底：宿主打不开就复制路径并说明（绝不静默失败） */
+    const fallback = (label) => {
+      copyPlainText(f.path, null, null);
+      if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
+    };
+    mk('pb2-deliv-open', '打开文件', '用系统默认程序打开这个文件', () => {
+      if (!a.open) return fallback('打开文件');
+      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
+      catch (e) { fallback('打开文件'); }
+    });
+    mk('pb2-deliv-reveal', '打开文件夹位置', '在资源管理器里定位到这个文件', () => {
+      if (!a.reveal) return fallback('定位文件');
+      try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
+      catch (e) { fallback('定位文件'); }
+    });
+    mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
+    card.appendChild(acts);
+    card.addEventListener('click', () => {
+      if (!a.open) return fallback('打开文件');
+      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
+      catch (e) { fallback('打开文件'); }
+    });
     return card;
   }
 
   /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
-   *  onFail = 打不开本地文件时的提示回调（各端文案不同：桌宠弹气泡，网页窗口用页内提示）。 */
-  function renderDeliverables(host, text, onFail) {
+   *  act（可选）= { open(path), reveal(path), fail(msg) }：由宿主端注入（桌宠/聊天窗口各自实现）。 */
+  function renderDeliverables(host, text, act) {
     const files = extractFilePaths(text);
     if (!files.length || !host) return 0;
     const box = document.createElement('div');
     box.className = 'pb2-deliv-box';
-    for (const f of files) box.appendChild(makeDeliverCard(f, onFail));
+    for (const f of files) box.appendChild(makeDeliverCard(f, act));
     host.appendChild(box);
     return files.length;
   }
@@ -2953,15 +2971,25 @@ const CHAT_MODELS = [
     }
     return out || '零';
   }
-  /** 入口：'67834' → 六万七千八百三十四；'67.83' → 六十七点八三；'13800001111' → 逐位 */
+  /** 入口：'67834' → 六点八万（5~6 位走口语简读，比「六万七千八百三十四」快一倍）；
+   *        '6783' → 六千七百八十三；'67.83' → 六十七点八三；'13800001111' → 逐位 */
   function numToZh(m) {
     const parts = String(m).split('.');
     let int = parts[0].replace(/^0+(?=\d)/, '');
     let out;
     if (!int) out = '零';                                  // 纯 '0' 或 '0xx'
-    else if (int.length >= 8) {                            // 长号码/时间戳：逐位读更自然
+    else if (int.length >= 9) {                            // 长号码/时间戳：逐位读更自然
       out = '';
       for (let i = 0; i < int.length; i++) out += ZH_DIGITS[int.charCodeAt(i) - 48];
+    } else if (int.length >= 5 && int.length <= 6) {
+      // v4.4 口语简读：5~6 位（1 万~99 万）读成「X点X万」，口语更快；
+      // 整万读「X万」，小数位为 0 时省略（67834 → 六点八万、67100 → 六点七万、60000 → 六万）
+      const v = Number(int) / 10000;
+      const w = Math.floor(v);
+      const d = Math.round((v - w) * 10);                  // 保留一位小数（四舍五入）
+      if (d === 0) out = numZhValue(String(w)) + '万';
+      else if (d === 10) out = numZhValue(String(w + 1)) + '万';
+      else out = numZhValue(String(w)) + '点' + ZH_DIGITS[d] + '万';
     } else out = numZhValue(int);
     if (parts.length > 1 && parts[1]) {
       out += '点';
@@ -2971,13 +2999,13 @@ const CHAT_MODELS = [
   }
 
 
-  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
+  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表（v4.4：整体收紧约 20%，念得更利索） */
   function pauseOf(p) {
-    if (!p) return 0.10;                       // 段与段之间的小气口
-    if (p.indexOf('｜') >= 0) return 0.34;      // 表情/贴纸标记 = 明显停顿
-    if (/…/.test(p)) return 0.36;               // 省略号拉长
-    if (/[。！？!?]/.test(p)) return 0.30;      // 句末
-    return 0.16;                                // 逗号/顿号/分号/冒号
+    if (!p) return 0.08;                       // 段与段之间的小气口
+    if (p.indexOf('｜') >= 0) return 0.26;      // 表情/贴纸标记 = 明显停顿
+    if (/…/.test(p)) return 0.30;               // 省略号拉长
+    if (/[。！？!?]/.test(p)) return 0.24;      // 句末
+    return 0.12;                                // 逗号/顿号/分号/冒号
   }
 
   /** 切段：每段带上"说完该停多久"（v3.7 断句的核心） */
@@ -3064,7 +3092,7 @@ const CHAT_MODELS = [
           // v3.4.1：用"语调引导"（经典音色 + 按真人语调选音），不再用连续重唱
           samples = synthGuided(text, track, {
             voice: settings.speechVoice || 'fish',
-            step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4),
+            step: clamp(Number(settings.speechStep) || 0.12, 0.06, 0.4),
             sampleRate: SPEECH_SR,
           });
           via = 'guided';
@@ -3076,7 +3104,7 @@ const CHAT_MODELS = [
     // ② 经典合成（回退，也是"跟读关闭"时的正路）：一个字一声
     if (!samples) {
       try {
-        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.12, 0.06, 0.4), sampleRate: SPEECH_SR });
       } catch (e) {
         log('error', '语音合成失败: ' + e.message);
         return { ok: false, reason: 'synth' };
@@ -3507,11 +3535,11 @@ const CHAT_MODELS = [
         Object.keys(BEAN).map(k => '[bean:' + k + ']').join(' ') + '、[maid:1]。' +
         '格式必须严格用半角方括号加英文冒号（如 [stick:archive:比心] 或 [bean:smile]），不要写成中文括号或加多余空格；' +
         '适度使用，一条回复最多 1-2 个。');
+      // v4.4：交付文件的写法约定（只在首轮人设里说一次，之后靠上下文——不再每轮重发）
+      parts.push('【交付文件】如果你产出了文件（图片、折线图、表格、文档、网页等），' +
+        '请在回复最后单独一行写「📎 加完整绝对路径」（一行一个，最多 3 个）；没有产出文件就不要写。' +
+        '桌宠会把这一行变成可「打开文件 / 打开文件夹位置」的成果卡片。');
     }
-    parts.push('【交付文件 · 重要】你这次如果产出了文件（图片、折线图、表格、文档、网页等），' +
-      '请在回复的最后单独一行只写这一行：📎 加完整绝对路径（例：📎 C:\\Users\\JXKJ1\\Documents\\坚祥数字助理\\我的花费折线图_20261106-1119.png）。' +
-      '桌宠会把这一行渲染成可复制的成果卡片，用户点一下就能拿到路径找到文件；一行一个文件，最多 3 个。' +
-      '没有产出文件时不要写这一行。');
     if (balanceBlock) parts.push(balanceBlock);
     parts.push('【用户说】' + userText);
     return parts.join('\n\n');
@@ -4189,7 +4217,7 @@ const CHAT_MODELS = [
       const t = $new('span', 'pb2-bubble-text');
       renderRich(t, text);
       b.appendChild(t);
-      if (!noDeliv) { try { renderDeliverables(b, text, delivFailHint); } catch (e) { /* 卡片失败不影响气泡 */ } }
+      if (!noDeliv) { try { renderDeliverables(b, text, DELIV_ACT); } catch (e) { /* 卡片失败不影响气泡 */ } }
     }, ms || 4200);
   }
 
@@ -5689,17 +5717,30 @@ const CHAT_MODELS = [
    * 老做法（独立窗口 chat.html）保留在「设置 → 打开独立聊天窗口」里。 */
   let chatp = null, chatpMsgs = null, chatpInput = null, chatpBtn = null, chatpBusy = false;
 
-  /* v4.3 成果卡片：识别与渲染都在 core/deliver.js（独立聊天窗口共用同一份）；
-   * 这里只提供桌宠侧的失败提示（打不开本地文件时弹个气泡说明怎么用）。 */
-  function delivFailHint() {
-    bubbleSay('这一页不允许直接打开本地文件——路径已复制，粘到资源管理器地址栏就能找到它', 3800);
+  /* v4.4 成果卡片的动作：调宿主交付接口——
+   *   POST /api/sessions/{id}/delivery/open   → 用系统默认程序打开文件
+   *   POST /api/sessions/{id}/delivery/reveal → 在资源管理器里定位该文件
+   * {id} 用桌宠自己的助手子对话（localStorage 里那个）；接口不可用时卡片自己回落「复制路径」。 */
+  function deliverSid() { try { return localStorage.getItem(CHAT_LS_SID) || ''; } catch (e) { return ''; } }
+  function delivApi(action, path) {
+    const sid = deliverSid();
+    if (!sid) return Promise.reject(new Error('no-session'));
+    return fetch('/api/sessions/' + encodeURIComponent(sid) + '/delivery/' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path }),
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(() => ({})); });
   }
+  const DELIV_ACT = {
+    open: p => delivApi('open', p),
+    reveal: p => delivApi('reveal', p),
+    fail: msg => bubbleSay(msg, 4200),
+  };
 
   function chatpAdd(kind, text) {
     const row = $new('div', 'pb2-chatp-msg pb2-' + kind);
     if (kind === 'pet' || kind === 'me') { try { renderRich(row, text); } catch (e) { row.textContent = text; } }
     else row.textContent = text;
-    if (kind === 'pet') renderDeliverables(row, text, delivFailHint);   // v4.3：产出文件 → 成果卡片（可复制路径）
+    if (kind === 'pet') renderDeliverables(row, text, DELIV_ACT);   // v4.4：成果卡片（打开文件 / 定位文件夹）
     chatpMsgs.appendChild(row);
     chatpMsgs.scrollTop = chatpMsgs.scrollHeight;
     return row;

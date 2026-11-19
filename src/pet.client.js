@@ -394,7 +394,7 @@
       const t = $new('span', 'pb2-bubble-text');
       renderRich(t, text);
       b.appendChild(t);
-      if (!noDeliv) { try { renderDeliverables(b, text, delivFailHint); } catch (e) { /* 卡片失败不影响气泡 */ } }
+      if (!noDeliv) { try { renderDeliverables(b, text, DELIV_ACT); } catch (e) { /* 卡片失败不影响气泡 */ } }
     }, ms || 4200);
   }
 
@@ -1894,17 +1894,30 @@
    * 老做法（独立窗口 chat.html）保留在「设置 → 打开独立聊天窗口」里。 */
   let chatp = null, chatpMsgs = null, chatpInput = null, chatpBtn = null, chatpBusy = false;
 
-  /* v4.3 成果卡片：识别与渲染都在 core/deliver.js（独立聊天窗口共用同一份）；
-   * 这里只提供桌宠侧的失败提示（打不开本地文件时弹个气泡说明怎么用）。 */
-  function delivFailHint() {
-    bubbleSay('这一页不允许直接打开本地文件——路径已复制，粘到资源管理器地址栏就能找到它', 3800);
+  /* v4.4 成果卡片的动作：调宿主交付接口——
+   *   POST /api/sessions/{id}/delivery/open   → 用系统默认程序打开文件
+   *   POST /api/sessions/{id}/delivery/reveal → 在资源管理器里定位该文件
+   * {id} 用桌宠自己的助手子对话（localStorage 里那个）；接口不可用时卡片自己回落「复制路径」。 */
+  function deliverSid() { try { return localStorage.getItem(CHAT_LS_SID) || ''; } catch (e) { return ''; } }
+  function delivApi(action, path) {
+    const sid = deliverSid();
+    if (!sid) return Promise.reject(new Error('no-session'));
+    return fetch('/api/sessions/' + encodeURIComponent(sid) + '/delivery/' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path }),
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(() => ({})); });
   }
+  const DELIV_ACT = {
+    open: p => delivApi('open', p),
+    reveal: p => delivApi('reveal', p),
+    fail: msg => bubbleSay(msg, 4200),
+  };
 
   function chatpAdd(kind, text) {
     const row = $new('div', 'pb2-chatp-msg pb2-' + kind);
     if (kind === 'pet' || kind === 'me') { try { renderRich(row, text); } catch (e) { row.textContent = text; } }
     else row.textContent = text;
-    if (kind === 'pet') renderDeliverables(row, text, delivFailHint);   // v4.3：产出文件 → 成果卡片（可复制路径）
+    if (kind === 'pet') renderDeliverables(row, text, DELIV_ACT);   // v4.4：成果卡片（打开文件 / 定位文件夹）
     chatpMsgs.appendChild(row);
     chatpMsgs.scrollTop = chatpMsgs.scrollHeight;
     return row;

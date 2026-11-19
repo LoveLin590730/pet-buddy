@@ -418,15 +418,25 @@
     }
     return out || '零';
   }
-  /** 入口：'67834' → 六万七千八百三十四；'67.83' → 六十七点八三；'13800001111' → 逐位 */
+  /** 入口：'67834' → 六点八万（5~6 位走口语简读，比「六万七千八百三十四」快一倍）；
+   *        '6783' → 六千七百八十三；'67.83' → 六十七点八三；'13800001111' → 逐位 */
   function numToZh(m) {
     const parts = String(m).split('.');
     let int = parts[0].replace(/^0+(?=\d)/, '');
     let out;
     if (!int) out = '零';                                  // 纯 '0' 或 '0xx'
-    else if (int.length >= 8) {                            // 长号码/时间戳：逐位读更自然
+    else if (int.length >= 9) {                            // 长号码/时间戳：逐位读更自然
       out = '';
       for (let i = 0; i < int.length; i++) out += ZH_DIGITS[int.charCodeAt(i) - 48];
+    } else if (int.length >= 5 && int.length <= 6) {
+      // v4.4 口语简读：5~6 位（1 万~99 万）读成「X点X万」，口语更快；
+      // 整万读「X万」，小数位为 0 时省略（67834 → 六点八万、67100 → 六点七万、60000 → 六万）
+      const v = Number(int) / 10000;
+      const w = Math.floor(v);
+      const d = Math.round((v - w) * 10);                  // 保留一位小数（四舍五入）
+      if (d === 0) out = numZhValue(String(w)) + '万';
+      else if (d === 10) out = numZhValue(String(w + 1)) + '万';
+      else out = numZhValue(String(w)) + '点' + ZH_DIGITS[d] + '万';
     } else out = numZhValue(int);
     if (parts.length > 1 && parts[1]) {
       out += '点';
@@ -436,13 +446,13 @@
   }
 
 
-  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
+  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表（v4.4：整体收紧约 20%，念得更利索） */
   function pauseOf(p) {
-    if (!p) return 0.10;                       // 段与段之间的小气口
-    if (p.indexOf('｜') >= 0) return 0.34;      // 表情/贴纸标记 = 明显停顿
-    if (/…/.test(p)) return 0.36;               // 省略号拉长
-    if (/[。！？!?]/.test(p)) return 0.30;      // 句末
-    return 0.16;                                // 逗号/顿号/分号/冒号
+    if (!p) return 0.08;                       // 段与段之间的小气口
+    if (p.indexOf('｜') >= 0) return 0.26;      // 表情/贴纸标记 = 明显停顿
+    if (/…/.test(p)) return 0.30;               // 省略号拉长
+    if (/[。！？!?]/.test(p)) return 0.24;      // 句末
+    return 0.12;                                // 逗号/顿号/分号/冒号
   }
 
   /** 切段：每段带上"说完该停多久"（v3.7 断句的核心） */
@@ -529,7 +539,7 @@
           // v3.4.1：用"语调引导"（经典音色 + 按真人语调选音），不再用连续重唱
           samples = synthGuided(text, track, {
             voice: settings.speechVoice || 'fish',
-            step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4),
+            step: clamp(Number(settings.speechStep) || 0.12, 0.06, 0.4),
             sampleRate: SPEECH_SR,
           });
           via = 'guided';
@@ -541,7 +551,7 @@
     // ② 经典合成（回退，也是"跟读关闭"时的正路）：一个字一声
     if (!samples) {
       try {
-        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.12, 0.06, 0.4), sampleRate: SPEECH_SR });
       } catch (e) {
         log('error', '语音合成失败: ' + e.message);
         return { ok: false, reason: 'synth' };
