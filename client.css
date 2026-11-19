@@ -274,8 +274,40 @@
 .pb2-stk-cell:hover .pb2-stk-del { opacity: 1; }
 .pb2-stk-del:hover { background: #d9455f; }
 
-/* 后台日志：等宽、可复制、长行折行（思考过程面板专用） */
-.pb2-logrow { border-left: 2px solid #dde5f7; padding: 4px 8px; margin: 0;
+/* ===== v5.0 气泡聊天里的表情面板（把"能发的表情包"加回来） ===== */
+.pb2-chatp-foot .pb2-chatp-face { flex: none; padding: 6px 9px; font-size: 15px; line-height: 1;
+  border: 1px solid #d7def2; background: #fff; color: #4b5a80; border-radius: 10px; cursor: pointer; }
+.pb2-chatp-foot .pb2-chatp-face:hover { background: #f2f7ff; border-color: #9db8ee; }
+.pb2-stkp { border-top: 1px solid #eef2fb; background: #fbfcff; max-height: 236px;
+  display: flex; flex-direction: column; }
+.pb2-stkp[hidden] { display: none; }
+.pb2-stkp-tabs { display: flex; align-items: center; gap: 4px; padding: 6px 8px 4px; flex-wrap: wrap; }
+.pb2-stkp-tab { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid #cdd9f2;
+  background: #fff; color: #4b5a80; cursor: pointer; }
+.pb2-stkp-tab:hover { background: #f2f7ff; border-color: #9db8ee; }
+.pb2-stkp-tab.pb2-on { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+.pb2-stkp-sp { flex: 1 1 auto; }
+.pb2-stkp-tabs .pb2-chip { font-size: 11px; padding: 3px 8px; }
+.pb2-stkp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 4px;
+  padding: 2px 8px 8px; overflow-y: auto; align-content: start; }
+.pb2-stkp-grid::-webkit-scrollbar { width: 7px; }
+.pb2-stkp-grid::-webkit-scrollbar-thumb { background: #d7def2; border-radius: 4px; }
+.pb2-stkp-cell { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #e3e9f7; border-radius: 8px; background: #fff; cursor: pointer; overflow: hidden;
+  transition: border-color .12s ease, transform .12s ease; }
+.pb2-stkp-cell:hover { border-color: #9db4e8; transform: translateY(-1px); }
+.pb2-stkp-cell .sticker { margin: 0; }
+/* 各类贴纸在 42px 小格里统一缩到合适尺寸（精灵图格是固定 86×93，得用 scale） */
+.pb2-stkp-cell .sticker.pb2-st-fish, .pb2-stkp-cell .sticker.fish-st { transform: scale(.42); }
+.pb2-stkp-cell .sticker.stick-st img { max-width: 38px; max-height: 38px; }
+.pb2-stkp-cell .sticker.bean-st svg { width: 30px; height: 30px; }
+.pb2-stkp-cell .sticker.maid-st img { max-width: 38px; max-height: 38px; }
+.pb2-stkp-cell.pb2-del-mode { border-color: #e8a0ae; background: #fff5f7; }
+.pb2-stkp-cell.pb2-del-mode::after { content: '×'; position: absolute; right: 2px; top: 1px; color: #d9455f; font-size: 12px; }
+.pb2-stkp-cell.pb2-stkp-add { font-size: 18px; color: #8aa8f0; border-style: dashed; }
+.pb2-stkp-cell.pb2-stkp-add:hover { background: #f2f7ff; }
+
+/* 后台日志：等宽、可复制、长行折行（思考过程面板专用） */.pb2-logrow { border-left: 2px solid #dde5f7; padding: 4px 8px; margin: 0;
   font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 11.5px;
   color: #3c4767; background: #fafcff; border-radius: 0 6px 6px 0;
   white-space: pre-wrap; word-break: break-word; }

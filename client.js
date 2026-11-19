@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.9.0';
+const PB_VERSION = '5.0.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -6589,6 +6589,116 @@ const CHAT_MODELS = [
    * v3.6：默认改成**页面内气泡聊天面板**（没有浏览器地址栏、没有窗口边框、可随处拖动）；
    * 老做法（独立窗口 chat.html）保留在「设置 → 打开独立聊天窗口」里。 */
   let chatp = null, chatpMsgs = null, chatpInput = null, chatpBtn = null, chatpBusy = false;
+  let chatpFaceBtn = null, chatpStkPanel = null, chatpStickerOpen = false, chatpStkTab = 'recent', chatpStkDelMode = false;
+
+  /* ---- v5.0 气泡聊天里的表情面板（把"能发的表情包"加回来）----
+   * 内容与独立聊天窗口一致：最近 / 大肥鱼（精灵图格） / 黄豆（矢量） / 女仆 / 表情包（内置 67 张） / 我的（自定义）。
+   * 交互：点一张表情 —— 输入框空着就直接发出去；输入框有字就追加进去（和窗口页一致）；
+   *       「我的」tab 支持 ➕ 批量添加（图片或 zip，会自动缩图并做容量预检）与「管理」删除（置 null 保下标）。 */
+  const CHATP_STK_TABS = [['recent', '最近'], ['fish', '大肥鱼'], ['bean', '黄豆'], ['maid', '女仆'], ['archive', '表情包'], ['custom', '我的']];
+  function chatpRecentList() {
+    try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]') || []; } catch (e) { return []; }
+  }
+  function chatpPushRecent(g, n) {
+    const r = chatpRecentList().filter(x => !(x && x.g === g && x.n === n));
+    r.unshift({ g: g, n: n });
+    try { localStorage.setItem(LS_RECENT, JSON.stringify(r.slice(0, 12))); } catch (e) { /* 忽略 */ }
+  }
+  /** 标记文本：内置组短标记，档案馆/自定义走 stick 长标记（与窗口页同一格式） */
+  function chatpStickerMark(g, n) { return g === 'stick' ? '[stick:' + n + ']' : '[' + g + ':' + n + ']'; }
+  function chatpStkItems(tab) {
+    if (tab === 'recent') return chatpRecentList().filter(x => x && x.g);
+    if (tab === 'fish') return Object.keys(FISH_STICKERS).map(n => ({ g: 'fish', n: n }));
+    if (tab === 'bean') return Object.keys(BEAN).map(n => ({ g: 'bean', n: n }));
+    if (tab === 'maid') return [{ g: 'maid', n: '1' }];
+    if (tab === 'archive') return archiveStickerList().map(a => ({ g: 'stick', n: 'archive:' + a.id, name: a.name }));
+    if (tab === 'custom') return (settings.customStickers || []).map((u, i) => ({ g: 'stick', n: 'custom:' + i, name: '自定义 ' + i, empty: !u }));
+    return [];
+  }
+  /** 点一张表情：输入框有字就追加，空着就直接发 */
+  function chatpUseSticker(g, n) {
+    const mark = chatpStickerMark(g, n);
+    chatpPushRecent(g, n);
+    const cur = (chatpInput.value || '').trim();
+    if (cur) { chatpInput.value = cur + ' ' + mark; chatpInput.focus(); }
+    else { chatpStickerOpen = false; renderChatpStickers(); chatpSend(mark); }
+  }
+  function renderChatpStickers() {
+    if (!chatpStkPanel) return;
+    chatpStkPanel.hidden = !chatpStickerOpen;
+    if (!chatpStickerOpen) return;
+    chatpStkPanel.textContent = '';
+    /* tab 行 */
+    const tabs = $new('div', 'pb2-stkp-tabs');
+    for (const [id, label] of CHATP_STK_TABS) {
+      const b = $new('button', 'pb2-stkp-tab' + (chatpStkTab === id ? ' pb2-on' : ''), label);
+      b.type = 'button';
+      b.addEventListener('click', () => { chatpStkTab = id; chatpStkDelMode = false; renderChatpStickers(); });
+      tabs.appendChild(b);
+    }
+    if (chatpStkTab === 'custom') {
+      tabs.appendChild($new('span', 'pb2-stkp-sp'));
+      tabs.appendChild(chipBtn(chatpStkDelMode ? '完成' : '管理', false, () => { chatpStkDelMode = !chatpStkDelMode; renderChatpStickers(); }));
+      tabs.appendChild(chipBtn('➕ 添加', false, () => {
+        const fu = $new('input');
+        fu.type = 'file'; fu.multiple = true; fu.accept = 'image/*,.zip,application/zip'; fu.style.display = 'none';
+        fu.addEventListener('change', () => {
+          importStickers(Array.from(fu.files || []), () => { chatpStkTab = 'custom'; renderChatpStickers(); });
+          fu.value = '';
+        });
+        chatpStkPanel.appendChild(fu); fu.click();
+      }));
+    }
+    if (chatpStkTab === 'archive' || chatpStkTab === 'custom') {
+      tabs.appendChild($new('span', 'pb2-stkp-sp'));
+      tabs.appendChild(chipBtn('管理…', false, () => { chatpStickerOpen = false; renderChatpStickers(); openStickerManager(); }));
+    }
+    chatpStkPanel.appendChild(tabs);
+    /* 网格 */
+    const grid = $new('div', 'pb2-stkp-grid');
+    const items = chatpStkItems(chatpStkTab);
+    const shown = items.slice(0, 200);
+    let real = 0;
+    for (const it of shown) {
+      if (it.empty) continue;                                  // 删过的空位不显示
+      const cell = $new('div', 'pb2-stkp-cell' + (chatpStkDelMode ? ' pb2-del-mode' : ''));
+      const el = stickerEl(it.g, it.n);
+      if (el) {
+        cell.title = (it.name ? it.name + '（' : '') + chatpStickerMark(it.g, it.n) + (it.name ? '）' : '');
+        cell.appendChild(el);
+        real++;
+      } else {
+        cell.textContent = '?'; cell.title = '失效表情'; real++;
+      }
+      cell.addEventListener('click', () => {
+        if (chatpStkDelMode && chatpStkTab === 'custom') {
+          const idx = Number(String(it.n).split(':')[1]);
+          const arr = settings.customStickers || [];
+          if (!isNaN(idx) && arr[idx] !== undefined) { arr[idx] = null; stickerSave(); renderChatpStickers(); }
+          return;
+        }
+        chatpUseSticker(it.g, it.n);
+      });
+      grid.appendChild(cell);
+    }
+    if (!real) {
+      grid.appendChild($new('div', 'pb2-hint',
+        chatpStkTab === 'recent' ? '还没有最近使用的表情——点下面别的分类挑一张' :
+        chatpStkTab === 'custom' ? '还没有自定义表情，点右上「➕ 添加」（图片或 zip 都行）' : '这里是空的'));
+    }
+    if (chatpStkTab === 'custom') {
+      const addCell = $new('div', 'pb2-stkp-cell pb2-stkp-add', '＋');
+      addCell.title = '添加图片 / GIF / zip（会自动缩图）';
+      addCell.addEventListener('click', () => {
+        const fu = $new('input');
+        fu.type = 'file'; fu.multiple = true; fu.accept = 'image/*,.zip,application/zip'; fu.style.display = 'none';
+        fu.addEventListener('change', () => { importStickers(Array.from(fu.files || []), () => renderChatpStickers()); fu.value = ''; });
+        chatpStkPanel.appendChild(fu); fu.click();
+      });
+      grid.appendChild(addCell);
+    }
+    chatpStkPanel.appendChild(grid);
+  }
 
   /* v4.4 成果卡片的动作：调宿主交付接口——
    *   POST /api/sessions/{id}/delivery/open   → 用系统默认程序打开文件
@@ -6697,10 +6807,10 @@ const CHAT_MODELS = [
     finally { chatpSyncing = false; }
   }
 
-  async function chatpSend() {
-    const text = (chatpInput.value || '').trim();
+  async function chatpSend(textOverride) {
+    const text = String(textOverride == null ? (chatpInput.value || '') : textOverride).trim();
     if (!text || chatpBusy) return;
-    chatpInput.value = '';
+    if (textOverride == null) chatpInput.value = '';
     chatpBusy = true; chatpBtn.disabled = true;
     chatpTemp('me', text);
     chatpTemp('sys', '大肥鱼思考中…');
@@ -6764,7 +6874,15 @@ const CHAT_MODELS = [
     chatpBtn.type = 'button';
     chatpBtn.addEventListener('click', chatpSend);
     chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });
-    foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
+    /* v5.0：表情按钮 + 表情面板（与独立聊天窗口同一套内容：最近/大肥鱼/黄豆/女仆/表情包/我的） */
+    chatpFaceBtn = $new('button', 'pb2-chatp-face', '😊');
+    chatpFaceBtn.type = 'button';
+    chatpFaceBtn.title = '发表情（点一下直接发；输入框里有字就追加进去）';
+    chatpFaceBtn.addEventListener('click', () => { chatpStickerOpen = !chatpStickerOpen; renderChatpStickers(); });
+    foot.appendChild(chatpFaceBtn); foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
+    chatpStkPanel = $new('div', 'pb2-stkp');
+    chatpStkPanel.hidden = true;
+    chatp.appendChild(chatpStkPanel);
     chatp.appendChild(foot);
     /* v4.6：位置不再记忆——每次打开都贴桌宠头顶（见 appendChild 后的 chatpFollowPet()）。
      * 标题栏仍可拖动（临时挪开看内容），松手不保存，下次打开回到贴头顶的位置。 */

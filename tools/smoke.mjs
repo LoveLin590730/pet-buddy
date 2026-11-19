@@ -1132,6 +1132,32 @@ console.log('\n[v4.9 表情包重命名 + 按语境挑表情]');
     /archiveStickerList/.test(js9) || /ARCHIVE\b/.test(js9));
 }
 
+console.log('\n[v5.0 气泡聊天里的表情面板]');
+{
+  const js0 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const html0 = readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
+  const css0 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('气泡聊天输入行有表情按钮', /pb2-chatp-face/.test(js0) && /发表情（点一下直接发/.test(js0));
+  ok('面板有 6 个分类（与独立窗口一致）',
+    /CHATP_STK_TABS = \[\[/.test(js0) &&
+    ['recent', 'fish', 'bean', 'maid', 'archive', 'custom'].every(k => js0.indexOf("'" + k + "'") >= 0));
+  ok('点表情：输入框空就直发、有字就追加',
+    /function chatpUseSticker/.test(js0) && /chatpSend\(mark\)/.test(js0) && /cur \+ ' ' \+ mark/.test(js0));
+  ok('最近使用与独立窗口共用同一份（LS_RECENT）', /LS_RECENT/.test(js0) && /chatpPushRecent/.test(js0) && /LS_RECENT/.test(html0));
+  ok('标记格式两端一致（[stick:archive:xx] / [fish:xx]）',
+    /return g === 'stick' \? '\[stick:' \+ n \+ '\]' : '\[' \+ g \+ ':' \+ n \+ '\]'/.test(js0));
+  ok('「我的」tab 能添加（图片/zip，复用 importStickers）', /➕ 添加/.test(js0) && /importStickers\(Array\.from\(fu\.files/.test(js0));
+  ok('「我的」tab 能删除且保下标', /arr\[idx\] = null; stickerSave\(\)/.test(js0));
+  ok('面板可直接跳「表情包管理…」', /openStickerManager\(\)/.test(js0) && /管理…/.test(js0));
+  ok('发送函数支持直接发一段文本（textOverride）', /async function chatpSend\(textOverride\)/.test(js0));
+  ok('独立窗口删除也改成保下标（两端一致）', /S\.customStickers\[idx\] = null/.test(html0) && !/customStickers\.splice\(idx, 1\)/.test(html0));
+  ok('气泡表情面板样式在（tab/网格/小格缩放/管理态/加号格）',
+    /\.pb2-stkp-tabs/.test(css0) && /\.pb2-stkp-cell \.sticker\.pb2-st-fish/.test(css0) &&
+    /\.pb2-stkp-cell\.pb2-del-mode/.test(css0) && /\.pb2-stkp-cell\.pb2-stkp-add/.test(css0));
+  ok('面板限高可滚动（不撑破气泡框）', /\.pb2-stkp \{ border-top/.test(css0) && /max-height: 236px/.test(css0));
+  ok('表情网格能真正渲染各类贴纸（用 core 的 stickerEl）', /const el = stickerEl\(it\.g, it\.n\)/.test(js0));
+}
+
 console.log('\n[语音听写 · v3.2]');
 {
   eq('热键文案统一在一处', P.VI_HOTKEY_LABEL, '右 Alt + M');

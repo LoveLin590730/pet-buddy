@@ -221,7 +221,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.9.0';
+const PB_VERSION = '5.0.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -4503,10 +4503,10 @@ const CHAT_MODELS = [
       }
       if (delMode) cell.classList.add('del-mode');
       cell.addEventListener('click', () => {
-        if (delMode) { // 微信式删除（仅「我的」自定义）
+        if (delMode) { // 微信式删除（仅「我的」自定义）；置 null 保下标，历史消息里的贴纸不会错位
           const idx = Number(String(it.n).split(':')[1]);
           if (!isNaN(idx) && (S.customStickers || [])[idx] !== undefined) {
-            S.customStickers.splice(idx, 1); save(); renderPanel(); sys('已删除该自定义表情');
+            S.customStickers[idx] = null; save(); renderPanel(); sys('已删除该自定义表情（历史消息里的位置保持不变）');
           }
           return;
         }

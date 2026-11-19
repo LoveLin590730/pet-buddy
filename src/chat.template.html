@@ -250,10 +250,10 @@
       }
       if (delMode) cell.classList.add('del-mode');
       cell.addEventListener('click', () => {
-        if (delMode) { // 微信式删除（仅「我的」自定义）
+        if (delMode) { // 微信式删除（仅「我的」自定义）；置 null 保下标，历史消息里的贴纸不会错位
           const idx = Number(String(it.n).split(':')[1]);
           if (!isNaN(idx) && (S.customStickers || [])[idx] !== undefined) {
-            S.customStickers.splice(idx, 1); save(); renderPanel(); sys('已删除该自定义表情');
+            S.customStickers[idx] = null; save(); renderPanel(); sys('已删除该自定义表情（历史消息里的位置保持不变）');
           }
           return;
         }
