@@ -1548,8 +1548,7 @@
     window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
-  /* ================= 启动问候（v3.8：可在设置里自定义） ================= */
-  /** 开场白：自定义优先，支持 {greet} 时段问候、{nickname} 昵称两个变量 */
+  /* ================= 启动问候（v3.8：可在设置里自定义） ================= */  /** 开场白：自定义优先，支持 {greet} 时段问候、{nickname} 昵称两个变量 */
   function openLine() {
     const greet = periodGreet();
     const nick = settings.nickname || '';
@@ -1570,6 +1569,20 @@
     if (settings.hidden) return;
     bubbleSay(openLine(), 6000);
   }, 900);
+  /* v3.9.1：把以前截错的称呼清掉（老版本把「我们建个营销群嘛」这类句子当成了名字，
+     已经写进 localStorage，光修正则不会自动消失） */
+  (function cleanStaleNickname() {
+    if (!settings.nickname) return;
+    if (!nicknameLooksWrong(settings.nickname)) return;
+    const bad = settings.nickname;
+    settings.nickname = '';
+    settings.nicknameLock = false;
+    saveSettings();
+    log('info', '清掉了明显不对的称呼：' + bad);
+    setTimeout(() => {
+      bubbleSay('之前把称呼记岔了（记成了「' + bad + '」），已经清掉～在「聊天设置 → 我的称呼」里告诉我你叫啥吧', 8000);
+    }, 1600);
+  })();
 
   /* ================= 对外（测试钩子，只读） ================= */
   window.PB2 = Object.freeze({

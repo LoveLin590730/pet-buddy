@@ -63,7 +63,7 @@ const probe = `
   FISH_STICKERS, BEAN, ARCHIVE_ALIAS, normSticker, archiveResolve, stickerEl, renderRich, $new, clamp, nowStr, fmtTok,
   isValley, fmtCredits, fmtMoney, perYuanCredits, priceTier, localDateStr,
   parseGatewayToken, tokenHint, fetchCompanyQuota, quotaLine, fetchCredits, todaySpend,
-  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname,
+  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname, nicknameLooksWrong,
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
@@ -252,7 +252,20 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[气泡拖拽 + 贴纸限尺寸 + 大小 + 彻底删除 + 果冻 + 称呼 · v3.9]');
+console.log('\n[称呼：清掉历史脏值 · v3.9.1]');
+{
+  ok('「们建个营销群嘛」判定为错误称呼', P.nicknameLooksWrong('们建个营销群嘛') === true);
+  ok('「我们建个营销群嘛」也算错', P.nicknameLooksWrong('我们建个营销群嘛') === true);
+  ok('超长（>6 字）判定为错', P.nicknameLooksWrong('今天天气真不错啊') === true);
+  ok('正常名字保留：阳哥', P.nicknameLooksWrong('阳哥') === false);
+  ok('正常名字保留：李群（含"群"但不算句子）', P.nicknameLooksWrong('李群') === false);
+  ok('正常名字保留：杨镇城', P.nicknameLooksWrong('杨镇城') === false);
+  ok('英文/数字名保留：Yzc_01', P.nicknameLooksWrong('Yzc_01') === false);
+  ok('空值不算错', P.nicknameLooksWrong('') === false && P.nicknameLooksWrong(null) === false);
+  const t2 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('启动时会自动清理历史脏称呼并提示', /cleanStaleNickname/.test(t2) && /记岔了/.test(t2));
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const css5 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');

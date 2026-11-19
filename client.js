@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.9.0';
+const PB_VERSION = '3.9.1';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -1872,6 +1872,19 @@ const CHAT_MODELS = [
     return (!st[key] || st[key].fp !== fp) ? fp : null; // 返回非空=需要全量（附带新指纹）
   }
 
+  /* v3.9.1：判断一个称呼明显是"从聊天里截错的句子"（不是人名） */
+  const NICK_VIRTUAL = /[们嘛吧呢吗啊呀哦的了着过谁说想把让给和跟在有没不就都也还又很太建群聊你我他]/;
+  const NICK_BAD_HEAD = /^[们的个建是说想把让给和跟在有没不就都也还又很太]/;
+  function nicknameLooksWrong(nick) {
+    const s = String(nick == null ? '' : nick).trim();
+    if (!s) return false;
+    if (s.length > 6) return true;                     // 人名很少超过 6 个字
+    if (NICK_BAD_HEAD.test(s)) return true;            // 「们建个营销群嘛」这种就是以虚词开头
+    const hits = (s.match(new RegExp(NICK_VIRTUAL.source, 'g')) || []).length;
+    if (hits >= 2) return true;                        // 一个名字里有两个以上虚词 → 肯定是句子
+    return false;
+  }
+
   function extractNickname(text) {
     // v3.9：① 用户在设置里手动设过称呼 → 锁定，不再被聊天内容改掉
     //         ② 只认「我叫/我是/叫我/喊我」+ 2~6 字，且名字里不能有虚词/代词/动词
@@ -1880,8 +1893,7 @@ const CHAT_MODELS = [
     const m = String(text == null ? '' : text).match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{2,6})/);
     if (!m || !m[1]) return null;
     const name = m[1];
-    if (/[谁什么干嘛哦吗吧呢嘛啊呀了吧的了着过我们你们他们它们这那哪个说想要把让给和跟在有没不就都也还又很太你我他建群聊]/.test(name)) return null;
-    if (/^[们的个建是说想]/.test(name)) return null;
+    if (nicknameLooksWrong(name)) return null;
     const old = settings.nickname;
     settings.nickname = name; saveSettings();
     return old === name ? null : name;
@@ -3657,8 +3669,7 @@ const CHAT_MODELS = [
     window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
-  /* ================= 启动问候（v3.8：可在设置里自定义） ================= */
-  /** 开场白：自定义优先，支持 {greet} 时段问候、{nickname} 昵称两个变量 */
+  /* ================= 启动问候（v3.8：可在设置里自定义） ================= */  /** 开场白：自定义优先，支持 {greet} 时段问候、{nickname} 昵称两个变量 */
   function openLine() {
     const greet = periodGreet();
     const nick = settings.nickname || '';
@@ -3679,6 +3690,20 @@ const CHAT_MODELS = [
     if (settings.hidden) return;
     bubbleSay(openLine(), 6000);
   }, 900);
+  /* v3.9.1：把以前截错的称呼清掉（老版本把「我们建个营销群嘛」这类句子当成了名字，
+     已经写进 localStorage，光修正则不会自动消失） */
+  (function cleanStaleNickname() {
+    if (!settings.nickname) return;
+    if (!nicknameLooksWrong(settings.nickname)) return;
+    const bad = settings.nickname;
+    settings.nickname = '';
+    settings.nicknameLock = false;
+    saveSettings();
+    log('info', '清掉了明显不对的称呼：' + bad);
+    setTimeout(() => {
+      bubbleSay('之前把称呼记岔了（记成了「' + bad + '」），已经清掉～在「聊天设置 → 我的称呼」里告诉我你叫啥吧', 8000);
+    }, 1600);
+  })();
 
   /* ================= 对外（测试钩子，只读） ================= */
   window.PB2 = Object.freeze({

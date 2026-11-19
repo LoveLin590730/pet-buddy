@@ -79,6 +79,19 @@
     return (!st[key] || st[key].fp !== fp) ? fp : null; // 返回非空=需要全量（附带新指纹）
   }
 
+  /* v3.9.1：判断一个称呼明显是"从聊天里截错的句子"（不是人名） */
+  const NICK_VIRTUAL = /[们嘛吧呢吗啊呀哦的了着过谁说想把让给和跟在有没不就都也还又很太建群聊你我他]/;
+  const NICK_BAD_HEAD = /^[们的个建是说想把让给和跟在有没不就都也还又很太]/;
+  function nicknameLooksWrong(nick) {
+    const s = String(nick == null ? '' : nick).trim();
+    if (!s) return false;
+    if (s.length > 6) return true;                     // 人名很少超过 6 个字
+    if (NICK_BAD_HEAD.test(s)) return true;            // 「们建个营销群嘛」这种就是以虚词开头
+    const hits = (s.match(new RegExp(NICK_VIRTUAL.source, 'g')) || []).length;
+    if (hits >= 2) return true;                        // 一个名字里有两个以上虚词 → 肯定是句子
+    return false;
+  }
+
   function extractNickname(text) {
     // v3.9：① 用户在设置里手动设过称呼 → 锁定，不再被聊天内容改掉
     //         ② 只认「我叫/我是/叫我/喊我」+ 2~6 字，且名字里不能有虚词/代词/动词
@@ -87,8 +100,7 @@
     const m = String(text == null ? '' : text).match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{2,6})/);
     if (!m || !m[1]) return null;
     const name = m[1];
-    if (/[谁什么干嘛哦吗吧呢嘛啊呀了吧的了着过我们你们他们它们这那哪个说想要把让给和跟在有没不就都也还又很太你我他建群聊]/.test(name)) return null;
-    if (/^[们的个建是说想]/.test(name)) return null;
+    if (nicknameLooksWrong(name)) return null;
     const old = settings.nickname;
     settings.nickname = name; saveSettings();
     return old === name ? null : name;
