@@ -3,6 +3,33 @@
 版本号唯一来源：`src/core/config.js` 的 `PB_VERSION`；`node build.mjs` 会写回 `manifest.json`。
 本文件承接自 v2.2.3 之前塞在 `manifest.json` 里 description 字段的版本历史。
 
+## v4.2.0 — 2026-11-19 · zip 模型包直接上传
+
+**一句话**：网上下载的桌宠模型多是 zip（源码仓 zip / 素材包），模型管理里现在能**直接选 zip**——
+解析出里面的图片清单，点一张就穿上看看。
+
+### 一、zip 包上传（`右键 → 桌宠 → 修改模型 → 上传`）
+
+- **上传入口接受 `.zip`**：选中后解析包目录，列出里面的图片（png / gif / webp / jpg，按大小降序、
+  最多列 80 张；标注「动图」），点一张当场解压变身，不合意关掉重挑。
+- **零依赖解压**：`src/core/zipread.js` 手工解析 ZIP 结构（EOCD → central directory → local file header），
+  解压走内核内置的 `DecompressionStream('deflate-raw')`（Edge/Chrome 103+、WebView2 自带）；
+  stored 与 deflate 两种条目都支持。不引任何第三方库、不联网。
+- **与直接传图同一条校验路**：解压出来的图同样过动图判定 / 静态 2MB·动图 4MB 上限 / localStorage 容量预检，
+  超限或放不下都会明说（解压上限 8MB/张，zip 本身上限 200MB）。
+- **实测（用户真实样本 `dsh-pet-source.zip`，136.9MB / 1124 条目）**：
+  目录解析 **1ms**；认出 **158 张图**（83.2MB）；
+  `dsh-pet/assets/main-character.png`（1148KB）解压 18ms、尺寸与目录一致、PNG 头正确；
+  `assets/preview/beiluoye-yanmo.gif`（614KB）解压 7ms、GIF89a 多帧；
+  两张都在对应上限内、可直接使用。浏览器内核（Chrome/157）`DecompressionStream` 解压复验通过。
+- 过滤规则：跳过 `__MACOSX/` 与隐藏文件、<64 字节的碎文件；加密条目（AES）跳过并在解不开时给人话提示；
+  zip64（>4GB/超 6.5 万条目）与 rar/7z 不支持（先解压或转 zip），提示语已写明。
+
+### 二、自检
+
+- `smoke.mjs` **308 项全绿**（4.1.0 的 294 项 + 新增 14 项：现场构造 zip 的 stored/deflate 解析与真解压、
+  图片过滤规则、dataUrl 编码往返、产物侧入口与样式、上限常量）。
+
 ## v4.1.0 — 2026-11-19 · 自定义动图皮肤 + 精灵图瘦身 + 四个反馈修复
 
 **一句话**：把自己喜欢的动图（GIF / 动画 WebP）传上去就能当皮肤、空闲还会自己做小动作；

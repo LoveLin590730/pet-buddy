@@ -14,7 +14,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -34,6 +34,7 @@ const sandbox = {
   Date, Math, JSON, Object, Array, String, Number, Boolean, Set, Map, Promise, isNaN, parseInt, parseFloat,
   setTimeout, clearTimeout, setInterval, clearInterval,
   TextDecoder, URL, Blob,
+  DecompressionStream,
   btoa: (s) => Buffer.from(String(s), 'latin1').toString('base64'),
   atob: (s) => Buffer.from(String(s), 'base64').toString('latin1'),
   localStorage: {
@@ -75,6 +76,7 @@ const probe = `
   SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
   imgAnimKind, customSkinAnim, customSkinStoreFits, CUSTOM_STATIC_MAX, CUSTOM_ANIM_MAX, CUSTOM_STORE_BUDGET,
   IMG_IDLE_FUNS, pickIdleFunClass, numToZh, numZhValue,
+  zipEntries, zipImageEntries, zipExtract, zipBytesToDataUrl,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
@@ -694,6 +696,83 @@ console.log('\n[v4.1 语音数字本地化]');
   ok('≥8 位长号码逐位读（不按位值）', P.numToZh('13800001111') === '一三八零零零零一一一一');
   ok('speechClean 把余额数字念成中文', P.speechClean('还剩 67834 分 ≈¥67.83').indexOf('六万七千八百三十四') >= 0 && P.speechClean('还剩 67834 分').indexOf('67834') < 0);
   eq('无数字的句子原样通过', P.speechClean('你好，我是坚祥数字助理'), '你好，我是坚祥数字助理');
+}
+
+console.log('\n[v4.2 zip 模型包上传]');
+{
+  /* 现场构造一个最小 zip（stored + deflate 各一条 + 目录条目），验证解析与解压都是真的 */
+  const { deflateRawSync } = await import('node:zlib');
+  const crc32 = (u8) => {                              // 标准 CRC32（目录里带着；解析器不校验，但格式要像样）
+    const table = [];
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0; }
+    let crc = 0xFFFFFFFF;
+    for (const b of u8) crc = table[(crc ^ b) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  };
+  const pad = (n) => Buffer.alloc(n, 0xAB);   // 填充字节（让条目尺寸过 64 字节门槛，考察规则本身而非尺寸）
+  const specs = [
+    { name: 'pack/main-character.png', method: 0, data: Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4, 5]), pad(300)]) },
+    { name: 'pack/preview/dance.gif',  method: 8, data: Buffer.concat([Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 7, 0, 7, 0]), pad(400)]) },
+    { name: 'tiny.txt',                method: 0, data: Buffer.from('x'.repeat(200)) },
+    { name: '__MACOSX/junk.png',       method: 0, data: Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47]), pad(200)]) },
+  ];
+  const dosTime = 0, dosDate = (0x21 << 9) | (1 << 5) | 1;
+  const locals = [], cds = [];
+  let offset = 0;
+  for (const s of specs) {
+    const nameB = Buffer.from(s.name, 'utf8');
+    const payload = s.method === 8 ? deflateRawSync(s.data) : s.data;
+    const crc = crc32(s.data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(s.method, 8);
+    lh.writeUInt16LE(dosTime, 12); lh.writeUInt16LE(dosDate, 14); lh.writeUInt32LE(crc, 16);
+    lh.writeUInt32LE(payload.length, 20); lh.writeUInt32LE(s.data.length, 24); lh.writeUInt16LE(nameB.length, 28);
+    locals.push(lh, nameB, payload);
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(s.method, 10);
+    cd.writeUInt16LE(dosTime, 12); cd.writeUInt16LE(dosDate, 14); cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(payload.length, 20); cd.writeUInt32LE(s.data.length, 24); cd.writeUInt16LE(nameB.length, 28);
+    cd.writeUInt32LE(offset, 42);
+    cds.push(cd, nameB);
+    offset += lh.length + nameB.length + payload.length;
+  }
+  const localBuf = Buffer.concat(locals);
+  const cdBuf = Buffer.concat(cds);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(specs.length, 8);
+  eocd.writeUInt16LE(specs.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12);
+  eocd.writeUInt32LE(localBuf.length, 16);
+  const all = Buffer.concat([localBuf, cdBuf, eocd]);
+  const zipBuf = all.buffer.slice(all.byteOffset, all.byteOffset + all.length);
+
+  const entries = P.zipEntries(zipBuf);
+  eq('目录条目数解析正确', entries.length, 4);
+  eq('条目名按 UTF-8 解出', entries[0].name, 'pack/main-character.png');
+  eq('deflate 条目标记 method=8', entries.filter((e) => e.name === 'pack/preview/dance.gif')[0].method, 8);
+
+  const imgs = P.zipImageEntries(entries);
+  eq('图片过滤：png/gif 留下、txt 与 __MACOSX 剔除', imgs.map((e) => e.name.split('/').pop()).sort().join(','), 'dance.gif,main-character.png');
+
+  const pngBytes = await P.zipExtract(zipBuf, entries[0]);
+  eq('stored 条目原样解出', Array.from(pngBytes).slice(0, 8).join(','), '137,80,78,71,13,10,26,10');
+  const gifBytes = await P.zipExtract(zipBuf, entries[1]);
+  eq('deflate 条目真解压（DecompressionStream）', Buffer.from(gifBytes.subarray(0, 6)).toString('latin1'), 'GIF89a');
+  eq('解压尺寸与目录一致', gifBytes.length, entries[1].size);
+
+  const du = P.zipBytesToDataUrl(pngBytes, 'a.PNG');
+  eq('dataUrl MIME 按扩展名给出', du.slice(0, 14), 'data:image/png');
+  ok('zipBytesToDataUrl 与 atob 往返一致', atob(du.split(',')[1]).charCodeAt(0) === 0x89);
+  eq('zip 里的 gif 判动图衔接 v4.1 链路（返回类型）', typeof P.imgAnimKind('data:image/gif;base64,' + Buffer.from(specs[1].data).toString('base64')), 'string');
+
+  // 产物侧：上传入口接受 zip、挑图面板在
+  const jsV42 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cssV42 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('上传入口接受 zip（accept 与分支）', /image\/\*,\.zip/.test(jsV42) && /uploadFromZipPack/.test(jsV42));
+  ok('挑图列表样式就位', /\.pb2-zip-item/.test(cssV42));
+  ok('zip 上限 200MB 写死在产物里', /200 \* 1024 \* 1024/.test(jsV42));
+  ok('zip 条目解压上限 8MB（core 里）', /8 \* 1024 \* 1024/.test(readFileSync(path.join(ROOT, 'src/core/zipread.js'), 'utf8')));
 }
 
 console.log('\n[语音听写 · v3.2]');

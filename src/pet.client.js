@@ -951,6 +951,66 @@
     rd.readAsText(file);
   }
 
+  /* ---- v4.2：zip 模型包 → 挑一张图当皮肤 ----
+   * 网上下载的桌宠模型常是 zip（源码仓 zip / 素材打包）。流程：解析目录 → 列出图片（按大小排、
+   * 只列前 80 张）→ 点一张当场解压 → 走与「直接传图」完全相同的校验（动图判定 / 2MB·4MB / 容量预检）。
+   * 解析与解压都在浏览器本地完成（内置 DecompressionStream），零依赖、不联网；rar/7z 不支持（先转 zip）。 */
+  const ZIP_PACK_MAX = 200 * 1024 * 1024;   // zip 本身上限（整个读进内存，防特大包拖死页面）
+  function uploadFromZipPack(f) {
+    if (f.size > ZIP_PACK_MAX) { sfx('err'); bubbleSay('zip 太大了（超过 200MB）：先解压出来，挑好图再传', 4600); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      let entries;
+      try { entries = zipEntries(rd.result); }
+      catch (e) { sfx('err'); bubbleSay('这个 zip 读不了：' + e.message, 4600); return; }
+      const imgs = zipImageEntries(entries).sort((a, b) => b.size - a.size);
+      if (!imgs.length) { sfx('err'); bubbleSay('包里没找到能当皮肤的图（png / gif / webp / jpg）', 4600); return; }
+      log('info', 'zip 模型包解析：' + f.name + '，图片条目 ' + imgs.length + '/' + entries.length);
+      openDialog('从 zip 里挑一张（共 ' + imgs.length + ' 张图）', zb => {
+        zb.appendChild($new('div', 'pb2-hint', f.name.slice(0, 46) + ' · 点一张穿上看看，不合意关掉重挑。规则与直接传图相同：静态 ≤2MB、动图 ≤4MB'));
+        const list = $new('div', 'pb2-zip-list');
+        for (const e of imgs.slice(0, 80)) {
+          const it = $new('div', 'pb2-zip-item');
+          const isGif = /\.gif$/i.test(e.name);
+          it.appendChild($new('span', 'pb2-zip-name', (e.name.split('/').pop() || e.name).slice(0, 40)));
+          it.appendChild($new('span', 'pb2-zip-meta', Math.round(e.size / 1024) + ' KB' + (isGif ? ' · 动图' : '')));
+          it.title = e.name;
+          it.addEventListener('click', () => zipPickImage(rd.result, e, zb));
+          list.appendChild(it);
+        }
+        zb.appendChild(list);
+        if (imgs.length > 80) zb.appendChild($new('div', 'pb2-hint', '…只列最大的 80 张，要用的图不在里面就先解压 zip 再直接传图'));
+      });
+    };
+    rd.readAsArrayBuffer(f);
+  }
+
+  /** zip 里点中一张：解压 → 校验 → 入库变身（与直接上传同一条路的下半段） */
+  async function zipPickImage(buf, entry, zb) {
+    let bytes;
+    try { bytes = await zipExtract(buf, entry); }
+    catch (e) { sfx('err'); bubbleSay('这张图解压失败：' + e.message, 4200); return; }
+    const dataUrl = zipBytesToDataUrl(bytes, entry.name);
+    const anim = imgAnimKind(dataUrl) !== '';
+    if (bytes.length > (anim ? CUSTOM_ANIM_MAX : CUSTOM_STATIC_MAX)) {
+      sfx('err');
+      bubbleSay('这张' + (anim ? '动图' : '静态图') + '有 ' + Math.round(bytes.length / 1024) + ' KB，超过上限（动图 4MB / 静态 2MB），换一张或先压缩', 4600);
+      return;
+    }
+    if (!customSkinStoreFits(settings.customSkins || [], dataUrl)) {
+      sfx('err'); bubbleSay('本机存储放不下了（自定义模型约 10MB 上限）：删几个旧模型再挑', 4200);
+      return;
+    }
+    const id = 'custom:' + Date.now();
+    settings.customSkins = (settings.customSkins || []).concat([{
+      id: id,
+      name: (entry.name.split('/').pop() || 'zip 模型').slice(0, 24),
+      dataUrl: dataUrl, anim: anim,
+    }]);
+    settings.skin = id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok');
+    bubbleSay(anim ? '会动的新衣服穿好啦～' : '新衣服穿好啦～', 2400);
+  }
+
   /* ---- 常用语库（增删改查：加一条、改文字、删掉、点一条就让它念） ---- */
   function openPhraseBook() {
     const getArr = () => (settings.phrases = settings.phrases || []);
@@ -1275,7 +1335,7 @@
         });
         body.appendChild(restore);
       }
-      body.appendChild($new('h4', null, '自定义模型（上传图片 · 可改名/导出/删除）'));
+      body.appendChild($new('h4', null, '自定义模型（上传图片或 zip 包 · 可改名/导出/删除）'));
       const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
       const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
       impBtn.addEventListener('click', () => impFile.click());
@@ -1296,10 +1356,15 @@
         impRow.appendChild(expAll);
       }
       body.appendChild(impRow);
-      const file = $new('input'); file.type = 'file'; file.accept = 'image/*';
+      const file = $new('input'); file.type = 'file'; file.accept = 'image/*,.zip,application/zip';
       file.addEventListener('change', () => {
         const f = file.files && file.files[0];
         if (!f) return;
+        /* v4.2：zip 模型包（网上下载的常是这个形式）→ 解出图片清单让你挑一张 */
+        if (/\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed') {
+          uploadFromZipPack(f);
+          return;
+        }
         // v4.1：上限按静态/动图分档（读出内容后再判）；动图（GIF/动画 WebP）放宽到 4MB
         if (f.size > CUSTOM_ANIM_MAX) {
           body.appendChild($new('div', 'pb2-hint', '图片超过 ' + Math.round(CUSTOM_ANIM_MAX / 1024 / 1024) + 'MB，请压缩后再上传'));
