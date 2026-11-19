@@ -887,14 +887,16 @@
     }, 650);
   });
 
-  /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音 / bibo音效 / 桌宠 / 设置） ---- */
+  /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音 / bibo音效 / 桌宠 / 设置）
+   *      v4.16：桌宠那栏精简——"设置类"全收进「桌宠设置…」弹窗（菜单只留常用动作） ---- */
   const MENU_ITEMS = [
     { icon: 'chat', label: '气泡聊天', act: openChatPanel },
     { icon: 'speaker', label: 'bibo语音', sub: [
-      { icon: 'speaker', label: '试听语音', act: () => { speechUnlock(); speechProbe(probeText()); } },
+      { icon: 'speaker', label: '试听语音', act: () => { bubbleSay('试听中…（说完这句会停）', 2600); speechUnlock(); speechProbe(probeText()); } },
       { icon: 'note', label: '试听文本…', act: openProbeTextEditor },
       { icon: 'mic', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
       { icon: 'book', label: '常用语…', act: openPhraseBook },
+      { icon: 'gear', label: '声音设置…', act: openSoundSettings },
       { sep: true },
       { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
       { icon: 'palette', label: () => 'bibo音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
@@ -904,18 +906,17 @@
     { icon: 'bell', label: 'bibo音效', sub: [
       { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'), act: () => toggleSfx(), keepOpen: true },
       { icon: 'speed', label: () => '音效音量：' + Math.round(sfxVolume() * 100) + '%', act: () => cycleSfxVolume(), keepOpen: true },
-      { icon: 'talk', label: () => '互动形变：' + (settings.jellyOn !== false ? '开（果冻挤压）' : '关'), act: () => toggleJelly(), keepOpen: true },
       { icon: 'speaker', label: '试听音效', act: () => { speechUnlock(); ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320)); } },
+      { icon: 'gear', label: '声音设置…', act: openSoundSettings },
     ] },
     { icon: 'mask', label: '桌宠', sub: [
       { icon: 'mask', label: '修改模型…', act: openModelPicker },
+      { icon: 'gear', label: '桌宠设置…', act: openPetSettings },
       { icon: 'note', label: '角色设定…', act: openPersonaEditor },
-      { icon: 'pin', label: () => '大小：' + petSizeLabel(), act: () => cyclePetSize(), keepOpen: true },
-      { icon: 'pin', label: () => '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
-      { icon: 'pin', label: () => '自行移动：' + (settings.walkOn !== false ? walkModeLabel(settings.walkMode) : '关'), act: () => cycleWalkMode(), keepOpen: true },
-      { icon: 'gear', label: '自行移动设置…', act: openWalkSettings },
-      { icon: 'chat', label: () => '余额格式：' + balanceStyleLabel(), act: () => cycleBalanceStyle(), keepOpen: true },
       { icon: 'note', label: '台词与开场白…', act: openLineEditor },
+      { icon: 'pin', label: () => '大小：' + petSizeLabel(), act: () => cyclePetSize(), keepOpen: true },
+      { icon: 'pin', label: () => '自行移动：' + (settings.walkOn !== false ? walkModeLabel(settings.walkMode) : '关'), act: () => cycleWalkMode(), keepOpen: true },
+      { icon: 'pin', label: () => '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
       { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     ] },
     { icon: 'gear', label: '设置', sub: [
@@ -1079,7 +1080,7 @@
           r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
           r2.addEventListener('click', ev => {
             ev.stopPropagation();
-            if (!s.keepOpen) menu.hidden = true;
+            if (!s.keepOpen) closeMenuFully();
             s.act();
             if (s.keepOpen) {                       // v3.5：切换类项目就地刷新文字、不关菜单
               const l2 = r2.querySelector('.pb2-mlabel');
@@ -1105,7 +1106,7 @@
             const lbl = row.querySelector('.pb2-mlabel');
             if (lbl) lbl.textContent = typeof it.label === 'function' ? it.label() : it.label;
             sfx('tap');
-          } else { menu.hidden = true; it.act(); }
+          } else { closeMenuFully(); it.act(); }
         });
       }
       menu.appendChild(row);
@@ -1119,6 +1120,19 @@
     // v3.10.1：按**实测尺寸**夹进视口（原来硬编码 200×300，菜单展开子菜单后近 500 高，必然被边框切掉）
     clampMenuToViewport(e.clientX - 8, e.clientY - 8);
   });
+  /** v4.16：彻底收起菜单——根菜单隐藏 + 把展开过的子菜单收起。
+   *  之前只设 menu.hidden，若某项动作里有异步/渲染副作用（例如试听要起音频），
+   *  偶发出现"点了菜单还挂在那儿"；现在点任何非切换类项都先跑这一步。 */
+  function closeMenuFully() {
+    if (!menu) return;
+    menu.hidden = true;
+    menu.querySelectorAll('.pb2-mi.pb2-sub-open').forEach(r => {
+      r.classList.remove('pb2-sub-open');
+      const a = r.querySelector('.pb2-marrow');
+      if (a) a.textContent = '▾';
+    });
+  }
+
   /** 把菜单整体挪进视口：右侧/下方放不下就往左/往上收；高度超视口时由 CSS 的 max-height 负责滚动 */
   function clampMenuToViewport(preferX, preferY) {
     if (menu.hidden) return;
@@ -1133,7 +1147,7 @@
     menu.style.left = Math.round(x) + 'px';
     menu.style.top = Math.round(y) + 'px';
   }
-  document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; }, true);
+  document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target)) closeMenuFully(); }, true);
   restoreDot.addEventListener('click', () => { settings.hidden = false; saveSettings(); applyHidden(); refreshLayout(); });
 
   function applyHidden() { root.classList.toggle('pb2-hidden-mode', !!settings.hidden); walkHalt(); }
@@ -2274,10 +2288,51 @@
     return F;
   }
 
-  /* ---- 通用设置：连接与额度 + 网关身份牌 + 桌宠 ---- */
+  /* ---- v4.16 桌宠设置：外观 + 称呼与说话 + 自行移动（从"通用设置"里分出来，菜单那栏也就能精简） ---- */
+  function openPetSettings() {
+    openDialog('桌宠设置', body => {
+      const F = buildPetFields(body);
+      body.appendChild($new('h4', null, '自行移动（散步）'));
+      body.appendChild($new('div', 'pb2-hint',
+        '它每隔一会儿自己走两步：模式（走走停停 / 逛桌面 / 不自己动）、出发间隔、速度都在这里调。'));
+      const row = $new('div', 'pb2-chiprow');
+      row.appendChild(chipBtn('自行移动设置…', false, () => { openWalkSettings(); }));
+      row.appendChild(chipBtn('现在就走两步', true, () => { closeDialog(); walkHalt(); walkGo(); }));
+      body.appendChild(row);
+      body.appendChild($new('h4', null, '摆件与外观'));
+      const r2 = $new('div', 'pb2-chiprow');
+      r2.appendChild(chipBtn('修改模型…', false, () => { openModelPicker(); }));
+      r2.appendChild(chipBtn('重置位置', false, () => {
+        settings.pos = null; saveSettings(); refreshLayout();
+        bubbleSay('回到窝啦～', 2200);
+      }));
+      r2.appendChild(chipBtn(settings.hidden ? '露出桌宠' : '隐藏桌宠', false, () => {
+        settings.hidden = !settings.hidden; saveSettings(); applyHidden();
+        bubbleSay(settings.hidden ? '那我先躲起来～' : '我又出来啦～', 2200);
+      }));
+      body.appendChild(r2);
+      openDialog._pet = F;
+    }, [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: () => {
+        const f = openDialog._pet; if (!f) return;
+        settings.nickname = String(f.nickInp.value || '').trim();
+        settings.nicknameLock = !!settings.nickname;
+        settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
+        settings.jellyOn = f.jellySel.value === '1';
+        settings.monitor = f.mon.value === '1';
+        settings.balanceStyle = f.balStyleSel.value;
+        settings.greeting = f.greetingInp.value.trim();
+        saveSettings(); applyMonitor(); refreshLayout();
+        bubbleSay('设置好了～', 2000);
+      } },
+    ]);
+  }
+
+  /* ---- 通用设置：连接与额度 + 网关身份牌 ---- */
   function openGeneralSettings() {
     openDialog('通用设置', body => {
-      const F = Object.assign(buildConnFields(body), buildGatewayFields(body), buildPetFields(body));
+      const F = Object.assign(buildConnFields(body), buildGatewayFields(body));
       openDialog._gen = F;
     }, [
       { label: '取消' },
@@ -2294,19 +2349,13 @@
         settings.gatewayBase = f.gb.value.trim();
         settings.gatewayKey = f.gk.value;
         settings.gatewayModel = f.gm.value.trim();
-        settings.nickname = String(f.nickInp.value || '').trim();
-        settings.nicknameLock = !!settings.nickname;
-        settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
-        settings.jellyOn = f.jellySel.value === '1';
-        settings.monitor = f.mon.value === '1';
-        settings.balanceStyle = f.balStyleSel.value;
-        settings.greeting = f.greetingInp.value.trim();
         CREDITS_CACHE = { at: 0, data: null };   // 换算/凭据变更 → 立即重取
         saveSettings(); applyMonitor(); refreshLayout();
         bubbleSay('设置好了～', 2000);
       } },
     ]);
   }
+  /* 桌宠相关设置已移至「桌宠设置」弹窗（v4.16），这里不再重复处理 */
 
   /* ---- 声音设置：只有声音（语音播报 + 音效 + 语音闲聊） ---- */
   function openSoundSettings() {
@@ -2389,7 +2438,7 @@
         speechApplyVolume(); ttsCache.clear(); trackCache.clear(); saveSettings();
         speechUnlock(); speechProbe(probeText());
       }));
-      probeRow.appendChild(chipBtn('改试听文本…', false, () => { closeDialog(); openProbeTextEditor(); }));
+      probeRow.appendChild(chipBtn('改试听文本…', false, () => { openProbeTextEditor(); }));
       body.appendChild(probeRow);
       /* 音效 */
       body.appendChild($new('h4', null, '音效（点桌宠、弹面板、拖拽吸附…）'));
@@ -2454,14 +2503,14 @@
       body.appendChild($new('h4', null, '人设与台词'));
       body.appendChild($new('div', 'pb2-hint', '它是什么性格、怎么说话、开场第一句说什么——都在这里改。'));
       const r1 = $new('div', 'pb2-chiprow');
-      r1.appendChild(chipBtn('角色设定…', false, () => { closeDialog(); openPersonaEditor(); }));
-      r1.appendChild(chipBtn('台词与开场白…', false, () => { closeDialog(); openLineEditor(); }));
+      r1.appendChild(chipBtn('角色设定…', false, () => { openPersonaEditor(); }));
+      r1.appendChild(chipBtn('台词与开场白…', false, () => { openLineEditor(); }));
       body.appendChild(r1);
       body.appendChild($new('h4', null, '内容库'));
       body.appendChild($new('div', 'pb2-hint', '常用语（点「说」就念出来）与表情包（内置 67 张 + 自定义，可批量导入导出）。'));
       const r2 = $new('div', 'pb2-chiprow');
-      r2.appendChild(chipBtn('常用语…', false, () => { closeDialog(); openPhraseBook(); }));
-      r2.appendChild(chipBtn('表情包管理…', false, () => { closeDialog(); openStickerManager(); }));
+      r2.appendChild(chipBtn('常用语…', false, () => { openPhraseBook(); }));
+      r2.appendChild(chipBtn('表情包管理…', false, () => { openStickerManager(); }));
       body.appendChild(r2);
       body.appendChild($new('h4', null, '聊天行为'));
       body.appendChild($new('label', null, '双击桌宠：就地输入框（关掉则双击不出输入框）'));
@@ -2488,7 +2537,7 @@
       const sid = deliverSid();
       body.appendChild($new('div', 'pb2-hint', '当前用的是一个助手子对话（双击、气泡面板、独立窗口共用同一份记录）：' + (sid ? sid : '（还没建，首次聊天时自动创建）')));
       const r3 = $new('div', 'pb2-chiprow');
-      r3.appendChild(chipBtn('查看思考过程', false, () => { closeDialog(); openLogViewer(); }));
+      r3.appendChild(chipBtn('查看思考过程', false, () => { openLogViewer(); }));
       r3.appendChild(chipBtn('重置会话（下次聊天重新建）', false, () => {
         try { localStorage.removeItem(CHAT_LS_SID); } catch (e) { /* 忽略 */ }
         if (chatpMsgs) chatpMsgs.textContent = '';

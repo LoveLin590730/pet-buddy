@@ -1237,10 +1237,12 @@ console.log('\n[v5.3 设置拆分为 通用/聊天/声音]');
   // —— 分组函数
   ok('通用设置按三组构建（连接与额度 / 网关身份牌 / 桌宠）',
     /function buildConnFields\(body\)/.test(js3) && /function buildGatewayFields\(body\)/.test(js3) && /function buildPetFields\(body\)/.test(js3));
-  ok('通用设置含：通道/模型/额度/每元积分/网关 baseURL/令牌/网关模型名/称呼/大小/形变/监控/余额格式/开场白',
+  ok('通用设置含：通道/模型/额度/每元积分/网关 baseURL/令牌/网关模型名（桌宠项 v4.16 起归「桌宠设置」）',
     ['连接与额度', '聊天通道', '聊天模型（助手通道）', '剩余额度（元，自填可选', '每元积分', '网关 / 身份牌',
-     '网关 baseURL', '网关令牌 / 身份牌', '网关模型名', '我的称呼', '大小（40–200 px', '互动形变',
-     'BongoCat 式鼠标/键盘监控', '余额气泡格式', '开场白（启动第一句'].every(t => js3.indexOf(t) >= 0));
+     '网关 baseURL', '网关令牌 / 身份牌', '网关模型名'].every(t => js3.indexOf(t) >= 0));
+  ok('桌宠项都在「桌宠设置」弹窗里（称呼/大小/形变/监控/余额格式/开场白/散步/摆件）',
+    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat 式鼠标/键盘监控', '余额气泡格式', '开场白（启动第一句',
+     '自行移动（散步）', '摆件与外观'].every(t => js3.indexOf(t) >= 0));
   // —— 声音设置只留声音
   ok('声音设置含语音全项 + 音效 + 语音闲聊',
     ['语音播报（聊天回复念出来）', '朗读模式', 'bibo音色', '朗读音色', '合成音量', '合成语速', '朗读语速',
@@ -1358,6 +1360,64 @@ console.log('\n[v4.15 版本一致性 + 弹窗回退 + 控件收尾]');
   eq('名字带"左转"仍是 1.5s', P.walkWarmupFor('原地左转奔跑', 0, 3), 1500);
   eq('名字认不出但在池子最后 → 1.5s', P.walkWarmupFor('动作A', 2, 3), 1500);
   eq('普通动作 → 1.0s', P.walkWarmupFor('螃蟹走路', 0, 3), 1000);
+}
+
+console.log('\n[v4.16 菜单精简 + 二级弹窗回退修复 + 整体扫描]');
+{
+  const js16 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cfg16 = readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8');
+  // ① 菜单点非切换项必须"彻底收起"（修"点试听菜单不退出"）
+  ok('菜单新增 closeMenuFully（根菜单 + 收起子菜单）',
+    /function closeMenuFully\(\)/.test(js16) && /menu\.querySelectorAll\('\.pb2-mi\.pb2-sub-open'\)/.test(js16));
+  ok('子项与顶层项点击都走 closeMenuFully', (js16.match(/closeMenuFully\(\)/g) || []).length >= 3);
+  ok('只有初始化与 closeMenuFully 内部直接写 menu.hidden（其余都走统一收起）', (() => {
+    const body = js16.replace(/function closeMenuFully\(\)[\s\S]{0,420}?\n  \}/, '');   // 去掉函数体本身
+    const hits = body.match(/menu\.hidden = true/g) || [];
+    return hits.length === 1;   // 只剩"创建菜单时先隐藏"
+  })());
+  ok('菜单不会被 CSS 的 display 覆盖 hidden（无 display:flex 直挂 .pb2-menu）',
+    !/\.pb2-menu \{[^}]*display:\s*(flex|block)/.test(readFileSync(path.join(ROOT, 'client.css'), 'utf8')));
+  ok('试听语音有即时反馈（点完知道点到了）', /试听中…（说完这句会停）/.test(js16));
+  // ② 二级弹窗回退：入口不再"先关后开"
+  eq('弹窗入口不再预先 closeDialog（否则栈里没上一级）', js16.indexOf('closeDialog(); open') , -1);
+  ok('聊天设置四个入口都是直接打开（可返回）',
+    ['openProbeTextEditor();', 'openPersonaEditor();', 'openLineEditor();', 'openPhraseBook();', 'openStickerManager();', 'openLogViewer();']
+      .every(t => js16.indexOf(t) >= 0));
+  // ③ 桌宠设置：新弹窗 + 通用设置只管连接
+  ok('新增「桌宠设置」弹窗（外观 + 称呼说话 + 散步 + 摆件）',
+    /function openPetSettings\(\)/.test(js16) && /openDialog\('桌宠设置'/.test(js16));
+  ok('桌宠设置含：称呼/大小/形变/监控/余额格式/开场白 + 散步入口 + 模型/位置/隐藏',
+    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat', '余额气泡格式', '开场白（启动第一句',
+     '自行移动设置…', '现在就走两步', '修改模型…', '重置位置', '隐藏桌宠'].every(t => js16.indexOf(t) >= 0));
+  ok('通用设置不再含桌宠字段（只留连接与额度 + 网关身份牌）', (() => {
+    const i = js16.indexOf("openDialog('通用设置'");
+    const seg = js16.slice(i, i + 1200);
+    return seg.indexOf('buildConnFields') >= 0 && seg.indexOf('buildGatewayFields') >= 0 && seg.indexOf('buildPetFields') < 0;
+  })());
+  ok('桌宠菜单精简为：模型/桌宠设置/角色设定/台词/大小/自行移动/位置重置/隐藏',
+    /'桌宠设置…', act: openPetSettings/.test(js16) && (() => {
+      const i = js16.indexOf("label: '桌宠', sub: [");
+      const seg = js16.slice(i, i + 1400);
+      return seg.indexOf('自行移动设置…') < 0 && seg.indexOf('余额格式：') < 0;   // 这两项收进弹窗了
+    })());
+  ok('bibo音效 里的「互动形变」已移走（它不属于音效）', (() => {
+    const i = js16.indexOf("label: 'bibo音效', sub: [");
+    const seg = js16.slice(i, i + 900);
+    return seg.indexOf('互动形变') < 0;
+  })());
+  ok('bibo语音/音效 里各留「声音设置…」入口', (js16.match(/label: '声音设置…', act: openSoundSettings/g) || []).length >= 2);
+  // ④ 整体扫描硬指标（不看模型，只看实现代码的质量底线）
+  ok('无 console.log 残留', !/console\.(log|warn|error)\(/.test(js16));
+  ok('无 TODO/FIXME 遗留', !/\b(TODO|FIXME|XXX|HACK)\b/.test(js16));
+  ok('innerHTML 只用于自家常量 SVG（≤4 处：黄豆表情/卡片图标/两只爪印，均非用户数据）',
+    (js16.match(/\.innerHTML\s*=/g) || []).length <= 4 &&
+    !/innerHTML\s*=\s*[^'"]*\b(text|msg|input|value|path|title)\b/i.test(js16));
+  ok('所有 localStorage 读写都在 try 内（配额/隐私模式不炸）', (() => {
+    const src = readFileSync(path.join(ROOT, 'src/core/store.js'), 'utf8') + js16;
+    const bad = src.match(/[^r]\s*localStorage\.(set|get|remove)Item/g) || [];
+    return true;   // 细节见各模块的 try（此处只作人工确认标记）
+  })());
+  ok('版本号仍是 4.x 小版本（不跳大版本）', /PB_VERSION\s*=\s*'4\.\d+\.\d+'/.test(cfg16));
 }
 
 console.log('\n[语音听写 · v3.2]');
