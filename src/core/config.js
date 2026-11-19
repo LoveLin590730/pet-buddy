@@ -44,7 +44,9 @@ const CHAT_MODELS = [
     chatModel: 'deepseek-flash',
     gatewayBase: '', gatewayKey: '', gatewayModel: '',
     size: 96,                // 桌宠显示宽度 px
-    monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+    monitor: true,           // BongoCat 式鼠标/键盘监控（眼球/手爪图层 + 键帽）
+    eyesOn: true,            // v5.2 眼球跟随鼠标（精灵图/图片皮肤叠瞳孔图层；动作包不叠）
+    eyeTune: null,           // v5.2 上传图片皮肤的眼球位置微调 {cx,cy,spacing}；null=用默认
     speechProbeText: '你好，我是坚祥数字助理！哼哼，记住了吗？',   // v4.8 试听语音用的句子（可自己改）
     /* v4.7 自行移动（散步）：桌宠自己走两步——时间/模式/速度都可调 */
     walkOn: true,            // 总开关

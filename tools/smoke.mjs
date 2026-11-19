@@ -14,7 +14,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'zipwrite.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'zipwrite.js', 'deliver.js', 'petpack.js', 'layers.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -82,6 +82,9 @@ const probe = `
   stickerStoreFits, stickerStoreUsed, archiveStickerTotal, archiveStickerList,
   extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
   petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
+  POINTER_FOLLOW, POINTER_REF_R, PRESS_HOLD_MS, BODY_LEAN, pointerTargetOf, pointerRefRadius, newPointerState, pointerStep,
+  HAND_CODES, handOfKeyCode, newPressState, pressPush, pressPop, pressActive, pressHands,
+  EYE_PLANS, EYE_TUNE_RANGE, eyeTuneOf, eyePlanOf, eyeBoxes, PAW_PLAN, pawTransform, layerPlanFor,
   WALK_MODES, WALK_SPEEDS, WALK_MARGIN, walkModeOf, walkModeLabel, walkSpeedOf, walkSpeedLabel, walkRnd, walkNextDelay,
   WALK_WARMUP_MS, WALK_ACCEL_MS, WALK_DECEL_MS, WALK_WARMUP_SLOW, walkWarmupFor, walkTrapezoid,
   walkEase, walkPosAt, walkPlan, walkSegCount, walkPauseMs,
@@ -515,6 +518,165 @@ console.log('\n[皮肤：BongoCat 与浮空爪图层 · v3.3.3]');
   ok('素材清单里不再有被移除的皮肤素材',
     JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8')).groups
       .flatMap((g) => g.files).indexOf('pet-bongocat.png') < 0);
+}
+
+console.log('\n[v5.2 图层驱动：眼球跟随 / 手爪跟随 / 按键亮起]');
+{
+  // —— 指针归一化：方向对、按参考半径折算、越界钳住
+  eq('鼠标在右边一个参考半径处 = (1,0)', P.pointerTargetOf(300, 200, 100, 200, 200), {x: 1, y: 0});
+  eq('鼠标在左上角按参考半径折算（-0.5,-0.5）', P.pointerTargetOf(0, 0, 100, 100, 200), {x: -0.5, y: -0.5});
+  eq('鼠标跑到天边也只到 (±1,±1)（不会无限偏）', P.pointerTargetOf(99999, 99999, 0, 0, 100), {x: 1, y: 1});
+  eq('参考半径非法（0）按 200 兜底，不产生 NaN', P.pointerTargetOf(200, 0, 0, 0, 0), {x: 1, y: 0});
+  eq('参考半径 2.4 倍桌宠宽（鼠标移出这个圈就到头）', P.POINTER_REF_R, 2.4);
+  ok('参考半径按视口给足幅度（96px 桌宠 + 1080p → 486px，鼠标在中距离也有活气）',
+    P.pointerRefRadius(96, 1920, 1080) === 486 && Math.abs(P.pointerRefRadius(96, 0, 0) - 230.4) < 1e-9 &&
+    P.pointerRefRadius(0, 0, 0) === 140, [P.pointerRefRadius(96, 1920, 1080), P.pointerRefRadius(96, 0, 0), P.pointerRefRadius(0, 0, 0)].join(','));
+
+  // —— 平滑：首次直接就位、逼近单调不过冲、到位后纹丝不动（不抖）、单帧位移不超速度上限
+  {
+    const st = P.newPointerState();
+    eq('平滑器第一步直接到位（不会从 0 慢慢爬）', P.pointerStep(st, 1, -1, 0.016), {x: 1, y: -1});
+    const st2 = P.newPointerState();
+    P.pointerStep(st2, 0, 0, 0.016);                       // 先就位到 0
+    let prev = 0, mono = true, over = false;
+    for (let i = 0; i < 90; i++) {
+      const p = P.pointerStep(st2, 1, 0, 0.016);
+      if (p.x < prev - 1e-9) mono = false;                 // 不许回头（回头就是抖）
+      if (p.x > 1 + 1e-9) over = true;                     // 不许过冲
+      prev = p.x;
+    }
+    ok('逼近目标单调不回头、不过冲（不抖）', mono && !over, `mono=${mono} over=${over}`);
+    eq('90 帧后精确到位（收尾贴齐）', prev, 1);
+    eq('到位后再调还是 1（不会来回微抖）', P.pointerStep(st2, 1, 0, 0.016).x, 1);
+    const st3 = P.newPointerState();
+    P.pointerStep(st3, 0, 0, 0.016);
+    const big = P.pointerStep(st3, 1, 0, 0.05);
+    ok('单帧位移不超过速度上限（甩鼠标也不会瞬移）', big.x <= P.POINTER_FOLLOW.maxSpeed * 0.05 + 1e-9, String(big.x));
+    const st4 = P.newPointerState();
+    P.pointerStep(st4, 0, 0, 0.016);
+    ok('dt 卡到 5 秒也按上限走（不会一步跳过去）', P.pointerStep(st4, 1, 0, 5).x <= P.POINTER_FOLLOW.maxSpeed * 0.05 + 1e-9);
+  }
+
+  // —— 键位 → 手：左右按打字习惯分，空格双手，认不出的键留空（运行时按双手兜底）
+  eq('左手键 KeyA → 左手', P.handOfKeyCode('KeyA'), 'left');
+  eq('右手键 KeyL → 右手', P.handOfKeyCode('KeyL'), 'right');
+  eq('空格 → 双手', P.handOfKeyCode('Space'), 'both');
+  eq('回车 → 右手（主键盘回车在右手边）', P.handOfKeyCode('Enter'), 'right');
+  eq('F5 → 右手', P.handOfKeyCode('F5'), 'right');
+  eq('不认识的键（多媒体键）→ 空串（交给兜底）', P.handOfKeyCode('MediaPlayPause'), '');
+  eq('没有 code 也不炸', P.handOfKeyCode(null), '');
+
+  // —— 按下状态机：按下亮、松开在自己那只手上再保持一会、到期复原
+  {
+    const ps = P.newPressState();
+    P.pressPush(ps, 'KeyA', P.handOfKeyCode('KeyA'), 1000);
+    eq('按下 KeyA → 亮左手', P.pressHands(ps, 1000, 150), {left: true, right: false});
+    eq('按着就一直亮（1 秒后仍然亮）', P.pressActive(ps, 2000, 150), true);
+    P.pressPop(ps, 'KeyA', 2100);
+    eq('松手瞬间仍在最短保持期内（极短敲击也看得见）', P.pressHands(ps, 2150, 150), {left: true, right: false});
+    eq('保持期过后复原（不再有手按下）', P.pressHands(ps, 2300, 150), {left: false, right: false});
+    eq('重复松开不会出问题', P.pressPop(ps, 'KeyA', 2400), false);
+    P.pressPush(ps, 'mouse:2', 'right', 3000);
+    eq('鼠标右键 → 亮右手', P.pressHands(ps, 3000, 150), {left: false, right: true});
+    P.pressPush(ps, 'Unidentified', '', 3100);
+    eq('认不出的键 = 双手按下（兜底表现）', P.pressHands(ps, 3100, 150), {left: true, right: true});
+    P.pressPop(ps, 'Unidentified', 3200); P.pressPop(ps, 'mouse:2', 3200);
+    eq('全松开 + 过保持期 = 双手都不亮', P.pressHands(ps, 3400, 150), {left: false, right: false});
+  }
+
+  // —— 眼球计划：官方图集吃量出来的坐标（不吃微调），图片皮肤吃微调且钳在合法区间
+  {
+    const sp = P.eyePlanOf('sprite', {cx: 0.1, cy: 0.8});
+    eq('官方图集的眼球坐标是量好的（忽略微调）',
+      {cx: sp.cx, cy: sp.cy, spacing: sp.spacing}, {cx: 0.573, cy: 0.512, spacing: 0.156});
+    const im = P.eyePlanOf('image', {cx: 0.42, cy: 0.3, spacing: 0.2});
+    eq('图片皮肤吃微调', {cx: im.cx, cy: im.cy, spacing: im.spacing}, {cx: 0.42, cy: 0.3, spacing: 0.2});
+    const bad = P.eyePlanOf('image', {cx: -5, cy: 99, spacing: 'x'});
+    eq('微调越界/乱值被钳住（不会把瞳孔拖出画面）',
+      {cx: bad.cx, cy: bad.cy, spacing: bad.spacing}, {cx: 0.1, cy: 0.85, spacing: 0.18});
+    eq('空设置回落到默认 50%/36%/18%', P.eyeTuneOf(null), {cx: 0.5, cy: 0.36, spacing: 0.18});
+
+    const boxes = P.eyeBoxes(P.eyePlanOf('sprite', null), 192, 208);
+    ok('官方图集的两眼框就落在量出来的位置（192×208 格）',
+      Math.abs(boxes[0].left - 85.056) < 0.05 && Math.abs(boxes[0].top - 94.848) < 0.05 &&
+      Math.abs(boxes[1].left - 115.008) < 0.05, JSON.stringify(boxes));
+    ok('眼框尺寸 20×23（贴合画出来的眼睛）',
+      Math.abs(boxes[0].w - 19.968) < 0.05 && Math.abs(boxes[0].h - 23.296) < 0.05);
+    ok('瞳孔可动范围小于"半个空档"（永远不越出眼框）',
+      boxes.every(b => b.rangeX <= b.w * 0.27 + 1e-9 && b.rangeY <= b.h * 0.27 + 1e-9));
+    const small = P.eyeBoxes(P.eyePlanOf('image', null), 96, 96 * 1.0833);
+    ok('桌宠变小 → 眼框与可动范围等比缩小（小桌宠也不会糊成一团）',
+      small[0].w < boxes[0].w * 0.55 && small[0].rangeX < boxes[0].rangeX * 0.55);
+  }
+
+  // —— 图层计划：三类皮肤各拿各的
+  {
+    const spPlan = P.layerPlanFor('sprite', null), imPlan = P.layerPlanFor('image', null), pkPlan = P.layerPlanFor('', null);
+    ok('官方图集：眼球 + 整体轻偏，不叠浮空爪', !!spPlan.eyes && !!spPlan.body && !spPlan.paws);
+    ok('上传的图片：眼球 + 手爪', !!imPlan.eyes && !!imPlan.paws && !imPlan.body);
+    ok('动作包（视频）：一个图层都不叠', !pkPlan.eyes && !pkPlan.paws && !pkPlan.body);
+    const tr = P.pawTransform(P.PAW_PLAN, 1, 0.5, 100, 200);
+    ok('手爪变换：横向偏到底 = 5% 宽 + 10°；纵向偏一半 = 1.5% 高',
+      Math.abs(tr.x - 5) < 1e-6 && Math.abs(tr.rot - 10) < 1e-6 && Math.abs(tr.y - 3) < 1e-6, JSON.stringify(tr));
+    eq('手爪不偏时完全归零（指针在正中）', P.pawTransform(P.PAW_PLAN, 0, 0, 100, 200), {x: 0, y: 0, rot: 0});
+  }
+
+  // —— 默认值：监控与眼球默认都开，微调留空（"还没对过"）
+  eq('默认开监控', P.DEFAULTS.monitor, true);
+  eq('默认开眼球跟随', P.DEFAULTS.eyesOn, true);
+  eq('眼球微调默认留空（等于没对过）', P.DEFAULTS.eyeTune, null);
+}
+
+console.log('\n[v5.2 运行时接线（产物 + CSS）]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('输入源抽象就位（INPUT 注册表 + 窗口内源）',
+    /const INPUT = \(\(\) => \{/.test(t) && /INPUT\.register\(\{/.test(t) && /id: 'window'/.test(t) && /INPUT\.use\('window'\)/.test(t));
+  ok('窗口内源监听：指针 + 键按下/键松开 + 鼠标按下/松开',
+    /addEventListener\('pointermove'/.test(t) && /addEventListener\('keydown', e => \{\s*if \(e\.repeat\)/.test(t) &&
+    /addEventListener\('keyup'/.test(t) && /addEventListener\('mousedown'/.test(t) && /addEventListener\('mouseup'/.test(t));
+  ok('键事件带 edit 标记（在输入框里打字不弹键帽）', /edit: typingIn\(e\)/.test(t) && /isContentEditable/.test(t));
+  ok('输入回调统一交给图层（不再各自 addEventListener 直接改样式）',
+    /INPUT\.subscribe\(ev => \{/.test(t) && /pressPush\(pressed/.test(t) && /handOfKeyCode\(ev\.code\)/.test(t));
+  ok('每帧驱动：rAF 里先 layerFrame 再 paintFrame，且 dt 用真实间隔',
+    /try \{ layerFrame\(dt\); \}/.test(t) && t.indexOf('layerFrame(dt)') < t.indexOf('paintFrame();\n    requestAnimationFrame(loop)') &&
+    /const dt = layerTick \? \(t - layerTick\) \/ 1000 : 0\.016;/.test(t));
+  ok('眼球图层元素与瞳孔就位', /pb2-eyes/.test(t) && /pb2-pupil/.test(t) && /eyePairs/.test(t));
+  ok('三层类名分开管：监控总开关 / 眼球 / 手爪',
+    /'pb2-monitor-on', monitorOn\(\)/.test(t) && /'pb2-eyes-on', eyesOn\(\)/.test(t) && /'pb2-paws-on', pawsOn\(\)/.test(t));
+  ok('皮肤类型决定叠什么：官方图集 = sprite、上传的图 = image、动作包 = 不叠',
+    /if \(skinMode === 'img'\) return 'image';/.test(t) && /return 'sprite';/.test(t) && /动作包（视频）：不叠图层/.test(t));
+  ok('浮空爪仍只给上传的图（素材自带手的官方图集不叠）',
+    /if \(SPRITE_SKINS\[s\]\) return false;/.test(t) && /function currentPawEnabled\(\)/.test(t));
+  ok('键帽 + 爪子复原由状态机驱动（松开后最短保持再复原）',
+    /function flashKeycap/.test(t) && /function scheduleHandReset/.test(t) && /pressHands\(pressed/.test(t));
+  ok('换皮肤 / 改尺寸会重算图层（眼球框跟着走）', /layoutLayers\(true\)/.test(t) && /layoutLayers\(\);  \/\/ v5\.2/.test(t));
+  ok('隐藏桌宠时图层停手（不在角落里空转）', /settings\.monitor !== false && !settings\.hidden;/.test(t));
+  ok('精灵图皮肤整体轻偏写进帧变换（和瞳孔一起构成"视线"）',
+    /lookPx\.x \/ \(s \|\| 1\)/.test(t) && /f\.row \+ ':' \+ f\.col \+ ':' \+ ox/.test(t));
+  ok('关掉图层会复位（不留歪着的手/偏着的眼）', /layerLive = false;/.test(t) && /paws\.style\.transform = '';/.test(t));
+  ok('桌宠设置能调眼球：开关 + 三个位置滑块',
+    /眼球跟随鼠标（官方图集/.test(t) && /眼球位置（只对上传的图片皮肤生效/.test(t) &&
+    /rangeRow\(body, '左右位置'/.test(t) && /rangeRow\(body, '上下位置'/.test(t) && /rangeRow\(body, '两只眼睛的间距'/.test(t));
+  ok('保存时写回 eyesOn / eyeTune（与默认一致就存 null，保持"没对过"语义）',
+    /settings\.eyesOn = f\.eyesSel\.value === '1';/.test(t) && /settings\.eyeTune = \(Math\.abs\(tune\.cx - dflt\.cx\)/.test(t));
+  ok('通用滑块行 rangeRow 落地（模型包的可调参数将来共用）',
+    /function rangeRow\(body, label, obj, key, min, max, step, fmt\)/.test(t));
+  ok('切到自定义图时提示一次怎么对准眼睛', /eyeTipDone/.test(t) && /想对准它的眼睛：右键 → 桌宠设置 → 眼球位置/.test(t));
+  ok('CSS：手爪显隐改由 pb2-paws-on 控制（官方图集不再冒出浮空爪）',
+    /\.pb2-pet-wrap\.pb2-paws-on \.pb2-paws \{ display: block; \}/.test(css) &&
+    !/\.pb2-monitor-on \.pb2-paws \{ display: block/.test(css));
+  ok('CSS：眼球层容器 + 瞳孔（裁剪在眼框内）',
+    /\.pb2-pet-wrap\.pb2-eyes-on \.pb2-eyes \{ display: block; \}/.test(css) &&
+    /\.pb2-eye \{[^}]*overflow: hidden/.test(css) && /\.pb2-pupil \{[^}]*width: 46%/.test(css));
+  ok('瞳孔占比与可动范围匹配（按 CSS 的 46% 算，两轴都留了空档）',
+    /width: 46%/.test(css) && P.EYE_PLANS.sprite.rangeX <= 0.27 && P.EYE_PLANS.sprite.rangeY <= 0.27 &&
+    P.EYE_PLANS.image.rangeX <= 0.27 && P.EYE_PLANS.image.rangeY <= 0.27);
+  {
+    const pawBlock = (css.match(/\.pb2-paws \{[^}]*\}/) || [''])[0];
+    ok('手爪容器不再叠 CSS transition（否则和每帧驱动打架）', !!pawBlock && !/transition/.test(pawBlock), pawBlock);
+  }
 }
 
 console.log('\n[素材清单 · v3.1.0]');
@@ -1240,9 +1402,9 @@ console.log('\n[v5.3 设置拆分为 通用/聊天/声音]');
   ok('通用设置含：通道/模型/额度/每元积分/网关 baseURL/令牌/网关模型名（桌宠项 v4.16 起归「桌宠设置」）',
     ['连接与额度', '聊天通道', '聊天模型（助手通道）', '剩余额度（元，自填可选', '每元积分', '网关 / 身份牌',
      '网关 baseURL', '网关令牌 / 身份牌', '网关模型名'].every(t => js3.indexOf(t) >= 0));
-  ok('桌宠项都在「桌宠设置」弹窗里（称呼/大小/形变/监控/余额格式/开场白/散步/摆件）',
-    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat 式鼠标/键盘监控', '余额气泡格式', '开场白（启动第一句',
-     '自行移动（散步）', '摆件与外观'].every(t => js3.indexOf(t) >= 0));
+  ok('桌宠项都在「桌宠设置」弹窗里（称呼/大小/形变/监控/眼球/余额格式/开场白/散步/摆件）',
+    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat 式鼠标/键盘监控', '眼球跟随鼠标', '眼球位置',
+     '两只眼睛的间距', '余额气泡格式', '开场白（启动第一句', '自行移动（散步）', '摆件与外观'].every(t => js3.indexOf(t) >= 0));
   // —— 声音设置只留声音
   ok('声音设置含语音全项 + 音效 + 语音闲聊',
     ['语音播报（聊天回复念出来）', '朗读模式', 'bibo音色', '朗读音色', '合成音量', '合成语速', '朗读语速',
@@ -1386,8 +1548,8 @@ console.log('\n[v4.16 菜单精简 + 二级弹窗回退修复 + 整体扫描]');
   // ③ 桌宠设置：新弹窗 + 通用设置只管连接
   ok('新增「桌宠设置」弹窗（外观 + 称呼说话 + 散步 + 摆件）',
     /function openPetSettings\(\)/.test(js16) && /openDialog\('桌宠设置'/.test(js16));
-  ok('桌宠设置含：称呼/大小/形变/监控/余额格式/开场白 + 散步入口 + 模型/位置/隐藏',
-    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat', '余额气泡格式', '开场白（启动第一句',
+  ok('桌宠设置含：称呼/大小/形变/监控/眼球位置/余额格式/开场白 + 散步入口 + 模型/位置/隐藏',
+    ['我的称呼', '大小（40–200 px', '互动形变', 'BongoCat', '眼球跟随鼠标', '眼球位置', '余额气泡格式', '开场白（启动第一句',
      '自行移动设置…', '现在就走两步', '修改模型…', '重置位置', '隐藏桌宠'].every(t => js16.indexOf(t) >= 0));
   ok('通用设置不再含桌宠字段（只留连接与额度 + 网关身份牌）', (() => {
     const i = js16.indexOf("openDialog('通用设置'");

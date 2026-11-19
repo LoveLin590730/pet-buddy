@@ -69,7 +69,25 @@
   pawL.innerHTML = PAW_SVG; pawR.innerHTML = PAW_SVG; // 内置装饰 SVG，非动态内容
   const keycap = $new('div', 'pb2-keycap');
   paws.appendChild(pawL); paws.appendChild(pawR); paws.appendChild(keycap);
-  petWrap.appendChild(viewport); petWrap.appendChild(imgSkin); petWrap.appendChild(paws);
+  /* v5.2 眼球图层：两颗瞳孔叠在角色眼睛上、跟着指针动（裁剪在眼框内，不会跑到脸上别处） */
+  const eyes = $new('div', 'pb2-eyes');
+  const eyePairs = [
+    { box: $new('div', 'pb2-eye pb2-eye-l'), pupil: $new('i', 'pb2-pupil') },
+    { box: $new('div', 'pb2-eye pb2-eye-r'), pupil: $new('i', 'pb2-pupil') },
+  ];
+  for (const pair of eyePairs) { pair.box.appendChild(pair.pupil); eyes.appendChild(pair.box); }
+  petWrap.appendChild(viewport); petWrap.appendChild(imgSkin); petWrap.appendChild(paws); petWrap.appendChild(eyes);
+
+  /* ---- v5.2 图层状态：放在这里（applySkin 首次调用就会用到 applyMonitor/layoutLayers） ---- */
+  let layerPlanNow = null;                      // 当前皮肤的图层计划（眼球框 / 手爪 / 整体轻偏）
+  let eyeBoxesNow = [];                         // 眼框像素位置（随尺寸重算）
+  let layerKeyCache = '';                       // 上次算过的"皮肤+尺寸"（没变就不重算）
+  let layerLive = false;                        // 上一帧图层是不是活的（用来做复位）
+  let booted = false, eyeTipDone = false;        // 启动完成标记 / 眼球位置提示只提一次
+  const lookPx = { x: 0, y: 0 };                // 精灵图皮肤的整体轻偏（像素，paintFrame 用）
+  const pointerNow = { x: 0, y: 0, has: false }; // 最近的指针位置（页面坐标）
+  const smooth = newPointerState();             // 指针平滑器（不抖 + 有速度上限）
+  const pressed = newPressState();              // 按键/鼠标按下状态机
   const bubble = $new('div', 'pb2-bubble');
   bubble.hidden = true;
   const restoreDot = $new('div', 'pb2-restore-dot', '🐟');
@@ -406,6 +424,13 @@
       };
     }
     applyMonitor();
+    /* v5.2：切到"自己上传的图"、眼球位置还没对过 → 提一次（瞳孔默认贴在中上部，对准才好看；
+     * 只对自定义皮肤提示：官方图集的坐标是量好的，动作包不叠图层）。 */
+    const isCustom = !IMAGE_SKINS[s] && (settings.customSkins || []).some(x => x.id === s);
+    if (booted && isCustom && !settings.eyeTune && settings.eyesOn !== false && !eyeTipDone) {
+      eyeTipDone = true;
+      bubbleSay('眼珠图层默认贴在中上部～想对准它的眼睛：右键 → 桌宠设置 → 眼球位置', 6400);
+    }
   }
   applySkin();
   probeAssetBase((base, how, tried) => {
@@ -414,6 +439,7 @@
     log(base ? 'info' : 'error', '素材基准 = ' + (base || '(未探测到，用回退 ' + ASSET_DIR + ')') +
       ' ｜ 候选试过 ' + tried.length + ' 个：' + tried.join(' , '));
     applySkin();   // 用最终前缀重画皮肤与贴纸
+    booted = true; // 启动期的 applySkin 不算"用户切的皮肤"（上面的眼球提示只在之后提）
   });
 
   function paintFrame() {
@@ -421,15 +447,29 @@
     const action = transient && performance.now() < transientUntil ? transient : 'idle';
     if (action !== petState) { petState = action; stateStart = performance.now(); }
     const f = frameOf(action, performance.now() - stateStart);
-    const key = f.row + ':' + f.col;
+    const s = (settings.size || 96) / SPRITE.CW;
+    /* v5.2「看鼠标」：整体朝指针轻偏一点（≤3% 宽，跟瞳孔一起构成"视线"）。
+       位移量按原始格像素给（先除回 scale），量化到 0.5px——省得每帧都重写样式。 */
+    const ox = Math.round((lookPx.x / (s || 1)) * 2) / 2;
+    const oy = Math.round((lookPx.y / (s || 1)) * 2) / 2;
+    const key = f.row + ':' + f.col + ':' + ox + ':' + oy;
     if (key !== lastPaint) {
       // 整图平移到目标格：纯 GPU 合成（transform），不触发重绘 → 动作切换不闪烁
-      const s = (settings.size || 96) / SPRITE.CW;
-      sprite.style.transform = 'scale(' + s + ') translate3d(' + (-SPRITE.CW * f.col) + 'px,' + (-SPRITE.CH * f.row) + 'px,0)';
+      sprite.style.transform = 'scale(' + s + ') translate3d(' + (-SPRITE.CW * f.col + ox) + 'px,' + (-SPRITE.CH * f.row + oy) + 'px,0)';
       lastPaint = key;
     }
   }
-  (function loop() { paintFrame(); requestAnimationFrame(loop); })();
+  /* v5.2：一个 rAF 同时驱动两件事——先按最新指针算图层（眼球位移/手爪变换），再画精灵图帧。
+     dt 用真实间隔（卡帧时的位移也会被速度上限吃掉，不会一步跳过去）。 */
+  let layerTick = 0;
+  (function loop() {
+    const t = performance.now();
+    const dt = layerTick ? (t - layerTick) / 1000 : 0.016;
+    layerTick = t;
+    try { layerFrame(dt); } catch (e) { /* 图层出错也不能拖垮动画 */ }
+    paintFrame();
+    requestAnimationFrame(loop);
+  })();
 
   // 偶尔挥手/跳跃；v4.1 图片皮肤（含上传的动图）改用 CSS 整体小动作；
   // v4.3 动作包皮肤直接用包里的「随机表演」池（80 个动作，比 CSS 小动作丰富得多）
@@ -494,6 +534,7 @@
   function refreshLayout() {
     applyPos(settings.pos || placeDefault());
     lastPaint = ''; // 尺寸变化 → 下一帧按新 scale 重画
+    layoutLayers();  // v5.2：桌宠变大变小，眼框/爪子范围跟着重算
     try { chatpFollowPet(); } catch (e) { /* 面板还没建 */ }   // v4.6：桌宠动了，面板跟着贴头顶
   }
   refreshLayout();
@@ -799,23 +840,96 @@
     onCancel: () => bubbleSay('（松开太快，这次不算）', 2600),
   });
 
-  /* ================= BongoCat 式鼠标 / 键盘监控 =================
-     女仆 / 自定义皮肤开启监控后：
-     · 鼠标在页面内移动 → 双爪整体转向鼠标方向
-     · 按下鼠标左/右键 → 对应爪子按下
-     · 敲键盘（非输入框时）→ 头顶弹出键帽徽章 + 爪子按下弹跳
-     说明：浏览器安全模型限制，键盘/鼠标监听只在助手页面聚焦时生效。 */
-  function applyMonitor() {
-    const on = settings.monitor !== false && skinMode === 'img' && currentPawEnabled();
-    petWrap.classList.toggle('pb2-monitor-on', on);
+  /* ================= v5.2 输入源 → 图层：眼球跟随 / 手爪跟随 / 按键亮起 =================
+     输入源（inputSource）抽象，事件形状 { kind, code, key, down, x, y, t, edit? }（见 core/layers.js 头注）。
+     本轮只有「助手窗口内」一个源——**页面聚焦时才有事件，切到别的程序就不跟了**，这是现阶段的
+     天花板；宿主侧全局键鼠（C1）将来按同一形状 register + use 即可，下面的消费端一行不用改。 */
+  const INPUT = (() => {
+    const subs = [], sources = {};
+    let cur = null;
+    function emit(ev) {
+      for (const fn of subs.slice()) { try { fn(ev); } catch (err) { log('err', '输入回调异常：' + err.message); } }
+    }
+    return {
+      subscribe(fn) { subs.push(fn); return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); }; },
+      register(src) { if (src && src.id) sources[src.id] = src; return src; },
+      use(id) {
+        const src = sources[id];
+        if (!src || cur === src) return !!src;
+        if (cur && cur.detach) { try { cur.detach(); } catch (e) { /* 换源失败也要继续 */ } }
+        cur = src;
+        if (src.attach) { try { src.attach(emit); } catch (e) { log('err', '输入源启用失败（' + id + '）：' + e.message); } }
+        return true;
+      },
+      current() { return cur; },
+      sources() { return Object.keys(sources); },
+    };
+  })();
+  /** 事件发生在输入框里？（边打字边弹键帽很吵，窗口内的源据此跳过） */
+  function typingIn(e) {
+    const el = e && e.target;
+    return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+  }
+  /** 「助手窗口内」输入源：页面上的鼠标与键盘 */
+  INPUT.register({
+    id: 'window',
+    desc: '助手窗口内（页面聚焦时生效）',
+    attach(emit) {
+      const t = () => performance.now();
+      document.addEventListener('pointermove', e => emit({ kind: 'pointer', x: e.clientX, y: e.clientY, t: t() }), { passive: true });
+      document.addEventListener('mousedown', e => emit({ kind: 'mouse', code: 'mouse:' + e.button, down: true, x: e.clientX, y: e.clientY, t: t() }), true);
+      document.addEventListener('mouseup', e => emit({ kind: 'mouse', code: 'mouse:' + e.button, down: false, x: e.clientX, y: e.clientY, t: t() }), true);
+      document.addEventListener('keydown', e => {
+        if (e.repeat) return;          // 长按只算一次按下（否则键帽一直闪）
+        emit({ kind: 'key', code: e.code || e.key, key: e.key, down: true, edit: typingIn(e), t: t() });
+      });
+      document.addEventListener('keyup', e => emit({ kind: 'key', code: e.code || e.key, key: e.key, down: false, edit: typingIn(e), t: t() }));
+    },
+  });
+  INPUT.use('window');
+
+  /* ---- 图层开关与布局（逻辑都在 core/layers.js，这里只做"取计划 + 落到 DOM"） ---- */
+  /** 监控总开关：开着就接管键帽与按下表现；叠哪些图层由皮肤类型定 */
+  function monitorOn() { return settings.monitor !== false && !settings.hidden; }
+  /** 当前皮肤属于哪一类图层：image=上传的图（眼球+手爪）/ sprite=官方图集（眼球+整体轻偏）/ 其它=不叠 */
+  function layerKindOf() {
+    if (skinMode === 'img') return 'image';
+    if (skinMode === 'fish' && SPRITE_SKINS[settings.skin || 'fish']) return 'sprite';
+    return '';   // 动作包（视频）：不叠图层——视频里角色自己在动，叠上去对不上
   }
   /** 浮空爪图层要不要叠（v3.3.3）：素材自带爪子/桌面的内置皮肤不叠，只保留它自己的互动 */
   function currentPawEnabled() {
     const s = settings.skin || 'fish';
     const im = IMAGE_SKINS[s];
     if (im) return im.paw !== false;      // 内置静态皮肤自己声明（BongoCat = 不叠）
-    if (SPRITE_SKINS[s]) return false;    // 精灵图皮肤不用爪图层
+    if (SPRITE_SKINS[s]) return false;    // 精灵图皮肤不用浮空爪（她自带手）
     return true;                          // 用户上传的图：默认叠（适合没有手的角色图）
+  }
+  function pawsOn() { return monitorOn() && skinMode === 'img' && currentPawEnabled(); }
+  function eyesOn() { return monitorOn() && settings.eyesOn !== false && !!(layerPlanNow && layerPlanNow.eyes); }
+  /** 图层计划与眼框像素：换皮肤 / 改尺寸 / 改设置都要重算（没变就跳过，省得每帧碰样式） */
+  function layoutLayers(force) {
+    const s = petSize();
+    const key = layerKindOf() + '|' + s.w + 'x' + s.h + '|' + JSON.stringify(settings.eyeTune || null);
+    if (!force && key === layerKeyCache) return;
+    layerKeyCache = key;
+    layerPlanNow = layerPlanFor(layerKindOf(), settings.eyeTune);
+    eyeBoxesNow = layerPlanNow.eyes ? eyeBoxes(layerPlanNow.eyes, s.w, s.h) : [];
+    for (let i = 0; i < eyePairs.length; i++) {
+      const b = eyeBoxesNow[i];
+      if (!b) continue;
+      const el = eyePairs[i].box;
+      el.style.left = b.left.toFixed(1) + 'px';
+      el.style.top = b.top.toFixed(1) + 'px';
+      el.style.width = b.w.toFixed(1) + 'px';
+      el.style.height = b.h.toFixed(1) + 'px';
+    }
+  }
+  function applyMonitor() {
+    layoutLayers(true);
+    petWrap.classList.toggle('pb2-monitor-on', monitorOn());
+    petWrap.classList.toggle('pb2-eyes-on', eyesOn());
+    petWrap.classList.toggle('pb2-paws-on', pawsOn());
   }
   /** BongoCat 皮肤专属互动：键鼠一动就切到「爪子按下帧」，110ms 后切回 */
   let pawFrameTimer = null, pawPulseAt = 0;
@@ -831,7 +945,7 @@
     return true;
   }
   function keyLabel(e) {
-    const k = e.key;
+    const k = String((e && e.key) == null ? '' : e.key);
     if (k === ' ') return 'Space';
     if (k === 'Enter') return '⏎';
     if (k === 'Escape') return 'Esc';
@@ -841,49 +955,102 @@
     if (k === 'ArrowLeft') return '←';
     if (k === 'ArrowRight') return '→';
     if (k.length === 1) return k.toUpperCase();
-    return k.slice(0, 7);
+    if (k) return k.slice(0, 7);
+    /* v5.2：输入法/某些浏览器给不出 key 时用 code 兜底（KeyA → A、Digit1 → 1、F5 原样） */
+    const code = String((e && e.code) || '');
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+    if (/^Numpad[A-Za-z0-9]+$/.test(code)) return code.slice(6, 9);
+    return code.slice(0, 7) || '?';
   }
-  let keycapTimer = null;
-  function monitorInteractive() {
-    return settings.monitor !== false && skinMode === 'img' && !settings.hidden;
+
+  /* ---- 每帧一次：指针平滑 → 眼球位移 / 手爪变换（键帽与按下状态由事件驱动） ---- */
+  function layerFrame(dtSec) {
+    const live = monitorOn() && layerPlanNow && (layerPlanNow.eyes || layerPlanNow.paws);
+    if (!live) {
+      if (layerLive) {          // 刚从"有图层"变成没有：复位，别留下歪着的手、偏着的眼
+        layerLive = false;
+        smooth.ready = false;
+        lookPx.x = 0; lookPx.y = 0; lastPaint = '';
+        paws.style.transform = '';
+        for (const pair of eyePairs) pair.pupil.style.transform = '';
+      }
+      return;
+    }
+    layerLive = true;
+    let tx = 0, ty = 0;
+    if (pointerNow.has) {
+      const r = petWrap.getBoundingClientRect();
+      const aim = pointerTargetOf(pointerNow.x, pointerNow.y, r.left + r.width / 2, r.top + r.height * 0.55,
+        pointerRefRadius(r.width, window.innerWidth, window.innerHeight));
+      tx = aim.x; ty = aim.y;
+    }
+    const p = pointerStep(smooth, tx, ty, dtSec);
+    const sz = petSize();
+    if (layerPlanNow.body) {          // 官方图集：整体朝指针轻偏一点（和瞳孔一起构成"视线"）
+      lookPx.x = p.x * layerPlanNow.body.rangeX * sz.w;
+      lookPx.y = p.y * layerPlanNow.body.rangeY * sz.h;
+    } else if (lookPx.x || lookPx.y) { lookPx.x = 0; lookPx.y = 0; lastPaint = ''; }
+    if (layerPlanNow.eyes) {          // 瞳孔在各自眼框内动（眼框已按尺寸算好）
+      for (let i = 0; i < eyePairs.length; i++) {
+        const b = eyeBoxesNow[i];
+        if (!b) continue;
+        eyePairs[i].pupil.style.transform =
+          'translate3d(' + (p.x * b.rangeX).toFixed(2) + 'px,' + (p.y * b.rangeY).toFixed(2) + 'px,0)';
+      }
+    }
+    if (layerPlanNow.paws) {          // 手/爪：朝指针方向偏 + 转（同一个平滑值驱动，不跟事件频率抖）
+      const tr = pawTransform(layerPlanNow.paws, p.x, p.y, sz.w, sz.h);
+      paws.style.transform = 'rotate(' + tr.rot.toFixed(1) + 'deg) translate(' + tr.x.toFixed(1) + 'px,' + tr.y.toFixed(1) + 'px)';
+    }
   }
-  document.addEventListener('pointermove', e => {
-    if (!monitorInteractive()) { paws.style.transform = 'rotate(0deg)'; return; }
-    pawFramePulse();                       // BongoCat 皮肤：鼠标一动爪子亮一下
-    const r = petWrap.getBoundingClientRect();
-    const cx = r.left + r.width / 2, cy = r.top + r.height * 0.55;
-    const dx = e.clientX - cx, dy = e.clientY - cy;
-    if (Math.hypot(dx, dy) < 40) { paws.style.transform = 'rotate(0deg)'; return; }
-    const ang = Math.atan2(dy, dx) * 180 / Math.PI; // -180..180，0=右
-    const clamped = clamp(ang > 90 || ang < -90 ? (ang > 0 ? 90 : -90) : ang, -26, 26);
-    paws.style.transform = 'rotate(' + (clamped * 0.35).toFixed(1) + 'deg)';
-  }, { passive: true });
-  document.addEventListener('mousedown', e => {
-    if (!monitorInteractive()) return;
-    pawFramePulse();
-    if (e.button === 0) pawL.classList.add('pb2-down');
-    if (e.button === 2) pawR.classList.add('pb2-down');
-  }, true);
-  document.addEventListener('mouseup', () => {
-    pawL.classList.remove('pb2-down'); pawR.classList.remove('pb2-down');
-  }, true);
-  document.addEventListener('keydown', e => {
-    if (!monitorInteractive()) return;
-    const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return; // 打字不弹
-    pawFramePulse();                       // BongoCat 皮肤：敲键盘爪子亮一下
-    keycap.textContent = keyLabel(e);
+
+  /* ---- 按下/松开：键帽 + 手按下（认不出键位时的兜底表现就是"手按下"） ---- */
+  let keycapTimer = null, handResetTimer = null;
+  function flashKeycap(text) {
+    keycap.textContent = text;
     keycap.classList.remove('pb2-show');
     void keycap.offsetWidth; // 重启动画
     keycap.classList.add('pb2-show');
-    if (e.key === ' ' || e.key === 'Enter') { pawL.classList.add('pb2-down'); pawR.classList.add('pb2-down'); }
-    else if (e.key.length === 1) pawL.classList.add('pb2-down');
-    else pawR.classList.add('pb2-down');
     if (keycapTimer) clearTimeout(keycapTimer);
-    keycapTimer = setTimeout(() => {
-      keycap.classList.remove('pb2-show');
-      pawL.classList.remove('pb2-down'); pawR.classList.remove('pb2-down');
-    }, 650);
+    keycapTimer = setTimeout(() => { keycap.classList.remove('pb2-show'); }, 650);
+  }
+  /** 把按下状态落到爪子上：键盘按左右手分、鼠标按左右键分（认不出的键 = 双手），松开即复原 */
+  function applyHands() {
+    const on = pawsOn();
+    const h = pressHands(pressed, performance.now(), PRESS_HOLD_MS);
+    pawL.classList.toggle('pb2-down', !!(on && h.left));
+    pawR.classList.toggle('pb2-down', !!(on && h.right));
+    return h;
+  }
+  /** 松开后的"最短保持"到期时再刷一次手（不然爪子会一直按着不复原） */
+  function scheduleHandReset() {
+    if (handResetTimer) clearTimeout(handResetTimer);
+    handResetTimer = setTimeout(() => { handResetTimer = null; applyHands(); }, PRESS_HOLD_MS + 30);
+  }
+
+  /* ---- 消费输入：指针只记位置（每帧再算平滑），按键/鼠标进状态机 ---- */
+  INPUT.subscribe(ev => {
+    if (!monitorOn()) return;
+    if (ev.kind === 'pointer') {
+      pointerNow.x = ev.x; pointerNow.y = ev.y; pointerNow.has = true;
+      pawFramePulse();                                  // BongoCat 皮肤：鼠标一动爪子亮一下
+      return;
+    }
+    if (ev.edit) return;                                // 在输入框里打字不算（不弹键帽打扰）
+    if (ev.kind === 'key') {
+      if (ev.down) {
+        pressPush(pressed, ev.code, handOfKeyCode(ev.code), ev.t);
+        flashKeycap(keyLabel(ev));
+      } else { pressPop(pressed, ev.code, ev.t); }
+    } else if (ev.kind === 'mouse') {
+      const hand = ev.code === 'mouse:0' ? 'left' : (ev.code === 'mouse:2' ? 'right' : 'both');
+      if (ev.down) pressPush(pressed, ev.code, hand, ev.t);
+      else pressPop(pressed, ev.code, ev.t);
+    } else { return; }
+    applyHands();
+    scheduleHandReset();
+    pawFramePulse();
   });
 
   /* ---- 右键菜单（v3.6：分栏整理 —— 聊天 / bibo语音与音效 / 桌宠 / 设置）
@@ -1154,7 +1321,7 @@
   document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target)) closeMenuFully(); }, true);
   restoreDot.addEventListener('click', () => { settings.hidden = false; saveSettings(); applyHidden(); refreshLayout(); });
 
-  function applyHidden() { root.classList.toggle('pb2-hidden-mode', !!settings.hidden); walkHalt(); }
+  function applyHidden() { root.classList.toggle('pb2-hidden-mode', !!settings.hidden); walkHalt(); applyMonitor(); }
   applyHidden();
 
   /* ================= 弹窗基建 ================= */
@@ -1224,8 +1391,7 @@
   }
 
   /* ---- v4.8 试听文本（试听语音说什么，自己写） ---- */
-  const PROBE_DEFAULT = '你好，我是坚祥数字助理！哼哼，记住了吗？';
-  function probeText() {
+  const PROBE_DEFAULT = '你好，我是坚祥数字助理！哼哼，记住了吗？';  function probeText() {
     const t = String(settings.speechProbeText == null ? PROBE_DEFAULT : settings.speechProbeText).trim();
     return t || PROBE_DEFAULT;
   }
@@ -1260,6 +1426,19 @@
     const b = $new('button', 'pb2-chip' + (on ? ' pb2-chip-on' : ''), label);
     b.addEventListener('click', fn);
     return b;
+  }
+
+  /** v5.2 通用滑块行：label + range + 当前值提示；拖动即写回 obj[key]（值以整数百分比存，
+   *  保存时再换算成比例）。眼球位置那三个滑块用它，将来模型包里的可调参数也走同一套。 */
+  function rangeRow(body, label, obj, key, min, max, step, fmt) {
+    body.appendChild($new('label', null, label));
+    const r = $new('input'); r.type = 'range';
+    r.min = String(min); r.max = String(max); r.step = String(step);
+    r.value = String(clamp(Number(obj[key]) || min, min, max));
+    const hint = $new('div', 'pb2-hint', fmt ? fmt(Number(r.value)) : String(r.value));
+    r.addEventListener('input', () => { obj[key] = Number(r.value); if (fmt) hint.textContent = fmt(Number(r.value)); });
+    body.appendChild(r); body.appendChild(hint);
+    return r;
   }
 
   /** v5.1 统一的文件选择行：隐藏原生控件，用按钮触发，右侧显示选中的文件名。
@@ -2285,7 +2464,7 @@
       jellySel.appendChild(op);
     });
     body.appendChild(jellySel); F.jellySel = jellySel;
-    body.appendChild($new('label', null, 'BongoCat 式鼠标/键盘监控（女仆/自定义皮肤：爪子跟随鼠标、按键弹键帽）'));
+    body.appendChild($new('label', null, 'BongoCat 式鼠标/键盘监控（页面聚焦时生效：眼球跟鼠标看、爪子跟随、按键弹键帽）'));
     const mon = $new('select');
     [['1', '开启（页面聚焦时生效）'], ['0', '关闭']].forEach(([v, l]) => {
       const op = $new('option', null, l); op.value = v;
@@ -2293,6 +2472,23 @@
       mon.appendChild(op);
     });
     body.appendChild(mon); F.mon = mon;
+    body.appendChild($new('label', null, '眼球跟随鼠标（官方图集 / 上传的图片叠瞳孔图层；动作包不叠）'));
+    const eyesSel = $new('select');
+    [['1', '开启'], ['0', '关闭']].forEach(([v, l]) => {
+      const op = $new('option', null, l); op.value = v;
+      if ((settings.eyesOn !== false ? '1' : '0') === v) op.selected = true;
+      eyesSel.appendChild(op);
+    });
+    body.appendChild(eyesSel); F.eyesSel = eyesSel;
+    body.appendChild($new('label', null, '眼球位置（只对上传的图片皮肤生效；官方形象的坐标是量好的）'));
+    const tune = eyeTuneOf(settings.eyeTune);      // 洗成合法比例再上滑块
+    const tuneEdit = { cx: Math.round(tune.cx * 100), cy: Math.round(tune.cy * 100), spacing: Math.round(tune.spacing * 100) };
+    F.tuneEdit = tuneEdit;
+    rangeRow(body, '左右位置', tuneEdit, 'cx', 10, 90, 1, v => '左右 ' + Math.round(v) + '%');
+    rangeRow(body, '上下位置', tuneEdit, 'cy', 6, 85, 1, v => '上下 ' + Math.round(v) + '%');
+    rangeRow(body, '两只眼睛的间距', tuneEdit, 'spacing', 4, 60, 1, v => '眼距 ' + Math.round(v) + '%');
+    body.appendChild($new('div', 'pb2-hint',
+      '默认：左右 50% · 上下 36% · 眼距 18%（对着自己上传的图，把两个瞳孔拖到它的眼睛上就行）。'));
     body.appendChild($new('label', null, '余额气泡格式（点一下桌宠时怎么念账）'));
     const balStyleSel = $new('select');
     [['short', '简洁：还剩 X 分（约 Y 元）· 今日 +N 分'],
@@ -2344,6 +2540,12 @@
         settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
         settings.jellyOn = f.jellySel.value === '1';
         settings.monitor = f.mon.value === '1';
+        settings.eyesOn = f.eyesSel.value === '1';
+        /* 眼球位置：与默认一致就存 null（保持"还没对过"的语义，换自定义图时会再提示一次怎么对齐） */
+        const tune = { cx: f.tuneEdit.cx / 100, cy: f.tuneEdit.cy / 100, spacing: f.tuneEdit.spacing / 100 };
+        const dflt = eyeTuneOf(null);
+        settings.eyeTune = (Math.abs(tune.cx - dflt.cx) < 1e-6 && Math.abs(tune.cy - dflt.cy) < 1e-6 &&
+          Math.abs(tune.spacing - dflt.spacing) < 1e-6) ? null : tune;
         settings.balanceStyle = f.balStyleSel.value;
         settings.greeting = f.greetingInp.value.trim();
         saveSettings(); applyMonitor(); refreshLayout();
@@ -3060,7 +3262,9 @@
       cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel, cyclePetSize, petSizeLabel, jellyPulse, toggleJelly,
       openLineEditor, aiGenLines, pokeLines, pickPokeLine, maybeAutoRefreshLines, POKE_DEFAULT,
       synthPaced, speechSegments, pauseOf, fetchTtsVoices, ttsVoiceLabel, cycleTtsVoice, ttsVoiceList,
-      els2: { viewport, sprite, paws, pawL, pawR, keycap },
+      els2: { viewport, sprite, paws, pawL, pawR, keycap, eyes, eyePairs },
+      INPUT, layerFrame, layoutLayers, applyHands, flashKeycap,
+      layerState: () => ({ plan: layerPlanNow, boxes: eyeBoxesNow, pointer: pointerNow, smooth, pressed }),
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,
       sendViaMock,

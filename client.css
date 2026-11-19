@@ -6,15 +6,25 @@
    icon.png 必定存在，拿它当"探针"。 */
 :root { --pb2-asset-base: url("icon.png"); }
 
-/* ---------- BongoCat 式鼠标/键盘监控图层（女仆/自定义皮肤可用） ---------- */
+/* ---------- BongoCat 式鼠标/键盘监控图层（眼球 / 手爪 / 键帽） ----------
+   v5.2：手爪层的显隐改由 pb2-paws-on 控制（官方图集皮肤也开监控——它只要眼球层，
+   不叠浮空爪）；手爪变换现在每帧由 JS 写入（平滑值），所以容器本身不再加 transition。 */
 .pb2-paws { position: absolute; inset: -14px -10px -2px; pointer-events: none; display: none; z-index: 2;
-  transform: rotate(0deg); transition: transform .08s ease-out; }
-.pb2-pet-wrap.pb2-monitor-on .pb2-paws { display: block; }
+  transform: rotate(0deg); }
+.pb2-pet-wrap.pb2-paws-on .pb2-paws { display: block; }
 .pb2-paw { position: absolute; bottom: 4px; width: 30px; height: 26px; transition: transform .07s ease-out; }
 .pb2-paw.pb2-paw-l { left: -6px; transform-origin: 70% 90%; }
 .pb2-paw.pb2-paw-r { right: -6px; transform-origin: 30% 90%; }
 .pb2-paw.pb2-down { transform: translateY(5px) rotate(-14deg); }
 .pb2-paw.pb2-paw-r.pb2-down { transform: translateY(5px) rotate(14deg); }
+/* v5.2 眼球图层：两颗瞳孔跟着指针动；眼框由 JS 按皮肤计划定位（比例→像素），
+   瞳孔裁剪在眼框内（border-radius 50%）——所以永远只会在眼睛里动，不会跑到脸上别处。 */
+.pb2-eyes { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 1; }
+.pb2-pet-wrap.pb2-eyes-on .pb2-eyes { display: block; }
+.pb2-eye { position: absolute; overflow: hidden; border-radius: 50%; }
+.pb2-pupil { position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; margin: -23% 0 0 -23%;
+  border-radius: 50%; will-change: transform;
+  background: radial-gradient(circle at 34% 30%, #ffffff 0 16%, #33487f 42%, #1a2450 100%); }
 .pb2-keycap { position: absolute; top: -30px; left: 50%; transform: translateX(-50%) scale(.6); min-width: 30px; height: 26px;
   padding: 0 7px; border-radius: 6px; background: linear-gradient(180deg, #ffffff, #dfe7fb); border: 1.5px solid #9db4e8;
   box-shadow: 0 3px 0 #9db4e8, 0 5px 10px rgba(40,60,140,.25); color: #3d519c; font-size: 13px; font-weight: 700;
