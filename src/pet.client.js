@@ -243,6 +243,7 @@
 
   /* ---- 单击 / 双击（260ms 区分） / 拖动 / 长按 / 连戳 ---- */
   let clickTimer = null, pendingSingle = null;
+  let pendingSpecialLine = '';   // v3.10.1：连戳/摸头等特殊台词，交给下一次单击在同一气泡里说
   let drag = null;
   let suppressClickUntil = 0;
   let pokeCount = 0, pokeTimer = null;     // 连戳计数（1.4s 窗口）
@@ -321,11 +322,13 @@
     pokeCount++;
     if (pokeTimer) clearTimeout(pokeTimer);
     pokeTimer = setTimeout(() => { pokeCount = 0; }, 1400);
-    if (pokeCount === 3) { bubbleSay('戳戳戳……戳的这么开心，是要发芽吗！ [bean:angry]', 3200); }
-    if (pokeCount === 5) { transient = 'failed'; transientUntil = performance.now() + 2000; bubbleSay('爆鱼预警！再戳本小姐就掀桌了！ [fish:hum]', 3200); }
-    if (pokeCount >= 8) { pokeCount = 0; transient = 'waiting'; transientUntil = performance.now() + 2600; bubbleSay('（装死中）…… fish 已离线 [bean:sleep]', 3200); }
+    // v3.10.1：连戳台词不再自己 bubbleSay（那样会和 260ms 后的余额气泡"双弹/覆盖"），
+    // 改为排队给下一次单击，由 onPetSingleClick 在一个气泡里一起说
+    if (pokeCount === 3) pendingSpecialLine = '戳戳戳……戳的这么开心，是要发芽吗！ [bean:angry]';
+    if (pokeCount === 5) { transient = 'failed'; transientUntil = performance.now() + 2000; pendingSpecialLine = '爆鱼预警！再戳本小姐就掀桌了！ [fish:hum]'; }
+    if (pokeCount >= 8) { pokeCount = 0; transient = 'waiting'; transientUntil = performance.now() + 2600; pendingSpecialLine = '（装死中）…… fish 已离线 [bean:sleep]'; }
     // 260ms 等待可能的第二次点击（双击）
-    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; onPetDoubleClick(); return; }
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; pendingSpecialLine = ''; onPetDoubleClick(); return; }
     clickTimer = setTimeout(() => { clickTimer = null; onPetSingleClick(); }, 260);
   }
 
@@ -400,7 +403,10 @@
   }
 
   function onPetSingleClick() {
-    const head = pickPokeLine();     // 随机一条反应词，后面直接跟括号里的余额
+    // v3.10.1：连戳台词优先（同一气泡里说），否则随机一条反应词；后面统一跟（余额）
+    const special = pendingSpecialLine;
+    pendingSpecialLine = '';
+    const head = special || pickPokeLine();
     showBubble(b => {
       const main = $new('span', 'pb2-bubble-text', head);
       const cost = $new('span', 'pb2-bubble-cost', '（算账中…）');
@@ -795,6 +801,7 @@
           row.classList.toggle('pb2-sub-open');
           const arrow = row.querySelector('.pb2-marrow');
           if (arrow) arrow.textContent = row.classList.contains('pb2-sub-open') ? '▴' : '▾';
+          clampMenuToViewport();   // v3.10.1：展开/收起后高度变了，重新夹进视口
         });
       } else {
         row.addEventListener('click', () => {
@@ -814,9 +821,23 @@
     sfx('pop'); // v3.3：右键菜单弹出
     buildMenu();
     menu.hidden = false;
-    menu.style.left = clamp(e.clientX - 8, 6, window.innerWidth - 200) + 'px';
-    menu.style.top = clamp(e.clientY - 8, 6, window.innerHeight - 300) + 'px';
+    // v3.10.1：按**实测尺寸**夹进视口（原来硬编码 200×300，菜单展开子菜单后近 500 高，必然被边框切掉）
+    clampMenuToViewport(e.clientX - 8, e.clientY - 8);
   });
+  /** 把菜单整体挪进视口：右侧/下方放不下就往左/往上收；高度超视口时由 CSS 的 max-height 负责滚动 */
+  function clampMenuToViewport(preferX, preferY) {
+    if (menu.hidden) return;
+    const r = menu.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const mw = Math.min(r.width, vw - 12);
+    const mh = Math.min(r.height, vh - 12);
+    let x = (preferX === undefined) ? (parseFloat(menu.style.left) || r.left) : preferX;
+    let y = (preferY === undefined) ? (parseFloat(menu.style.top) || r.top) : preferY;
+    x = Math.max(6, Math.min(x, vw - mw - 6));
+    y = Math.max(6, Math.min(y, vh - mh - 6));
+    menu.style.left = Math.round(x) + 'px';
+    menu.style.top = Math.round(y) + 'px';
+  }
   document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; }, true);
   restoreDot.addEventListener('click', () => { settings.hidden = false; saveSettings(); applyHidden(); refreshLayout(); });
 

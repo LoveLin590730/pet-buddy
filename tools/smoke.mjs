@@ -252,7 +252,18 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[戳一戳台词 + AI 生成/周期更新 · v3.10]');
+console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('连戳台词不再自己 bubbleSay（改为排队给单击气泡）', /pendingSpecialLine/.test(t) && /pendingSpecialLine = '戳戳戳/.test(t));
+  ok('连戳台词在 onPetSingleClick 里优先使用', /const special = pendingSpecialLine/.test(t) && /special \|\| pickPokeLine\(\)/.test(t));
+  ok('双击时清掉排队的特殊台词（不串到下一次）', /pendingSpecialLine = ''; onPetDoubleClick\(\)/.test(t));
+  const m = t.match(/function clampMenuToViewport[\s\S]{0,700}/);
+  ok('菜单按实测尺寸夹进视口', !!m && /getBoundingClientRect\(\)/.test(m[0]) && /vw - mw - 6/.test(m[0]));
+  ok('不再硬编码 200×300 的夹取', !/window\.innerWidth - 200/.test(t));
+  ok('展开子菜单后重新夹一次', /clampMenuToViewport\(\);   \/\/ v3\.10\.1：展开\/收起后高度变了/.test(t));
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   ok('内置反应词 ≥ 8 条', /POKE_DEFAULT = \[/.test(t) && (t.match(/POKE_DEFAULT = \[([\s\S]*?)\];/) || ['', ''])[1].split(',').length >= 8);
