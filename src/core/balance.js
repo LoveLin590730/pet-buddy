@@ -200,7 +200,7 @@
     const todayReal = d.realOk ? fmtCredits(d.realToday || 0) : '';
     const todayEst = fmtCredits(d.costCredits || 0);
     // 余额主体（三种来源统一成一句话）
-    const shortBase = q.ok ? '还剩 ' + fmtCredits(q.remainPoints) + ' 分（≈' + yuan(q.remainPoints) + '）'
+    const shortBase = q.ok ? '还剩 ' + fmtCredits(q.remainPoints) + ' 分 ≈' + yuan(q.remainPoints)
       : (c.ok && c.unlimited) ? '账户不限额'
         : c.ok ? '还剩 ' + fmtCredits(c.remainCredits) + ' 分'
           : Number(settings.quota) > 0 ? '额度 ' + fmtMoney(Number(settings.quota))

@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.9.1';
+const PB_VERSION = '3.10.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -65,6 +65,9 @@ const CHAT_MODELS = [
     deletedSkins: [],        // v3.9 被"彻底删除"的皮肤 id（永久，不再出现在恢复列表）
     /* v3.8 开场白与余额格式 */
     greeting: '',            // 自定义开场白（空=默认；支持 {greet} 时段问候、{nickname} 昵称）
+    pokeLines: [],           // v3.10 被戳一戳的反应词（空=用内置默认那几条；单击时随机挑一条 +（余额））
+    pokeUpdatedAt: 0,        // 台词上次自动更新时间戳
+    pokeAutoDays: 0,         // 台词自动更新周期（0=关闭，1=每天，7=每周）
     balanceStyle: 'short',   // 余额气泡格式：short 简洁 / detail 详细 / playful 傲娇
     /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
     phrases: [],

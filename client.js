@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.9.1';
+const PB_VERSION = '3.10.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -198,6 +198,9 @@ const CHAT_MODELS = [
     deletedSkins: [],        // v3.9 被"彻底删除"的皮肤 id（永久，不再出现在恢复列表）
     /* v3.8 开场白与余额格式 */
     greeting: '',            // 自定义开场白（空=默认；支持 {greet} 时段问候、{nickname} 昵称）
+    pokeLines: [],           // v3.10 被戳一戳的反应词（空=用内置默认那几条；单击时随机挑一条 +（余额））
+    pokeUpdatedAt: 0,        // 台词上次自动更新时间戳
+    pokeAutoDays: 0,         // 台词自动更新周期（0=关闭，1=每天，7=每周）
     balanceStyle: 'short',   // 余额气泡格式：short 简洁 / detail 详细 / playful 傲娇
     /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
     phrases: [],
@@ -836,7 +839,7 @@ const CHAT_MODELS = [
     const todayReal = d.realOk ? fmtCredits(d.realToday || 0) : '';
     const todayEst = fmtCredits(d.costCredits || 0);
     // 余额主体（三种来源统一成一句话）
-    const shortBase = q.ok ? '还剩 ' + fmtCredits(q.remainPoints) + ' 分（≈' + yuan(q.remainPoints) + '）'
+    const shortBase = q.ok ? '还剩 ' + fmtCredits(q.remainPoints) + ' 分 ≈' + yuan(q.remainPoints)
       : (c.ok && c.unlimited) ? '账户不限额'
         : c.ok ? '还剩 ' + fmtCredits(c.remainCredits) + ' 分'
           : Number(settings.quota) > 0 ? '额度 ' + fmtMoney(Number(settings.quota))
@@ -2504,16 +2507,31 @@ const CHAT_MODELS = [
   }
 
 
+  /* v3.10：被戳一戳的反应词（内置默认 8 条；用户可编辑、也可让 AI 按人设+聊天记录生成） */
+  const POKE_DEFAULT = [
+    '戳什么戳！', '又来？', '别戳啦～', '本小姐很忙的！',
+    '手拿开啦', '咚！别戳头', '再戳要收费了哦', '哼哼，是想我了吧？',
+  ];
+  function pokeLines() {
+    const list = Array.isArray(settings.pokeLines)
+      ? settings.pokeLines.map(x => String(x == null ? '' : x).trim()).filter(Boolean)
+      : [];
+    return list.length ? list : POKE_DEFAULT;
+  }
+  function pickPokeLine() {
+    const list = pokeLines();
+    return String(list[Math.floor(Math.random() * list.length)] || POKE_DEFAULT[0]);
+  }
+
   function onPetSingleClick() {
-    const greet = periodGreet();
-    const nick = settings.nickname ? '，' + settings.nickname : '';
+    const head = pickPokeLine();     // 随机一条反应词，后面直接跟括号里的余额
     showBubble(b => {
-      const main = $new('span', 'pb2-bubble-text', '戳什么戳！' + greet + nick + '，算账给你看……');
-      const cost = $new('span', 'pb2-bubble-cost', '余额算术进行中…');
+      const main = $new('span', 'pb2-bubble-text', head);
+      const cost = $new('span', 'pb2-bubble-cost', '（算账中…）');
       b.appendChild(main); b.appendChild(cost);
       todaySpend(true).then(d => {
         if (!d.apiOk) { cost.textContent = '（助手不在线，算不了账啦）'; return; }
-        cost.textContent = balanceLine(d);
+        cost.textContent = '（' + balanceLine(d) + '）';
       });
     }, 8000);
   }
@@ -2722,7 +2740,7 @@ const CHAT_MODELS = [
       { icon: 'pin', label: () => '大小：' + petSizeLabel(), act: () => cyclePetSize(), keepOpen: true },
       { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
       { icon: 'chat', label: () => '余额格式：' + balanceStyleLabel(), act: () => cycleBalanceStyle(), keepOpen: true },
-      { icon: 'note', label: '开场白…', act: openGreetingEditor },
+      { icon: 'note', label: '台词与开场白…', act: openLineEditor },
       { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     ] },
     { icon: 'gear', label: '设置', sub: [
@@ -3107,6 +3125,150 @@ const CHAT_MODELS = [
         bubbleSay(settings.greeting ? '开场白换好啦，下次启动就这么说～' : '开场白改回默认啦～', 2600);
       } },
     ]);
+  }
+
+  /** v3.10：让助手按「人设 + 最近聊天」生成一批台词（开场白 / 戳一戳反应词） */
+  async function aiGenLines(kind, count) {
+    const n = clamp(Math.round(Number(count) || 6), 3, 12);
+    const what = kind === 'greeting' ? '开场白（桌宠启动时说的第一句话）'
+      : '被戳一戳时的反应词（用户单击桌宠时说的那一句）';
+    const ask = [
+      '（这是插件给你的内部指令，别复述这段、也别解释）帮我写 ' + n + ' 条' + what + '。要求：',
+      '① 语气贴合你对我的人设、也贴合我们最近聊天的感觉；',
+      '② 每条不超过 16 个字，口语化、带点傲娇，不要旁白不要引号；',
+      '③ **只输出一个 JSON 字符串数组**，例如 ["戳什么戳！","又来？"]，不要任何别的文字。',
+    ].join('\n');
+    const r = await sendViaAssistant(ask, '');
+    const txt = String((r && r.text) || '');
+    const m = txt.match(/\[[\s\S]*?\]/);
+    if (!m) throw new Error('AI 没按格式回话：' + txt.slice(0, 60).replace(/\s+/g, ' '));
+    let arr;
+    try { arr = JSON.parse(m[0]); } catch (e) { throw new Error('AI 返回的不是合法 JSON'); }
+    const out = (Array.isArray(arr) ? arr : [])
+      .map(x => String(x == null ? '' : x).trim().replace(/^["'「]|["'」]$/g, ''))
+      .filter(x => x && x.length <= 24);
+    if (!out.length) throw new Error('AI 没生成出可用台词');
+    return out.slice(0, n);
+  }
+
+  /** 台词编辑面板（v3.10：开场白 + 戳一戳反应词，都能 AI 生成与自动更新） */
+  function openLineEditor() {
+    openDialog('台词与开场白', body => {
+      body.appendChild($new('h4', null, '开场白（启动时说的第一句）'));
+      body.appendChild($new('div', 'pb2-hint', '支持变量 {greet}（早上好/中午好…）与 {nickname}（你的称呼）。留空＝用默认那句。'));
+      const gInp = $new('input'); gInp.type = 'text';
+      gInp.style.width = '100%'; gInp.style.boxSizing = 'border-box';
+      gInp.placeholder = '例：{greet}，{nickname}！大肥鱼上线啦～';
+      gInp.value = String(settings.greeting || '');
+      body.appendChild(gInp);
+      const gRow = $new('div', 'pb2-row');
+      const gGen = $new('button', null, 'AI 生成开场白'); gGen.type = 'button';
+      gGen.addEventListener('click', async () => {
+        gGen.disabled = true; const old = gGen.textContent; gGen.textContent = '生成中…';
+        try {
+          const arr = await aiGenLines('greeting', 3);
+          gInp.value = arr[0];
+          settings.greeting = arr[0]; saveSettings();
+          bubbleSay('开场白生成好啦：' + arr[0], 4200);
+          if (arr.length > 1) log('info', '开场白候选：' + arr.join(' / '));
+        } catch (e) { bubbleSay('生成失败：' + e.message, 5000); }
+        finally { gGen.disabled = false; gGen.textContent = old; }
+      });
+      const gTry = $new('button', null, '试听'); gTry.type = 'button';
+      gTry.addEventListener('click', () => {
+        const save0 = settings.greeting; settings.greeting = gInp.value;
+        speechUnlock(); bubbleSay(openLine(), 5000); speak(openLine());
+        settings.greeting = save0;
+      });
+      gRow.appendChild(gGen); gRow.appendChild(gTry);
+      body.appendChild(gRow);
+
+      body.appendChild($new('h4', null, '被戳一戳的反应词（单击桌宠时随机说一条，后面自动跟（余额））'));
+      const listBox = $new('div');
+      body.appendChild(listBox);
+      const renderList = () => {
+        listBox.textContent = '';
+        const list = pokeLines();
+        list.forEach((line, i) => {
+          const row = $new('div', 'pb2-row');
+          const inp = $new('input'); inp.type = 'text'; inp.value = line;
+          inp.style.flex = '1 1 auto';
+          const del = $new('button', null, '删'); del.type = 'button';
+          del.addEventListener('click', () => {
+            const arr = pokeLines().slice(); arr.splice(i, 1);
+            settings.pokeLines = arr; saveSettings(); sfx('tap'); renderList();
+          });
+          row.appendChild(inp); row.appendChild(del);
+          inp.addEventListener('change', () => {
+            const arr = pokeLines().slice(); arr[i] = inp.value.trim() || arr[i];
+            settings.pokeLines = arr; saveSettings();
+          });
+          listBox.appendChild(row);
+        });
+        const addRow = $new('div', 'pb2-row');
+        const add = $new('button', null, '+ 加一条'); add.type = 'button';
+        add.addEventListener('click', () => {
+          const arr = pokeLines().slice(); arr.push('哼哼～'); settings.pokeLines = arr; saveSettings(); renderList();
+        });
+        const reset = $new('button', null, '恢复内置默认'); reset.type = 'button';
+        reset.addEventListener('click', () => { settings.pokeLines = []; saveSettings(); renderList(); bubbleSay('已恢复内置台词', 2200); });
+        addRow.appendChild(add); addRow.appendChild(reset);
+        listBox.appendChild(addRow);
+      };
+      renderList();
+      const pRow = $new('div', 'pb2-row');
+      const pGen = $new('button', null, 'AI 按人设+聊天记录生成'); pGen.type = 'button';
+      pGen.addEventListener('click', async () => {
+        pGen.disabled = true; const old = pGen.textContent; pGen.textContent = '生成中…';
+        try {
+          const arr = await aiGenLines('poke', 8);
+          settings.pokeLines = arr; settings.pokeUpdatedAt = Date.now(); saveSettings();
+          renderList();
+          bubbleSay('新台词：' + arr.slice(0, 2).join(' / ') + '…', 4200);
+        } catch (e) { bubbleSay('生成失败：' + e.message, 5000); }
+        finally { pGen.disabled = false; pGen.textContent = old; }
+      });
+      pRow.appendChild(pGen);
+      body.appendChild(pRow);
+
+      body.appendChild($new('h4', null, '自动更新'));
+      const autoSel = $new('select');
+      [['0', '关闭（只手动更新）'], ['1', '每天自动更新一次'], ['7', '每周自动更新一次']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if (String(Number(settings.pokeAutoDays) || 0) === v) op.selected = true;
+        autoSel.appendChild(op);
+      });
+      body.appendChild(autoSel);
+      const lastTxt = Number(settings.pokeUpdatedAt)
+        ? new Date(Number(settings.pokeUpdatedAt)).toLocaleString('zh-CN', { hour12: false })
+        : '还没自动更新过';
+      body.appendChild($new('div', 'pb2-hint', '上次 AI 更新：' + lastTxt + '（更新时用当前人设 + 最近聊天，替换掉反应词列表）'));
+      openDialog._lineFields = { gInp, autoSel };
+    }, [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: () => {
+        const f = openDialog._lineFields || {};
+        if (f.gInp) settings.greeting = f.gInp.value.trim();
+        if (f.autoSel) settings.pokeAutoDays = Number(f.autoSel.value) || 0;
+        saveSettings(); sfx('ok');
+        bubbleSay('台词保存好啦～', 2400);
+      } },
+    ]);
+  }
+
+  /** 启动时按周期检查要不要让 AI 刷新台词（延后执行，别和启动问候抢） */
+  function maybeAutoRefreshLines() {
+    const days = Number(settings.pokeAutoDays) || 0;
+    if (!days) return;
+    const last = Number(settings.pokeUpdatedAt) || 0;
+    if (last && Date.now() - last < days * 86400000) return;
+    setTimeout(async () => {
+      try {
+        const arr = await aiGenLines('poke', 8);
+        settings.pokeLines = arr; settings.pokeUpdatedAt = Date.now(); saveSettings();
+        log('info', '台词已自动更新（' + days + ' 天周期）：' + arr.join(' / '));
+      } catch (e) { log('info', '台词自动更新失败：' + e.message); }
+    }, 15000);
   }
 
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
@@ -3704,6 +3866,7 @@ const CHAT_MODELS = [
       bubbleSay('之前把称呼记岔了（记成了「' + bad + '」），已经清掉～在「聊天设置 → 我的称呼」里告诉我你叫啥吧', 8000);
     }, 1600);
   })();
+  maybeAutoRefreshLines();   // v3.10：按周期（每天/每周）让 AI 刷新戳一戳台词
 
   /* ================= 对外（测试钩子，只读） ================= */
   window.PB2 = Object.freeze({
@@ -3738,6 +3901,7 @@ const CHAT_MODELS = [
       settingsRef: settings,
       openChatPanel, cycleSfxVolume, speechMode,
       cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel, cyclePetSize, petSizeLabel, jellyPulse, toggleJelly,
+      openLineEditor, aiGenLines, pokeLines, pickPokeLine, maybeAutoRefreshLines, POKE_DEFAULT,
       synthPaced, speechSegments, pauseOf, fetchTtsVoices, ttsVoiceLabel, cycleTtsVoice, ttsVoiceList,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,

@@ -252,7 +252,21 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[称呼：清掉历史脏值 · v3.9.1]');
+console.log('\n[戳一戳台词 + AI 生成/周期更新 · v3.10]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('内置反应词 ≥ 8 条', /POKE_DEFAULT = \[/.test(t) && (t.match(/POKE_DEFAULT = \[([\s\S]*?)\];/) || ['', ''])[1].split(',').length >= 8);
+  ok('单击时随机挑一条反应词', /pickPokeLine/.test(t) && /Math\.random\(\)/.test(t));
+  ok('反应词后面跟括号里的余额', /'（' \+ balanceLine\(d\) \+ '）'/.test(t));
+  ok('台词可在面板里编辑（台词与开场白…）', /台词与开场白…/.test(t) && /function openLineEditor/.test(t));
+  ok('可增/删/改反应词并恢复默认', /\+ 加一条/.test(t) && /恢复内置默认/.test(t));
+  ok('AI 生成：读人设+聊天记录（走助手通道，要求 JSON 数组）', /async function aiGenLines/.test(t) && /JSON 字符串数组/.test(t) && /sendViaAssistant\(ask/.test(t));
+  ok('开场白也能 AI 生成', /AI 生成开场白/.test(t));
+  ok('可关闭/每天/每周自动更新', /每天自动更新一次/.test(t) && /每周自动更新一次/.test(t) && /pokeAutoDays/.test(t));
+  ok('启动时按周期检查（延后执行）', /function maybeAutoRefreshLines/.test(t) && /maybeAutoRefreshLines\(\);/.test(t));
+  ok('默认值：反应词空（用内置）、周期关闭', P.DEFAULTS.pokeLines.length === 0 && P.DEFAULTS.pokeAutoDays === 0);
+}
+
 {
   ok('「们建个营销群嘛」判定为错误称呼', P.nicknameLooksWrong('们建个营销群嘛') === true);
   ok('「我们建个营销群嘛」也算错', P.nicknameLooksWrong('我们建个营销群嘛') === true);
