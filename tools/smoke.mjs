@@ -67,6 +67,7 @@ const probe = `
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
+  analyzeFrame, prosodyTrack, synthFollow, resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
   SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
@@ -187,6 +188,48 @@ console.log('\n[余额来源：内部通道额度 + 缓存命中计价 · v3.1.0
     P.ASSET_SPRITE);
 }
 
+console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
+{
+  const sr = 16000, n = sr * 1;                       // 1 秒 16k
+  const tone = new Float32Array(n);
+  for (let i = 0; i < n; i++) tone[i] = 0.4 * Math.sin(2 * Math.PI * 200 * i / sr);
+  const fr = P.analyzeFrame(tone, 2048, 1024, sr, 0);
+  ok('单帧基频检测准确（200Hz 正弦 → 检出 ±8%）', Math.abs(fr.f0 - 200) / 200 < 0.08, 'f0=' + fr.f0.toFixed(1));
+  ok('有声帧标记为浊音且能量合理', fr.f0 > 0 && fr.rms > 0.1, 'rms=' + fr.rms.toFixed(3));
+  const sil = new Float32Array(1024);
+  ok('静音帧不报音高', P.analyzeFrame(sil, 0, 1024, sr, 200).f0 === 0);
+
+  const track = P.prosodyTrack(tone);
+  ok('韵律轨按 20ms 一帧切好', track.frames.length === Math.floor((n - 1024) / 320) + 1 && Math.abs(track.hopSec - 0.02) < 1e-6,
+    track.frames.length + ' 帧');
+  const vowels = new Set(track.frames.map((f) => f.vowel));
+  ok('口型档有区分（过零率映射）', vowels.size >= 1);
+
+  const out = P.synthFollow(track, { voice: 'fish' });
+  ok('重唱长度跟随输入时长（±10%）', Math.abs(out.length - 44100) / 44100 < 0.12, out.length + ' 采样');
+  let peak = 0, bad = 0;
+  for (let i = 0; i < out.length; i++) { const a = Math.abs(out[i]); if (a > peak) peak = a; if (!(a <= 1)) bad++; }
+  ok('重唱输出峰值归一、不越界', peak > 0.5 && peak <= 1.001 && bad === 0, 'peak=' + peak.toFixed(3));
+
+  ok('跟读默认开启，且可配置音色/语速', P.DEFAULTS.speechFollow === true && P.DEFAULTS.ttsVoice === '' && P.DEFAULTS.ttsRate === 1);
+  const st = P.speechState();
+  ok('状态快照带跟读信息', st.follow === true && st.ttsCached === 0);
+  ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
+}
+
+console.log('\n[增删改查 · v3.4]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('模型：改名（小输入弹窗，不依赖 window.prompt）', /function askText/.test(t) && /给这张模型起个名字/.test(t));
+  ok('模型：导出模型包（.json 下载）', /function exportSkinPack/.test(t) && /petbuddy-skins-/.test(t));
+  ok('模型：导入模型包（校验 dataUrl / 上限 24 个）', /function importSkinPackFile/.test(t) && /slice\(-24\)/.test(t));
+  ok('模型：删除保留（自定义可删，内置不可删）', /pb2-model-del/.test(t) && /settings\.customSkins\.filter/.test(t));
+  ok('常用语：增 / 删 / 改 / 查（列表 + 点一条就念）',
+    /function openPhraseBook/.test(t) && /'添加'/.test(t) && /'说'/.test(t) && /'改'/.test(t) && /'删'/.test(t));
+  ok('常用语上限 30 条且去重', /最多 30 条/.test(t) && /arr\.some\(x => x\.text === t\)/.test(t));
+  ok('菜单里有「常用语…」入口', /常用语…/.test(t));
+  ok('设置面板有「风格」下拉（跟读 / 经典）', /韵律跟读（更像真人说话/.test(t) && /经典合成（一个字一声/.test(t));
+}
 console.log('\n[皮肤：BongoCat 与浮空爪图层 · v3.3.3]');
 {
   const im = P.IMAGE_SKINS.bongo;

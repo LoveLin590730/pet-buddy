@@ -530,6 +530,7 @@
     { icon: '🎙', label: 'bibo语音', sub: [
       { icon: '🔊', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
       { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+      { icon: '📚', label: '常用语…', act: openPhraseBook },
       { sep: true },
       { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
         act: () => toggleSfx() },
@@ -622,6 +623,123 @@
   }
   function closeDialog() { if (dialogMask) { dialogMask.remove(); dialogMask = null; } }
 
+  /** 小输入弹窗（宿主里 window.prompt 不保证可用，自己做一个） */
+  function askText(title, def, onOk) {
+    openDialog(title, body => {
+      const inp = $new('input');
+      inp.type = 'text'; inp.value = def || ''; inp.style.width = '100%';
+      body.appendChild(inp);
+      body.appendChild($new('div', 'pb2-hint', '回车或点「确定」保存（留空=取消）'));
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); const v = inp.value.trim(); if (v) { closeDialog(); onOk(v); } }
+      });
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* 焦点无所谓 */ } }, 30);
+    }, [
+      { label: '取消' },
+      { label: '确定', primary: true, onClick: () => {
+        const inp = dialogMask && dialogMask.querySelector('input[type=text]');
+        const v = inp ? inp.value.trim() : '';
+        if (v) setTimeout(() => onOk(v), 0);
+      } },
+    ]);
+  }
+
+  /** 模型包导出（自定义模型 → .json 文件；增删改查里的"导出"） */
+  function exportSkinPack(list) {
+    const pack = {
+      format: 'pet-buddy-skinpack', version: 1, exportedAt: nowStr(),
+      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl })),
+    };
+    try {
+      const blob = new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'petbuddy-skins-' + (list.length === 1 ? String(list[0].name || 'skin').replace(/[\\/:*?"<>|]/g, '_') : 'all') + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      bubbleSay('模型包导出好啦（在系统下载文件夹）', 3400);
+    } catch (e) { bubbleSay('导出失败：' + e.message, 4200); }
+  }
+
+  /** 模型包导入（.json → 自定义模型；返回 added 数量） */
+  function importSkinPackFile(file, done) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const pack = JSON.parse(String(rd.result));
+        const list = Array.isArray(pack) ? pack : (pack.skins || []);
+        if (!list.length) throw new Error('里面没有模型');
+        let added = 0;
+        for (const s of list) {
+          if (!s || typeof s.dataUrl !== 'string' || s.dataUrl.slice(0, 5) !== 'data:') continue;
+          settings.customSkins = (settings.customSkins || []).concat([{
+            id: 'custom:' + Date.now() + ':' + (added++),
+            name: String(s.name || '导入的模型').slice(0, 24),
+            dataUrl: s.dataUrl,
+          }]);
+        }
+        // 自定义模型上限 24 个（localStorage 不是无底洞）＋每个 2MB 以内
+        settings.customSkins = (settings.customSkins || []).slice(-24);
+        saveSettings();
+        done(added);
+      } catch (e) { done(0, e && e.message ? e.message : String(e)); }
+    };
+    rd.readAsText(file);
+  }
+
+  /* ---- 常用语库（增删改查：加一条、改文字、删掉、点一条就让它念） ---- */
+  function openPhraseBook() {
+    const getArr = () => (settings.phrases = settings.phrases || []);
+    openDialog('常用语（点「说」就念出来）', body => {
+      body.appendChild($new('div', 'pb2-hint', '存在本机（localStorage），最多 30 条；语音闲聊、试听都用得上。'));
+      const inp = $new('input');
+      inp.type = 'text'; inp.placeholder = '加一条，例如：今天吃白饭？'; inp.style.flex = '1 1 auto';
+      const bAdd = $new('button', null, '添加'); bAdd.type = 'button';
+      const addRow = $new('div', 'pb2-row');
+      addRow.appendChild(inp); addRow.appendChild(bAdd);
+      const listBox = $new('div');
+      function render() {
+        listBox.textContent = '';
+        const arr = getArr();
+        if (!arr.length) { listBox.appendChild($new('div', 'pb2-hint', '还没有常用语～加一条试试')); return; }
+        for (const p of arr) {
+          const row = $new('div', 'pb2-row');
+          row.appendChild($new('span', 'pb2-rowtext', p.text));
+          const bSay = $new('button', null, '说'); bSay.type = 'button';
+          bSay.addEventListener('click', () => { speechUnlock(); speak(p.text, { force: true }); });
+          const bEdit = $new('button', null, '改'); bEdit.type = 'button';
+          bEdit.addEventListener('click', () => askText('改成什么？', p.text, (v) => { p.text = v.slice(0, 60); saveSettings(); openPhraseBook(); }));
+          const bDel = $new('button', null, '删'); bDel.type = 'button';
+          bDel.addEventListener('click', () => { settings.phrases = getArr().filter(x => x.id !== p.id); saveSettings(); render(); });
+          row.appendChild(bSay); row.appendChild(bEdit); row.appendChild(bDel);
+          listBox.appendChild(row);
+        }
+      }
+      function add(text) {
+        const arr = getArr();
+        const t = String(text || '').trim().slice(0, 60);
+        if (!t) return false;
+        if (arr.some(x => x.text === t)) return false;
+        if (arr.length >= 30) { bubbleSay('最多 30 条哦', 2600); return false; }
+        arr.push({ id: 'p' + Date.now() + ':' + arr.length, text: t });
+        saveSettings();
+        return true;
+      }
+      bAdd.addEventListener('click', () => { if (add(inp.value)) { inp.value = ''; render(); } });
+      inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); if (add(inp.value)) { inp.value = ''; render(); } } });
+      body.appendChild(addRow);
+      body.appendChild(listBox);
+      const bPreset = $new('button', null, '加几条示例'); bPreset.type = 'button';
+      bPreset.addEventListener('click', () => {
+        ['今天吃白饭？没饭了！', '余额还剩多少呀？', '哼，才不是在等你呢……'].forEach(t => add(t));
+        render();
+      });
+      body.appendChild(bPreset);
+      render();
+      setTimeout(() => { try { inp.focus(); } catch (e) { /* 无所谓 */ } }, 30);
+    });
+  }
+
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
@@ -654,7 +772,27 @@
         grid.appendChild(card);
       }
       body.appendChild(grid);
-      body.appendChild($new('h4', null, '自定义模型（上传图片）'));
+      body.appendChild($new('h4', null, '自定义模型（上传图片 · 可改名/导出/删除）'));
+      const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
+      const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
+      impBtn.addEventListener('click', () => impFile.click());
+      impFile.addEventListener('change', () => {
+        const f = impFile.files && impFile.files[0];
+        if (!f) return;
+        importSkinPackFile(f, (n, err) => {
+          if (n > 0) { openModelPicker(); bubbleSay('导入了 ' + n + ' 个模型～', 2800); }
+          else bubbleSay('导入失败：' + (err || '文件里没有可用模型'), 4400);
+        });
+      });
+      const impRow = $new('div', 'pb2-row');
+      impRow.appendChild(impBtn); impRow.appendChild(impFile);
+      const all = settings.customSkins || [];
+      if (all.length > 1) {
+        const expAll = $new('button', null, '全部导出'); expAll.type = 'button';
+        expAll.addEventListener('click', () => exportSkinPack(all));
+        impRow.appendChild(expAll);
+      }
+      body.appendChild(impRow);
       const file = $new('input'); file.type = 'file'; file.accept = 'image/*';
       file.addEventListener('change', () => {
         const f = file.files && file.files[0];
@@ -680,20 +818,29 @@
           const info = $new('div');
           info.appendChild($new('div', 'pb2-model-name', c.name));
           info.appendChild($new('div', 'pb2-model-desc', '自定义上传'));
-          const del = $new('button', 'pb2-model-del', '删除');
+          const acts = $new('div', 'pb2-model-acts');
+          const ren = $new('button', 'pb2-model-act', '改名'); ren.type = 'button';
+          ren.addEventListener('click', ev => {
+            ev.stopPropagation();
+            askText('给这张模型起个名字', c.name || '', (v) => { c.name = v.slice(0, 24); saveSettings(); openModelPicker(); });
+          });
+          const exp = $new('button', 'pb2-model-act', '导出'); exp.type = 'button';
+          exp.addEventListener('click', ev => { ev.stopPropagation(); exportSkinPack([c]); });
+          const del = $new('button', 'pb2-model-act pb2-model-del', '删除'); del.type = 'button';
           del.addEventListener('click', ev => {
             ev.stopPropagation();
             settings.customSkins = settings.customSkins.filter(x => x.id !== c.id);
             if (settings.skin === c.id) settings.skin = 'fish';
             saveSettings(); applySkin(); refreshLayout(); openModelPicker();
           });
-          card.appendChild(th); card.appendChild(info); card.appendChild(del);
+          acts.appendChild(ren); acts.appendChild(exp); acts.appendChild(del);
+          card.appendChild(th); card.appendChild(info); card.appendChild(acts);
           card.addEventListener('click', () => { settings.skin = c.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); });
           grid2.appendChild(card);
         }
         body.appendChild(grid2);
       }
-      body.appendChild($new('div', 'pb2-hint', '模型管理思路参考 BongoCat：内置 + 上传 + 可删除。上传图片仅存浏览器 localStorage。'));
+      body.appendChild($new('div', 'pb2-hint', '模型管理思路参考 BongoCat：内置 + 上传 + 改名/导出/导入/删除。上传图片与常用语都只存本机 localStorage。'));
     });
   }
 
@@ -814,13 +961,35 @@
       const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
       spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
       body.appendChild(spMax);
+      body.appendChild($new('label', null, '声音 · 风格（跟读＝照 TTS 的真人语调唱；经典＝一个字一声）'));
+      const spFollow = $new('select');
+      [['1', '韵律跟读（更像真人说话，用宿主「语音」组件的 TTS）'], ['0', '经典合成（一个字一声，纯离线）']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.speechFollow !== false ? '1' : '0') === v) op.selected = true;
+        spFollow.appendChild(op);
+      });
+      body.appendChild(spFollow);
+      body.appendChild($new('label', null, '声音 · 跟读音色（留空＝宿主默认；如 zh-CN-XiaoxiaoNeural）'));
+      const ttsVoiceInp = $new('input'); ttsVoiceInp.type = 'text';
+      ttsVoiceInp.placeholder = '留空＝宿主默认音色';
+      ttsVoiceInp.value = String(settings.ttsVoice || '');
+      body.appendChild(ttsVoiceInp);
+      body.appendChild($new('label', null, '声音 · 跟读语速（0.5–2，1 为正常）'));
+      const ttsRateInp = $new('input'); ttsRateInp.type = 'number';
+      ttsRateInp.min = '0.5'; ttsRateInp.max = '2'; ttsRateInp.step = '0.1';
+      ttsRateInp.value = String(clamp(Number(settings.ttsRate) || 1, 0.5, 2));
+      body.appendChild(ttsRateInp);
       const probe = $new('button', null, '试听一句'); probe.type = 'button';      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
         settings.speechOn = spOn.value === '1';
         settings.speechVoice = spVoice.value;
         settings.speechVolume = Number(spVol.value);
         settings.speechStep = Number(spStep.value) || 0.13;
         settings.speechMaxChars = Number(spMax.value) || 60;
+        settings.speechFollow = spFollow.value === '1';
+        settings.ttsVoice = ttsVoiceInp.value.trim();
+        settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
         speechApplyVolume(); saveSettings();
+        ttsCache.clear(); trackCache.clear();   // 换风格/音色/语速后，缓存作废
         speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
       });
       body.appendChild(probe);
@@ -846,7 +1015,7 @@
       body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, sfxOnSel, sfxVol };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceInp, ttsRateInp, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -868,10 +1037,14 @@
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
+          settings.speechFollow = f.spFollow.value === '1';
+          settings.ttsVoice = f.ttsVoiceInp.value.trim();
+          settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
           settings.sfxOn = f.sfxOnSel.value === '1';
           settings.sfxVolume = Number(f.sfxVol.value);
           speechApplyVolume();
           sfxApplyVolume();
+          ttsCache.clear(); trackCache.clear();
           CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
           saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
         } },
@@ -939,6 +1112,8 @@
       speechUnlock, speechStop, speechApplyVolume,
       sfxApplyVolume, isSpriteSkin, toggleSfx, buildMenu, MENU_ITEMS,
       verifySkinImage, spriteSkinClass,
+      mixToMono, resampleLinear, prosodyTrack, analyzeFrame, synthFollow, ttsPcm, trackCache, ttsCache,
+      synth, toWav,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

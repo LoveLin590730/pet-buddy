@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.3.3';
+const PB_VERSION = '3.4.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -184,9 +184,16 @@ const CHAT_MODELS = [
     speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
     speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
     speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
+    /* v3.4 韵律跟读：宿主后端 TTS（/api/voice/tts）先读一遍，量出语调/轻重/口型再"重唱"——
+       比经典合成（一个字一声）更像真人说话；TTS 不可用时自动回退经典合成 */
+    speechFollow: true,      // true=韵律跟读；false=经典合成
+    ttsVoice: '',            // TTS 音色（空=宿主默认，例如 zh-CN-XiaoxiaoNeural）
+    ttsRate: 1,              // TTS 语速 0.5..2
     /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */
     sfxOn: true,             // 交互音效开关
     sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
+    /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
+    phrases: [],
   };
 
 /** 默认人设（用户可在右键菜单 → 角色设定里覆盖） */
@@ -893,7 +900,188 @@ const CHAT_MODELS = [
 
   /** 状态快照（诊断/验证页用） */
   function speechState() {
-    return { enabled: speechEnabled(), volume: speechVolume(), hasCtx: !!(SPEECH && SPEECH.ctx), ctxState: SPEECH && SPEECH.ctx ? SPEECH.ctx.state : 'none', speaking: !!(SPEECH && SPEECH.src) };
+    return {
+      enabled: speechEnabled(), volume: speechVolume(), hasCtx: !!(SPEECH && SPEECH.ctx),
+      ctxState: SPEECH && SPEECH.ctx ? SPEECH.ctx.state : 'none', speaking: !!(SPEECH && SPEECH.src),
+      follow: speechFollowEnabled(), ttsVoice: ttsVoicePref(), ttsRate: ttsRatePref(),
+      ttsCached: ttsCache.size,
+    };
+  }
+
+  /* ================= v3.4 韵律跟读：TTS → 音高/口型/音量 → 锯齿+带通重唱 =================
+   * 经典合成是"一个字一声"（音高只有 5 档、按字哈希决定），所以听起来偏念经、离真人语调远。
+   * 这一版换条路：先请宿主「语音」组件的后端 TTS（POST /api/voice/tts，Edge 通道、免配置）
+   * 把整句真读一遍，再从这段音频里**逐帧量出**三样东西——
+   *   ① 基频 F0（自相关，即"语调"）② 能量（即"轻重"）③ 过零率（当"口型"的粗线索），
+   * 最后用 bibibobo 那套「抗混叠锯齿波 + 两个带通」照着这条曲线重唱。
+   * 效果：音色仍是「哔哔啵啵」，但抑扬顿挫、疑问上扬、停顿长短全是真人语气。
+   * 全流程走本机后端（TTS 在宿主侧合成）；任何一步失败都回退经典合成，绝不因此不出声。 */
+
+  const ANALYZE_SR = 16000;            // 分析用采样率（量音高足够，算得快）
+  const PROSODY_HOP_SEC = 0.02;        // 每 20ms 一帧
+  const PROSODY_WIN = 1024;            // 每帧 64ms 窗
+  const F0_MIN = 70, F0_MAX = 400;     // 人声基频范围
+  const TTS_CACHE_MAX = 24;            // 最近若干句的 TTS 结果（同一句重播不再请求）
+  const TTS_TIMEOUT_MS = 9000;
+
+  const ttsCache = new Map();          // 文本 → { pcm:Float32Array(16k), durSec }
+  const trackCache = new Map();        // 文本 → 韵律轨
+
+  function speechFollowEnabled() { return settings.speechFollow !== false; }
+  function ttsVoicePref() { return String(settings.ttsVoice || ''); }
+  function ttsRatePref() { return clamp(Number(settings.ttsRate) || 1, 0.5, 2); }
+
+  /** 调宿主后端 TTS 取音频 → 解码 → 16k 单声道 PCM（失败抛错，由 speak 回退经典合成） */
+  async function ttsPcm(text, opts) {
+    const hit = ttsCache.get(text);
+    if (hit) return hit;
+    const ctx = speechCtx();
+    if (!ctx) throw new Error('no-ctx');
+    const o = opts || {};
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => { try { ctrl.abort(); } catch (e) { /* 已结束 */ } }, o.timeout || TTS_TIMEOUT_MS);
+    let ab;
+    try {
+      const res = await fetch('/api/voice/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, rate: o.rate || ttsRatePref(), voice: o.voice || ttsVoicePref() }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error('TTS HTTP ' + res.status);
+      ab = await res.arrayBuffer();
+      if (!ab || ab.byteLength < 512) throw new Error('TTS 音频过短');
+    } finally { clearTimeout(timer); }
+    const buf = await ctx.decodeAudioData(ab);
+    const mono = mixToMono(buf);
+    const pcm = buf.sampleRate === ANALYZE_SR ? mono : resampleLinear(mono, buf.sampleRate, ANALYZE_SR);
+    const rec = { pcm: pcm, durSec: pcm.length / ANALYZE_SR, srcSampleRate: buf.sampleRate };
+    if (ttsCache.size >= TTS_CACHE_MAX) ttsCache.delete(ttsCache.keys().next().value);
+    ttsCache.set(text, rec);
+    return rec;
+  }
+
+  function mixToMono(buf) {
+    const n = buf.length, out = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < n; i++) out[i] += d[i];
+    }
+    if (buf.numberOfChannels > 1) for (let i = 0; i < n; i++) out[i] /= buf.numberOfChannels;
+    return out;
+  }
+
+  /** 线性重采样（TTS 源多为 24k/44.1k → 16k） */
+  function resampleLinear(x, srIn, srOut) {
+    if (!x.length || srIn === srOut) return x;
+    const ratio = srOut / srIn, n = Math.max(1, Math.round(x.length * ratio)), out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const pos = i / ratio, i0 = Math.floor(pos), frac = pos - i0;
+      const a = x[i0] || 0, b = x[i0 + 1] !== undefined ? x[i0 + 1] : a;
+      out[i] = a + (b - a) * frac;
+    }
+    return out;
+  }
+
+  /** 逐帧量韵律（20ms 一帧） */
+  function prosodyTrack(pcm) {
+    const sr = ANALYZE_SR;
+    const hop = Math.max(1, Math.round(PROSODY_HOP_SEC * sr));
+    const win = PROSODY_WIN;
+    const frames = [];
+    let prevF0 = 0;
+    for (let s = 0; s + win <= pcm.length; s += hop) {
+      const f = analyzeFrame(pcm, s, win, sr, prevF0);
+      if (f.f0 > 0) prevF0 = f.f0;
+      frames.push(f);
+    }
+    return { frames: frames, hopSec: hop / sr, durSec: pcm.length / sr, sr: sr };
+  }
+
+  /** 单帧分析：去均值 → 自相关找基频（粗搜再细搜，省一半算力）→ 能量与过零率 */
+  function analyzeFrame(x, start, win, sr, prevF0) {
+    let mean = 0;
+    for (let i = 0; i < win; i++) mean += x[start + i];
+    mean /= win;
+    let energy = 0, zc = 0, prevSign = 0;
+    for (let i = 0; i < win; i++) {
+      const v = x[start + i] - mean;
+      energy += v * v;
+      const sgn = v >= 0 ? 1 : 0;
+      if (i && sgn !== prevSign) zc++;
+      prevSign = sgn;
+    }
+    const rms = Math.sqrt(energy / win);
+    const minLag = Math.max(2, Math.floor(sr / F0_MAX));
+    const maxLag = Math.min(win - 4, Math.floor(sr / F0_MIN));
+    const corr = (lag) => {
+      let acc = 0;
+      for (let i = 0; i + lag < win; i++) acc += (x[start + i] - mean) * (x[start + i + lag] - mean);
+      return acc / (win - lag);
+    };
+    let best = -Infinity, bestLag = 0;
+    const lags = [];
+    for (let lag = minLag; lag <= maxLag; lag += 3) lags.push(lag);            // 粗搜
+    for (let lag = Math.max(minLag, bestLag ? bestLag - 3 : minLag); lag <= Math.min(maxLag, (bestLag || minLag) + 3); lag++) {
+      if (lags.indexOf(lag) < 0) lags.push(lag);                              // 细搜（稍后统一打分）
+    }
+    const scored = lags.map((lag) => ({ lag, v: corr(lag) }));
+    for (const s of scored) if (s.v > best) { best = s.v; bestLag = s.lag; }
+    // 整数倍陷阱：200Hz 的 lag=80/160/240 相关性几乎一样高，取全局最大会误判成低八度。
+    // 解决：先找最大，再取"第一个达到 0.9×最大"的 lag（= 最短周期 = 真实基频）。
+    if (bestLag) {
+      for (const s of scored) {
+        if (s.lag < bestLag && s.v >= best * 0.9) { bestLag = s.lag; break; }
+      }
+    }
+    const conf = best / (energy / win + 1e-9);
+    let f0 = 0;
+    if (rms > 0.006 && conf > 0.25 && bestLag > 0) {
+      f0 = sr / bestLag;
+      if (prevF0 > 0) {   // 八度纠错：人声不会一帧跳八度
+        const cands = [f0, f0 * 2, f0 / 2];
+        let pick = f0, bestDiff = Math.abs(Math.log(f0 / prevF0));
+        for (const c of cands) { const d = Math.abs(Math.log(c / prevF0)); if (d < bestDiff) { bestDiff = d; pick = c; } }
+        f0 = pick;
+      }
+      if (f0 < F0_MIN || f0 > F0_MAX) f0 = 0;
+    }
+    // 过零率 → 口型档：高频多的（前元音/齿音）用亮口型，低沉的用暗口型
+    const zcr = zc / win;
+    const vowel = zcr > 0.18 ? 4 : zcr > 0.12 ? 1 : zcr > 0.08 ? 0 : zcr > 0.05 ? 3 : 2;
+    return { f0: f0, rms: rms, vowel: vowel, zcr: zcr };
+  }
+
+  /** 按韵律轨"重唱"：锯齿波 + 两个带通（bibibobo 同款内核），逐帧跟随音高 / 口型 / 音量 */
+  function synthFollow(track, opts) {
+    const o = opts || {};
+    const v = VOICES[o.voice || 'fish'] || VOICES.fish;
+    const sr = SPEECH_SR;
+    const frames = track.frames || [];
+    const out = new Float32Array(Math.max(1, Math.ceil((track.durSec + 0.06) * sr)));
+    if (!frames.length) return out;
+    const osc = saw(sr);
+    const bp1 = bandpass(sr), bp2 = bandpass(sr);
+    let ampSm = 0, f0Sm = frames[0].f0 > 0 ? frames[0].f0 : 180;
+    for (let i = 0; i < out.length; i++) {
+      const fi = Math.min(frames.length - 1, Math.floor((i / sr) / track.hopSec));
+      const fr = frames[fi];
+      if (!fr) break;
+      const voiced = fr.f0 > 0;
+      // 平稳化：音高/音量都走一阶低通（否则有台阶声）；清音段保留少量气息
+      const fTarget = voiced ? fr.f0 : f0Sm;
+      const aTarget = clamp(fr.rms * 7, 0, 1.2) * (voiced ? 1 : 0.25);
+      f0Sm += (fTarget - f0Sm) * 0.25;
+      ampSm += (aTarget - ampSm) * 0.2;
+      const [a, b] = VOWELS[fr.vowel % VOWELS.length];
+      const s = osc(f0Sm);
+      out[i] = (bp1(s, a * v.formant, 4) + 0.7 * bp2(s, b * v.formant, 5)) * ampSm * v.gain * 3.0;
+    }
+    // 峰值归一 + 软限幅：响度稳（音量交给播放端的 GainNode），音色不变
+    let peak = 0;
+    for (let i = 0; i < out.length; i++) { const a2 = Math.abs(out[i]); if (a2 > peak) peak = a2; }
+    if (peak > 0) { const k = 0.9 / peak; for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * k * 1.6) * 0.95; }
+    return out;
   }
 
   /** 清洗成「能念的文本」：剥掉贴纸标记/代码/链接/markdown 记号，压平空白，按上限截断 */
@@ -919,21 +1107,38 @@ const CHAT_MODELS = [
    * @returns {Promise<{ok:boolean, reason?:string, skipped?:string, seconds?:number, text?:string}>}
    *   ok=true 播完；ok=false 说明原因（off/empty/no-ctx/blocked/synth/start），调用方不必处理错误
    */
-  function speak(raw, opts) {
+  async function speak(raw, opts) {
     const o = opts || {};
-    if (!speechEnabled() && !o.force) return Promise.resolve({ ok: false, skipped: 'off' });
+    if (!speechEnabled() && !o.force) return { ok: false, skipped: 'off' };
     const text = speechClean(raw);
-    if (!text) return Promise.resolve({ ok: false, skipped: 'empty' });
-    if (o.opts) { /* 预留：逐句语速等覆盖项 */ }
+    if (!text) return { ok: false, skipped: 'empty' };
     const ctx = speechCtx();
-    if (!ctx) return Promise.resolve({ ok: false, reason: 'no-ctx' });
+    if (!ctx) return { ok: false, reason: 'no-ctx' };
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 等手势 */ } }
-    let samples;
-    try {
-      samples = synth(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
-    } catch (e) {
-      log('error', '语音合成失败: ' + e.message);
-      return Promise.resolve({ ok: false, reason: 'synth' });
+    // ① 韵律跟读（默认）：向宿主后端 TTS 要一遍真语音 → 量出语调/轻重/口型 → 用锯齿+带通重唱
+    let samples = null, via = 'classic';
+    if (speechFollowEnabled() && o.style !== 'classic') {
+      try {
+        const rec = await ttsPcm(text, { rate: o.rate });
+        let track = trackCache.get(text);
+        if (!track) {
+          track = prosodyTrack(rec.pcm);
+          if (trackCache.size >= TTS_CACHE_MAX) trackCache.delete(trackCache.keys().next().value);
+          trackCache.set(text, track);
+        }
+        if (track.frames.length > 2) { samples = synthFollow(track, { voice: settings.speechVoice || 'fish' }); via = 'follow'; }
+      } catch (e) {
+        log('info', '韵律跟读不可用，改用经典合成：' + (e && e.message ? e.message : e));
+      }
+    }
+    // ② 经典合成（回退，也是"跟读关闭"时的正路）：一个字一声
+    if (!samples) {
+      try {
+        samples = synth(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+      } catch (e) {
+        log('error', '语音合成失败: ' + e.message);
+        return { ok: false, reason: 'synth' };
+      }
     }
     const durSec = samples.length / SPEECH_SR;
     let buf;
@@ -942,14 +1147,14 @@ const CHAT_MODELS = [
       buf.copyToChannel(samples, 0);
     } catch (e) {
       log('error', '语音缓冲准备失败: ' + e.message);
-      return Promise.resolve({ ok: false, reason: 'buffer' });
+      return { ok: false, reason: 'buffer' };
     }
     speechStop(); // 单实例：新的一句打断上一句
     const id = ++SPEECH.id;
     const node = ctx.createBufferSource();
     node.buffer = buf; node.connect(SPEECH.gain);
     SPEECH.src = node;
-    if (o.onStart) { try { o.onStart({ text, seconds: durSec }); } catch (e) { /* 回调出错不影响播放 */ } }
+    if (o.onStart) { try { o.onStart({ text, seconds: durSec, via }); } catch (e) { /* 回调出错不影响播放 */ } }
     return new Promise((resolve) => {
       let settled = false;
       const t0 = ctx.currentTime;
@@ -958,7 +1163,7 @@ const CHAT_MODELS = [
         settled = true;
         if (SPEECH && SPEECH.src === node) SPEECH.src = null;
         if (o.onEnd) { try { o.onEnd(r); } catch (e) { /* 同上 */ } }
-        resolve(Object.assign({ text, seconds: durSec, id }, r));
+        resolve(Object.assign({ text, seconds: durSec, id, via }, r));
       };
       node.onended = () => finish({ ok: true });
       try { node.start(); } catch (e) { finish({ ok: false, reason: 'start' }); return; }
@@ -2153,6 +2358,7 @@ const CHAT_MODELS = [
     { icon: '🎙', label: 'bibo语音', sub: [
       { icon: '🔊', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
       { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+      { icon: '📚', label: '常用语…', act: openPhraseBook },
       { sep: true },
       { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
         act: () => toggleSfx() },
@@ -2245,6 +2451,123 @@ const CHAT_MODELS = [
   }
   function closeDialog() { if (dialogMask) { dialogMask.remove(); dialogMask = null; } }
 
+  /** 小输入弹窗（宿主里 window.prompt 不保证可用，自己做一个） */
+  function askText(title, def, onOk) {
+    openDialog(title, body => {
+      const inp = $new('input');
+      inp.type = 'text'; inp.value = def || ''; inp.style.width = '100%';
+      body.appendChild(inp);
+      body.appendChild($new('div', 'pb2-hint', '回车或点「确定」保存（留空=取消）'));
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); const v = inp.value.trim(); if (v) { closeDialog(); onOk(v); } }
+      });
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* 焦点无所谓 */ } }, 30);
+    }, [
+      { label: '取消' },
+      { label: '确定', primary: true, onClick: () => {
+        const inp = dialogMask && dialogMask.querySelector('input[type=text]');
+        const v = inp ? inp.value.trim() : '';
+        if (v) setTimeout(() => onOk(v), 0);
+      } },
+    ]);
+  }
+
+  /** 模型包导出（自定义模型 → .json 文件；增删改查里的"导出"） */
+  function exportSkinPack(list) {
+    const pack = {
+      format: 'pet-buddy-skinpack', version: 1, exportedAt: nowStr(),
+      skins: list.map(c => ({ name: c.name, dataUrl: c.dataUrl })),
+    };
+    try {
+      const blob = new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'petbuddy-skins-' + (list.length === 1 ? String(list[0].name || 'skin').replace(/[\\/:*?"<>|]/g, '_') : 'all') + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      bubbleSay('模型包导出好啦（在系统下载文件夹）', 3400);
+    } catch (e) { bubbleSay('导出失败：' + e.message, 4200); }
+  }
+
+  /** 模型包导入（.json → 自定义模型；返回 added 数量） */
+  function importSkinPackFile(file, done) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const pack = JSON.parse(String(rd.result));
+        const list = Array.isArray(pack) ? pack : (pack.skins || []);
+        if (!list.length) throw new Error('里面没有模型');
+        let added = 0;
+        for (const s of list) {
+          if (!s || typeof s.dataUrl !== 'string' || s.dataUrl.slice(0, 5) !== 'data:') continue;
+          settings.customSkins = (settings.customSkins || []).concat([{
+            id: 'custom:' + Date.now() + ':' + (added++),
+            name: String(s.name || '导入的模型').slice(0, 24),
+            dataUrl: s.dataUrl,
+          }]);
+        }
+        // 自定义模型上限 24 个（localStorage 不是无底洞）＋每个 2MB 以内
+        settings.customSkins = (settings.customSkins || []).slice(-24);
+        saveSettings();
+        done(added);
+      } catch (e) { done(0, e && e.message ? e.message : String(e)); }
+    };
+    rd.readAsText(file);
+  }
+
+  /* ---- 常用语库（增删改查：加一条、改文字、删掉、点一条就让它念） ---- */
+  function openPhraseBook() {
+    const getArr = () => (settings.phrases = settings.phrases || []);
+    openDialog('常用语（点「说」就念出来）', body => {
+      body.appendChild($new('div', 'pb2-hint', '存在本机（localStorage），最多 30 条；语音闲聊、试听都用得上。'));
+      const inp = $new('input');
+      inp.type = 'text'; inp.placeholder = '加一条，例如：今天吃白饭？'; inp.style.flex = '1 1 auto';
+      const bAdd = $new('button', null, '添加'); bAdd.type = 'button';
+      const addRow = $new('div', 'pb2-row');
+      addRow.appendChild(inp); addRow.appendChild(bAdd);
+      const listBox = $new('div');
+      function render() {
+        listBox.textContent = '';
+        const arr = getArr();
+        if (!arr.length) { listBox.appendChild($new('div', 'pb2-hint', '还没有常用语～加一条试试')); return; }
+        for (const p of arr) {
+          const row = $new('div', 'pb2-row');
+          row.appendChild($new('span', 'pb2-rowtext', p.text));
+          const bSay = $new('button', null, '说'); bSay.type = 'button';
+          bSay.addEventListener('click', () => { speechUnlock(); speak(p.text, { force: true }); });
+          const bEdit = $new('button', null, '改'); bEdit.type = 'button';
+          bEdit.addEventListener('click', () => askText('改成什么？', p.text, (v) => { p.text = v.slice(0, 60); saveSettings(); openPhraseBook(); }));
+          const bDel = $new('button', null, '删'); bDel.type = 'button';
+          bDel.addEventListener('click', () => { settings.phrases = getArr().filter(x => x.id !== p.id); saveSettings(); render(); });
+          row.appendChild(bSay); row.appendChild(bEdit); row.appendChild(bDel);
+          listBox.appendChild(row);
+        }
+      }
+      function add(text) {
+        const arr = getArr();
+        const t = String(text || '').trim().slice(0, 60);
+        if (!t) return false;
+        if (arr.some(x => x.text === t)) return false;
+        if (arr.length >= 30) { bubbleSay('最多 30 条哦', 2600); return false; }
+        arr.push({ id: 'p' + Date.now() + ':' + arr.length, text: t });
+        saveSettings();
+        return true;
+      }
+      bAdd.addEventListener('click', () => { if (add(inp.value)) { inp.value = ''; render(); } });
+      inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); if (add(inp.value)) { inp.value = ''; render(); } } });
+      body.appendChild(addRow);
+      body.appendChild(listBox);
+      const bPreset = $new('button', null, '加几条示例'); bPreset.type = 'button';
+      bPreset.addEventListener('click', () => {
+        ['今天吃白饭？没饭了！', '余额还剩多少呀？', '哼，才不是在等你呢……'].forEach(t => add(t));
+        render();
+      });
+      body.appendChild(bPreset);
+      render();
+      setTimeout(() => { try { inp.focus(); } catch (e) { /* 无所谓 */ } }, 30);
+    });
+  }
+
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
@@ -2277,7 +2600,27 @@ const CHAT_MODELS = [
         grid.appendChild(card);
       }
       body.appendChild(grid);
-      body.appendChild($new('h4', null, '自定义模型（上传图片）'));
+      body.appendChild($new('h4', null, '自定义模型（上传图片 · 可改名/导出/删除）'));
+      const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
+      const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
+      impBtn.addEventListener('click', () => impFile.click());
+      impFile.addEventListener('change', () => {
+        const f = impFile.files && impFile.files[0];
+        if (!f) return;
+        importSkinPackFile(f, (n, err) => {
+          if (n > 0) { openModelPicker(); bubbleSay('导入了 ' + n + ' 个模型～', 2800); }
+          else bubbleSay('导入失败：' + (err || '文件里没有可用模型'), 4400);
+        });
+      });
+      const impRow = $new('div', 'pb2-row');
+      impRow.appendChild(impBtn); impRow.appendChild(impFile);
+      const all = settings.customSkins || [];
+      if (all.length > 1) {
+        const expAll = $new('button', null, '全部导出'); expAll.type = 'button';
+        expAll.addEventListener('click', () => exportSkinPack(all));
+        impRow.appendChild(expAll);
+      }
+      body.appendChild(impRow);
       const file = $new('input'); file.type = 'file'; file.accept = 'image/*';
       file.addEventListener('change', () => {
         const f = file.files && file.files[0];
@@ -2303,20 +2646,29 @@ const CHAT_MODELS = [
           const info = $new('div');
           info.appendChild($new('div', 'pb2-model-name', c.name));
           info.appendChild($new('div', 'pb2-model-desc', '自定义上传'));
-          const del = $new('button', 'pb2-model-del', '删除');
+          const acts = $new('div', 'pb2-model-acts');
+          const ren = $new('button', 'pb2-model-act', '改名'); ren.type = 'button';
+          ren.addEventListener('click', ev => {
+            ev.stopPropagation();
+            askText('给这张模型起个名字', c.name || '', (v) => { c.name = v.slice(0, 24); saveSettings(); openModelPicker(); });
+          });
+          const exp = $new('button', 'pb2-model-act', '导出'); exp.type = 'button';
+          exp.addEventListener('click', ev => { ev.stopPropagation(); exportSkinPack([c]); });
+          const del = $new('button', 'pb2-model-act pb2-model-del', '删除'); del.type = 'button';
           del.addEventListener('click', ev => {
             ev.stopPropagation();
             settings.customSkins = settings.customSkins.filter(x => x.id !== c.id);
             if (settings.skin === c.id) settings.skin = 'fish';
             saveSettings(); applySkin(); refreshLayout(); openModelPicker();
           });
-          card.appendChild(th); card.appendChild(info); card.appendChild(del);
+          acts.appendChild(ren); acts.appendChild(exp); acts.appendChild(del);
+          card.appendChild(th); card.appendChild(info); card.appendChild(acts);
           card.addEventListener('click', () => { settings.skin = c.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); });
           grid2.appendChild(card);
         }
         body.appendChild(grid2);
       }
-      body.appendChild($new('div', 'pb2-hint', '模型管理思路参考 BongoCat：内置 + 上传 + 可删除。上传图片仅存浏览器 localStorage。'));
+      body.appendChild($new('div', 'pb2-hint', '模型管理思路参考 BongoCat：内置 + 上传 + 改名/导出/导入/删除。上传图片与常用语都只存本机 localStorage。'));
     });
   }
 
@@ -2437,13 +2789,35 @@ const CHAT_MODELS = [
       const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
       spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
       body.appendChild(spMax);
+      body.appendChild($new('label', null, '声音 · 风格（跟读＝照 TTS 的真人语调唱；经典＝一个字一声）'));
+      const spFollow = $new('select');
+      [['1', '韵律跟读（更像真人说话，用宿主「语音」组件的 TTS）'], ['0', '经典合成（一个字一声，纯离线）']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.speechFollow !== false ? '1' : '0') === v) op.selected = true;
+        spFollow.appendChild(op);
+      });
+      body.appendChild(spFollow);
+      body.appendChild($new('label', null, '声音 · 跟读音色（留空＝宿主默认；如 zh-CN-XiaoxiaoNeural）'));
+      const ttsVoiceInp = $new('input'); ttsVoiceInp.type = 'text';
+      ttsVoiceInp.placeholder = '留空＝宿主默认音色';
+      ttsVoiceInp.value = String(settings.ttsVoice || '');
+      body.appendChild(ttsVoiceInp);
+      body.appendChild($new('label', null, '声音 · 跟读语速（0.5–2，1 为正常）'));
+      const ttsRateInp = $new('input'); ttsRateInp.type = 'number';
+      ttsRateInp.min = '0.5'; ttsRateInp.max = '2'; ttsRateInp.step = '0.1';
+      ttsRateInp.value = String(clamp(Number(settings.ttsRate) || 1, 0.5, 2));
+      body.appendChild(ttsRateInp);
       const probe = $new('button', null, '试听一句'); probe.type = 'button';      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
         settings.speechOn = spOn.value === '1';
         settings.speechVoice = spVoice.value;
         settings.speechVolume = Number(spVol.value);
         settings.speechStep = Number(spStep.value) || 0.13;
         settings.speechMaxChars = Number(spMax.value) || 60;
+        settings.speechFollow = spFollow.value === '1';
+        settings.ttsVoice = ttsVoiceInp.value.trim();
+        settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
         speechApplyVolume(); saveSettings();
+        ttsCache.clear(); trackCache.clear();   // 换风格/音色/语速后，缓存作废
         speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
       });
       body.appendChild(probe);
@@ -2469,7 +2843,7 @@ const CHAT_MODELS = [
       body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, sfxOnSel, sfxVol };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceInp, ttsRateInp, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -2491,10 +2865,14 @@ const CHAT_MODELS = [
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
+          settings.speechFollow = f.spFollow.value === '1';
+          settings.ttsVoice = f.ttsVoiceInp.value.trim();
+          settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
           settings.sfxOn = f.sfxOnSel.value === '1';
           settings.sfxVolume = Number(f.sfxVol.value);
           speechApplyVolume();
           sfxApplyVolume();
+          ttsCache.clear(); trackCache.clear();
           CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
           saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
         } },
@@ -2562,6 +2940,8 @@ const CHAT_MODELS = [
       speechUnlock, speechStop, speechApplyVolume,
       sfxApplyVolume, isSpriteSkin, toggleSfx, buildMenu, MENU_ITEMS,
       verifySkinImage, spriteSkinClass,
+      mixToMono, resampleLinear, prosodyTrack, analyzeFrame, synthFollow, ttsPcm, trackCache, ttsCache,
+      synth, toWav,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,
