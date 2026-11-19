@@ -1,5 +1,11 @@
 /* pet-buddy v2.0.0 — 余额宠物·大肥鱼（全新架构，全部样式以 pb2- 前缀隔离） */
 
+/* v3.3.1 资源基准：宿主加载插件页面的协议不一定是 http（也可能是 file 或内部协议），
+   JS 里拼 "/_plugins/…" 这种根相对路径在非 http 下必然失效——所以让 CSS 解析出一个
+   真正可用的绝对 URL（相对本 CSS 文件所在目录），JS 再取回来当素材前缀。
+   icon.png 必定存在，拿它当"探针"。 */
+:root { --pb2-asset-base: url("icon.png"); }
+
 /* ---------- BongoCat 式鼠标/键盘监控图层（女仆/自定义皮肤可用） ---------- */
 .pb2-paws { position: absolute; inset: -14px -10px -2px; pointer-events: none; display: none; z-index: 2;
   transform: rotate(0deg); transition: transform .08s ease-out; }
@@ -44,9 +50,12 @@
    内层 sprite 是整张 1536×2288 大图，用 translate3d+scale 移动——纯 GPU 合成层，
    不触发重绘，消除动作切换时的闪烁 */
 .pb2-viewport { position: relative; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
-.pb2-sprite { position: absolute; left: 0; top: 0; width: 1536px; height: 2288px; transform-origin: 0 0;
-  background-repeat: no-repeat; background-size: 1536px 2288px; will-change: transform; backface-visibility: hidden; }
+.pb2-sprite { position: absolute; left: 0; top: 0; width: var(--pb2-sheet-w, 1536px); height: var(--pb2-sheet-h, 2288px); transform-origin: 0 0;
+  background-repeat: no-repeat; background-size: var(--pb2-sheet-w, 1536px) var(--pb2-sheet-h, 2288px); will-change: transform; backface-visibility: hidden; }
+/* 皮肤按 CSS 类切图（相对本 CSS 的路径：http / file 协议都能加载；
+   v3.3.0 用 JS 拼绝对路径切图，在桌面版里加载失败 → 桌宠空白，这里改回 CSS） */
 .pb2-pet-wrap.pb2-skin-fish .pb2-sprite { background-image: url("feiyu-spritesheet.png"); }
+.pb2-pet-wrap.pb2-skin-codex .pb2-sprite { background-image: url("pet-whale-codex.webp"); }
 
 /* 静态皮肤（DeepSeek 女仆图 / 自定义上传）：CSS 呼吸 */
 .pb2-img-skin { display: none; width: 100%; height: 100%; object-fit: contain; pointer-events: none;
@@ -90,6 +99,14 @@
 .pb2-menu .pb2-mi:hover { background: #ecf1ff; }
 .pb2-menu .pb2-mi.pb2-danger { color: #b04848; }
 .pb2-menu .pb2-msep { height: 1px; background: #e7ecf8; margin: 4px 6px; }
+/* v3.3.1 折叠子菜单（右键菜单里的「bibo语音」）：**点击就地展开**（缩进列表，不弹出到菜单外，
+   避免桌宠在屏幕右下角时子菜单被窗口边界裁掉） */
+.pb2-menu .pb2-mi > .pb2-mlabel { flex: 1 1 auto; }
+.pb2-menu .pb2-marrow { flex: none; opacity: .5; font-size: 10px; }
+.pb2-submenu { display: none; margin: 2px 0 2px 8px; padding-left: 7px; border-left: 2px solid #e7ecf8; }
+.pb2-menu .pb2-mi.pb2-sub-open > .pb2-submenu { display: block; }
+.pb2-menu .pb2-mi.pb2-sub-open { background: #f4f7ff; }
+.pb2-submenu .pb2-mi { font-size: 13px; }
 
 /* ---------- 弹窗（模型选择/角色设定/日志/聊天设置 通用） ---------- */
 .pb2-mask { position: absolute; inset: 0; background: rgba(24,28,48,.32); pointer-events: auto; z-index: 8;

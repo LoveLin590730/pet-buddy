@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>大肥鱼·窗口化聊天</title>
 <style>
+  :root { --pb2-asset-base: url("icon.png"); } /* v3.3.1 素材绝对基准（相对本页目录解析，http/file 协议都可靠） */
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body { font: 13px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif; background: linear-gradient(170deg, #eef3ff, #f8f6ff); color: #2c3c66; display: flex; flex-direction: column; }
@@ -201,7 +202,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.3.0';
+const PB_VERSION = '3.3.2';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -343,6 +344,7 @@ const CHAT_MODELS = [
     } catch (e) { /* 回退 */ }
     return '/_plugins/pet-buddy/';
   })();
+  let ASSET_DIR_RESOLVED = ''; // v3.3.1：启动时用 CSS 基准解析出的素材绝对目录（空=用 ASSET_DIR 回退）
 
   /* ---- 素材位置（v3.1.0 实测：宿主只服务插件根级文件，素材必须平铺） ----
    * 宿主对 /_plugins/<id>/ 只服务**根级文件**：根级新建文件立刻 200，而 assets/x.png、
@@ -350,23 +352,123 @@ const CHAT_MODELS = [
    * 所以素材平铺在插件根目录，按前缀分组：feiyu-*（桌宠精灵图）、st-*（40 张贴纸）、
    * pet-deepseek.webp（内置女仆皮肤）、icon.png（插件图标）；清单见 assets.manifest.json。
    * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
-  const ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
-  const ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
-  const ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
-  const ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+  /* 素材前缀：默认按 ASSET_DIR 拼，但**启动时会用 CSS 解析出的绝对基准重算**
+   * （见下面的 resolveAssetUrls——宿主用 file/内部协议加载页面时，根相对路径会失效）。 */
+  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  let ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
+  let ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
+  let ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+
+  /** 精灵图网格规格（官方图集与社区包同规格；换规格时改这里 + CSS 变量由 JS 同步） */
+  const SPRITE_GRID = { W: 1536, H: 2288, COLS: 8, ROWS: 11, CW: 192, CH: 208 };
 
   /* ---- 皮肤表（v3.3 可插拔精灵图皮肤） ----
    * 两种皮肤：
    *   ① sprite：整张精灵图按网格播动画（要求 8 列 × 11 行、cell 192×208、每行动作帧数同 STATES）——
    *      官方 ds-pet 与社区「Codex 桌宠包」都是这个规格，所以社区包能直接换图用；
    *   ② image ：单张静态图（内置女仆 / 用户自己传的图），配合 BongoCat 式键鼠监控。
-   * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（url + 名称 + 署名）→ 登记素材清单。 */
+   * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（file + 名称 + 署名）→ 登记素材清单，
+   * 再在 client.css 里加一行 `.pb2-pet-wrap.<cls> .pb2-sprite { background-image: url("<file>"); }`。
+   * 图片一律走 CSS 相对路径加载（http / file 协议都可靠），JS 只切类名。 */
   const SPRITE_SKINS = {
-    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', url: ASSET_SPRITE, credit: '' },
-    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', url: ASSET_SPRITE_CODEX, credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）' },
+    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.png', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.png' },
+    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', file: 'pet-whale-codex.webp', cls: 'pb2-skin-codex', credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）', url: ASSET_DIR + 'pet-whale-codex.webp' },
   };
   /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
   function isSpriteSkin(skin) { return !!SPRITE_SKINS[skin || 'fish']; }
+  /** 皮肤的 CSS 类名（切图就靠它；空串=静态图皮肤） */
+  function spriteSkinClass(skin) { const s = SPRITE_SKINS[skin]; return s ? s.cls : ''; }
+  /** 皮肤精灵图的 URL（预览缩略图用；运行播放不依赖它） */
+  function spriteSkinUrl(skin) { const s = SPRITE_SKINS[skin]; return s ? assetUrl(s.file) : ''; }
+
+  /** 把探测到的可用前缀应用到所有素材常量上 */
+  function applyAssetBase(base) {
+    if (!base || base === ASSET_DIR_RESOLVED) return false;
+    ASSET_DIR_RESOLVED = base;
+    ASSET_SPRITE = base + 'feiyu-spritesheet.png';
+    ASSET_SPRITE_CODEX = base + 'pet-whale-codex.webp';
+    ASSET_SKIN_DEFAULT = base + 'pet-deepseek.webp';
+    ASSET_STICKER = base;
+    for (const k of Object.keys(SPRITE_SKINS)) SPRITE_SKINS[k].url = base + SPRITE_SKINS[k].file;
+    return true;
+  }
+
+  /** 从 CSS 取"素材绝对基准"：给隐藏探针挂 `background-image: var(--pb2-asset-base)`，
+   *  读 computed style 得到浏览器解析后的绝对 URL，再去掉文件名。
+   *  注意：这只是**候选之一**——桌面版把 CSS 内联注入页面时，相对 URL 会以页面为基准，
+   *  解析出来的可能压根不是插件目录（v3.3.1 踩过：解析成 http://127.0.0.1:8788/）。 */
+  function cssAssetBase(hostEl) {
+    let probeEl = null;
+    try {
+      const host = hostEl || document.body || document.documentElement;
+      if (!host || !host.appendChild) return '';
+      probeEl = document.createElement('div');
+      probeEl.setAttribute('aria-hidden', 'true');
+      probeEl.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;' +
+        'background-image:var(--pb2-asset-base);background-repeat:no-repeat;';
+      host.appendChild(probeEl);
+      const bg = getComputedStyle(probeEl).backgroundImage || '';
+      const m = bg.match(/^url\((['"]?)(.*?)\1\)$/);
+      if (m && m[2] && m[2] !== 'none') return m[2].replace(/[^/]*$/, '');
+    } catch (e) { /* 取不到就交给下一个候选 */ }
+    finally { if (probeEl && probeEl.remove) probeEl.remove(); }
+    return '';
+  }
+
+  /** 候选素材前缀（按"最可能可用"排序；都由 icon.png 实测验证过才会被采用） */
+  function assetBaseCandidates() {
+    const out = [];
+    const push = (b) => { if (b && out.indexOf(b) < 0) out.push(b); };
+    push('/_plugins/pet-buddy/');                                  // 根相对：走宿主静态服务（现读磁盘，新素材也取得到）
+    try { if (location.origin && location.origin !== 'null') push(location.origin + '/_plugins/pet-buddy/'); } catch (e) { /* 老环境 */ }
+    push(ASSET_DIR);                                               // 启动时推导出来的（含回退）
+    push(cssAssetBase(document.body));                             // CSS 解析出的（宿主重写过 css 时就对）
+    try { push(location.href.replace(/[^/]*(\?.*)?$/, '')); } catch (e) { /* 页面同目录 */ }
+    return out;
+  }
+
+  /** **实测探测**素材基准：逐个候选拿 icon.png 试加载，第一个成功的即为真基准。
+   *  为什么不靠推导：桌面版对 CSS 做重写、对路径的解析方式又随注入方式变化，
+   *  只有"真能加载出来"才算数（v3.3.0/v3.3.1 两次翻车都是因为信了推导）。
+   *  @param {(base:string, how:string, tried:string[])=>void} cb
+   */
+  function probeAssetBase(cb, opts) {
+    const cands = assetBaseCandidates();
+    const tried = [];
+    const timeout = (opts && opts.timeout) || 2500;
+    let i = 0, finished = false;
+    const done = (base, how) => { if (!finished) { finished = true; cb(base || '', how || '', tried); } };
+    if (typeof Image !== 'function') { done('', 'no-image'); return; }
+    const next = () => {
+      if (i >= cands.length) return done('', 'none');
+      const cand = cands[i++];
+      if (!cand) return next();
+      tried.push(cand);
+      let settled = false;
+      const im = new Image();
+      const timer = setTimeout(() => { if (!settled) { settled = true; im.onload = im.onerror = null; next(); } }, timeout);
+      im.onload = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        if (im.naturalWidth > 0) done(cand, cand === '/_plugins/pet-buddy/' ? 'root-relative' : 'candidate');
+        else next();
+      };
+      im.onerror = () => { if (settled) return; settled = true; clearTimeout(timer); next(); };
+      im.src = cand + 'icon.png';
+    };
+    next();
+  }
+
+  /** 同步解析（探针未完成时的兜底）：只在 CSS 基准确实不同时改 */
+  function resolveAssetUrls(hostEl) {
+    const base = cssAssetBase(hostEl);
+    if (!base) return { ok: false, base: base, changed: false };
+    return { ok: applyAssetBase(base), base: base, changed: ASSET_DIR_RESOLVED === base };
+  }
+  /** 素材目录（探测成功后优先；不然用启动推导值） */
+  function assetDir() { return ASSET_DIR_RESOLVED || ASSET_DIR; }
+  /** 合成某个素材的完整 URL（贴纸、皮肤缩略图等用） */
+  function assetUrl(file) { return assetDir() + file; }
 
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
@@ -1595,6 +1697,12 @@ const CHAT_MODELS = [
   const S = settings;            // 设置对象（与桌宠半边同源 localStorage）
   const save = saveSettings;
   const FISH_ST = FISH_STICKERS; // 深海贴纸帧（与桌宠共用同一张表）
+  // v3.3.2：窗口页同样靠实测探测拿素材基准（贴纸/头像都在这里加载）
+  probeAssetBase((base, how, tried) => {
+    if (base) applyAssetBase(base);
+    log(base ? 'info' : 'error', '窗口页素材基准 = ' + (base || '(未探测到，用回退)'));
+    try { if (typeof refreshStickerPanel === 'function') refreshStickerPanel(); } catch (e) { /* 面板还没建 */ }
+  });
 
   /* ===== UI ===== */
   const msgs = document.getElementById('msgs');

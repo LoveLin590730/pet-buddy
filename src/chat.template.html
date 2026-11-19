@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>大肥鱼·窗口化聊天</title>
 <style>
+  :root { --pb2-asset-base: url("icon.png"); } /* v3.3.1 素材绝对基准（相对本页目录解析，http/file 协议都可靠） */
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body { font: 13px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif; background: linear-gradient(170deg, #eef3ff, #f8f6ff); color: #2c3c66; display: flex; flex-direction: column; }
@@ -90,6 +91,12 @@
   const S = settings;            // 设置对象（与桌宠半边同源 localStorage）
   const save = saveSettings;
   const FISH_ST = FISH_STICKERS; // 深海贴纸帧（与桌宠共用同一张表）
+  // v3.3.2：窗口页同样靠实测探测拿素材基准（贴纸/头像都在这里加载）
+  probeAssetBase((base, how, tried) => {
+    if (base) applyAssetBase(base);
+    log(base ? 'info' : 'error', '窗口页素材基准 = ' + (base || '(未探测到，用回退)'));
+    try { if (typeof refreshStickerPanel === 'function') refreshStickerPanel(); } catch (e) { /* 面板还没建 */ }
+  });
 
   /* ===== UI ===== */
   const msgs = document.getElementById('msgs');

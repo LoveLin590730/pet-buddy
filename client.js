@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.3.0';
+const PB_VERSION = '3.3.2';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -284,6 +284,7 @@ const CHAT_MODELS = [
     } catch (e) { /* 回退 */ }
     return '/_plugins/pet-buddy/';
   })();
+  let ASSET_DIR_RESOLVED = ''; // v3.3.1：启动时用 CSS 基准解析出的素材绝对目录（空=用 ASSET_DIR 回退）
 
   /* ---- 素材位置（v3.1.0 实测：宿主只服务插件根级文件，素材必须平铺） ----
    * 宿主对 /_plugins/<id>/ 只服务**根级文件**：根级新建文件立刻 200，而 assets/x.png、
@@ -291,23 +292,123 @@ const CHAT_MODELS = [
    * 所以素材平铺在插件根目录，按前缀分组：feiyu-*（桌宠精灵图）、st-*（40 张贴纸）、
    * pet-deepseek.webp（内置女仆皮肤）、icon.png（插件图标）；清单见 assets.manifest.json。
    * 下面三个常量是"素材位置"的唯一开关：将来宿主支持子目录，改这三行 + 搬文件即可。 */
-  const ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
-  const ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
-  const ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
-  const ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+  /* 素材前缀：默认按 ASSET_DIR 拼，但**启动时会用 CSS 解析出的绝对基准重算**
+   * （见下面的 resolveAssetUrls——宿主用 file/内部协议加载页面时，根相对路径会失效）。 */
+  let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.png';   // 官方精灵图
+  let ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
+  let ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-deepseek.webp'; // 内置女仆皮肤
+  let ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
+
+  /** 精灵图网格规格（官方图集与社区包同规格；换规格时改这里 + CSS 变量由 JS 同步） */
+  const SPRITE_GRID = { W: 1536, H: 2288, COLS: 8, ROWS: 11, CW: 192, CH: 208 };
 
   /* ---- 皮肤表（v3.3 可插拔精灵图皮肤） ----
    * 两种皮肤：
    *   ① sprite：整张精灵图按网格播动画（要求 8 列 × 11 行、cell 192×208、每行动作帧数同 STATES）——
    *      官方 ds-pet 与社区「Codex 桌宠包」都是这个规格，所以社区包能直接换图用；
    *   ② image ：单张静态图（内置女仆 / 用户自己传的图），配合 BongoCat 式键鼠监控。
-   * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（url + 名称 + 署名）→ 登记素材清单。 */
+   * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（file + 名称 + 署名）→ 登记素材清单，
+   * 再在 client.css 里加一行 `.pb2-pet-wrap.<cls> .pb2-sprite { background-image: url("<file>"); }`。
+   * 图片一律走 CSS 相对路径加载（http / file 协议都可靠），JS 只切类名。 */
   const SPRITE_SKINS = {
-    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', url: ASSET_SPRITE, credit: '' },
-    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', url: ASSET_SPRITE_CODEX, credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）' },
+    fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.png', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.png' },
+    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', file: 'pet-whale-codex.webp', cls: 'pb2-skin-codex', credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）', url: ASSET_DIR + 'pet-whale-codex.webp' },
   };
   /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
   function isSpriteSkin(skin) { return !!SPRITE_SKINS[skin || 'fish']; }
+  /** 皮肤的 CSS 类名（切图就靠它；空串=静态图皮肤） */
+  function spriteSkinClass(skin) { const s = SPRITE_SKINS[skin]; return s ? s.cls : ''; }
+  /** 皮肤精灵图的 URL（预览缩略图用；运行播放不依赖它） */
+  function spriteSkinUrl(skin) { const s = SPRITE_SKINS[skin]; return s ? assetUrl(s.file) : ''; }
+
+  /** 把探测到的可用前缀应用到所有素材常量上 */
+  function applyAssetBase(base) {
+    if (!base || base === ASSET_DIR_RESOLVED) return false;
+    ASSET_DIR_RESOLVED = base;
+    ASSET_SPRITE = base + 'feiyu-spritesheet.png';
+    ASSET_SPRITE_CODEX = base + 'pet-whale-codex.webp';
+    ASSET_SKIN_DEFAULT = base + 'pet-deepseek.webp';
+    ASSET_STICKER = base;
+    for (const k of Object.keys(SPRITE_SKINS)) SPRITE_SKINS[k].url = base + SPRITE_SKINS[k].file;
+    return true;
+  }
+
+  /** 从 CSS 取"素材绝对基准"：给隐藏探针挂 `background-image: var(--pb2-asset-base)`，
+   *  读 computed style 得到浏览器解析后的绝对 URL，再去掉文件名。
+   *  注意：这只是**候选之一**——桌面版把 CSS 内联注入页面时，相对 URL 会以页面为基准，
+   *  解析出来的可能压根不是插件目录（v3.3.1 踩过：解析成 http://127.0.0.1:8788/）。 */
+  function cssAssetBase(hostEl) {
+    let probeEl = null;
+    try {
+      const host = hostEl || document.body || document.documentElement;
+      if (!host || !host.appendChild) return '';
+      probeEl = document.createElement('div');
+      probeEl.setAttribute('aria-hidden', 'true');
+      probeEl.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;' +
+        'background-image:var(--pb2-asset-base);background-repeat:no-repeat;';
+      host.appendChild(probeEl);
+      const bg = getComputedStyle(probeEl).backgroundImage || '';
+      const m = bg.match(/^url\((['"]?)(.*?)\1\)$/);
+      if (m && m[2] && m[2] !== 'none') return m[2].replace(/[^/]*$/, '');
+    } catch (e) { /* 取不到就交给下一个候选 */ }
+    finally { if (probeEl && probeEl.remove) probeEl.remove(); }
+    return '';
+  }
+
+  /** 候选素材前缀（按"最可能可用"排序；都由 icon.png 实测验证过才会被采用） */
+  function assetBaseCandidates() {
+    const out = [];
+    const push = (b) => { if (b && out.indexOf(b) < 0) out.push(b); };
+    push('/_plugins/pet-buddy/');                                  // 根相对：走宿主静态服务（现读磁盘，新素材也取得到）
+    try { if (location.origin && location.origin !== 'null') push(location.origin + '/_plugins/pet-buddy/'); } catch (e) { /* 老环境 */ }
+    push(ASSET_DIR);                                               // 启动时推导出来的（含回退）
+    push(cssAssetBase(document.body));                             // CSS 解析出的（宿主重写过 css 时就对）
+    try { push(location.href.replace(/[^/]*(\?.*)?$/, '')); } catch (e) { /* 页面同目录 */ }
+    return out;
+  }
+
+  /** **实测探测**素材基准：逐个候选拿 icon.png 试加载，第一个成功的即为真基准。
+   *  为什么不靠推导：桌面版对 CSS 做重写、对路径的解析方式又随注入方式变化，
+   *  只有"真能加载出来"才算数（v3.3.0/v3.3.1 两次翻车都是因为信了推导）。
+   *  @param {(base:string, how:string, tried:string[])=>void} cb
+   */
+  function probeAssetBase(cb, opts) {
+    const cands = assetBaseCandidates();
+    const tried = [];
+    const timeout = (opts && opts.timeout) || 2500;
+    let i = 0, finished = false;
+    const done = (base, how) => { if (!finished) { finished = true; cb(base || '', how || '', tried); } };
+    if (typeof Image !== 'function') { done('', 'no-image'); return; }
+    const next = () => {
+      if (i >= cands.length) return done('', 'none');
+      const cand = cands[i++];
+      if (!cand) return next();
+      tried.push(cand);
+      let settled = false;
+      const im = new Image();
+      const timer = setTimeout(() => { if (!settled) { settled = true; im.onload = im.onerror = null; next(); } }, timeout);
+      im.onload = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        if (im.naturalWidth > 0) done(cand, cand === '/_plugins/pet-buddy/' ? 'root-relative' : 'candidate');
+        else next();
+      };
+      im.onerror = () => { if (settled) return; settled = true; clearTimeout(timer); next(); };
+      im.src = cand + 'icon.png';
+    };
+    next();
+  }
+
+  /** 同步解析（探针未完成时的兜底）：只在 CSS 基准确实不同时改 */
+  function resolveAssetUrls(hostEl) {
+    const base = cssAssetBase(hostEl);
+    if (!base) return { ok: false, base: base, changed: false };
+    return { ok: applyAssetBase(base), base: base, changed: ASSET_DIR_RESOLVED === base };
+  }
+  /** 素材目录（探测成功后优先；不然用启动推导值） */
+  function assetDir() { return ASSET_DIR_RESOLVED || ASSET_DIR; }
+  /** 合成某个素材的完整 URL（贴纸、皮肤缩略图等用） */
+  function assetUrl(file) { return assetDir() + file; }
 
   // 深海贴纸帧（窗口聊天用；row/col）
   const FISH_STICKERS = {
@@ -1587,29 +1688,79 @@ const CHAT_MODELS = [
   let skinMode = 'fish'; // fish | img
   let petState = 'idle', stateStart = performance.now(), transient = null, transientUntil = 0;
   let lastPaint = '';
+  /* v3.3.2：素材基准**靠实测探测**（不再靠推导）——桌面版把 CSS 内联注入页面，
+     相对 URL 会以页面为基准；而宿主又会重写 CSS 里它"已知"的素材路径，
+     结果官方图能显示、新加的社区图 404。所以启动时拿 icon.png 逐个候选试加载，
+     第一个真能加载的才算数；探测完成后按最终前缀重画一次皮肤。 */
+  const assetProbe = { ok: false, base: '', how: '', tried: [] };
+  const SKIN_WARNED = {};   // 同一会话里每种皮肤只提示一次，避免反复弹同样的提示
+
+  /** 皮肤图可用性预检：失败不改用户设置、只临时穿回官方形象并说明一次 */
+  function verifySkinImage(skin, done) {
+    const item = SPRITE_SKINS[skin];
+    if (!item) { done(true, ''); return; }
+    let finished = false;
+    const im = new Image();
+    const timer = setTimeout(() => { if (!finished) { finished = true; done(false, '加载超时'); } }, 5000);
+    im.onload = () => { if (finished) return; finished = true; clearTimeout(timer); done(true, im.naturalWidth + 'x' + im.naturalHeight); };
+    im.onerror = () => { if (finished) return; finished = true; clearTimeout(timer); done(false, '读不到 ' + assetUrl(item.file)); };
+    im.src = assetUrl(item.file);
+  }
+
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
-    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img');
+    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex');
     if (sp) {
       skinMode = 'fish';
-      petWrap.classList.add('pb2-skin-fish');
-      try { sprite.style.backgroundImage = 'url("' + sp.url + '")'; } catch (e) { /* 保持 CSS 默认图 */ }
+      petWrap.classList.add(sp.cls);        // CSS 类仍然保留（宿主重写过的官方路径靠它兜底）
+      // 网格变量交给 CSS（同规格图集值相同；将来支持不同 cell 的图集只改这里）
+      root.style.setProperty('--pb2-sheet-w', SPRITE_GRID.W + 'px');
+      root.style.setProperty('--pb2-sheet-h', SPRITE_GRID.H + 'px');
+      // 探测到可用基准后，直接用实测前缀指定图（CSS 那条路在桌面版里对新素材不生效）
+      if (assetProbe.ok) { try { sprite.style.backgroundImage = 'url("' + spriteSkinUrl(s) + '")'; } catch (e) { /* 保留 CSS 兜底 */ } }
+      else { sprite.style.backgroundImage = ''; }
       lastPaint = ''; // 强制下一帧重画
+      // 基准还没探测出来时先不判失败（否则会误报"图没加载出来"）
+      if (!assetProbe.ok) { applyMonitor(); return; }
+      verifySkinImage(s, (ok, info) => {
+        if (ok || SKIN_WARNED[s]) return;
+        SKIN_WARNED[s] = true;
+        log('error', '皮肤图加载失败（' + s + '）：' + info);
+        try { sprite.style.backgroundImage = 'url("' + spriteSkinUrl('fish') + '")'; } catch (e) { petWrap.classList.add(SPRITE_SKINS.fish.cls); }
+        bubbleSay('这套衣服的图没读出来，先临时穿回原来的～（设置不动，下次再试）', 5600);
+      });
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
       let url = '';
-      if (s === 'maid') url = ASSET_SKIN_DEFAULT;
+      if (s === 'maid') url = assetUrl('pet-deepseek.webp');
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
         if (c) url = c.dataUrl;
       }
-      imgSkin.src = url || ASSET_SKIN_DEFAULT;
+      imgSkin.src = url || assetUrl('pet-deepseek.webp');
+      // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
+      imgSkin.onerror = () => {
+        if (SKIN_WARNED[s]) return;
+        SKIN_WARNED[s] = true;
+        log('error', '静态皮肤图加载失败：' + imgSkin.src);
+        petWrap.classList.remove('pb2-skin-img');
+        petWrap.classList.add(SPRITE_SKINS.fish.cls);
+        skinMode = 'fish'; lastPaint = '';
+        bubbleSay('这张图没读出来，先临时穿回原来的～（设置不动，下次再试）', 5200);
+      };
     }
     applyMonitor();
   }
   applySkin();
+  probeAssetBase((base, how, tried) => {
+    assetProbe.ok = !!base; assetProbe.base = base; assetProbe.how = how; assetProbe.tried = tried;
+    if (base) applyAssetBase(base);
+    log(base ? 'info' : 'error', '素材基准 = ' + (base || '(未探测到，用回退 ' + ASSET_DIR + ')') +
+      ' ｜ 候选试过 ' + tried.length + ' 个：' + tried.join(' , '));
+    applySkin();   // 用最终前缀重画皮肤与贴纸
+  });
 
   function paintFrame() {
     if (skinMode !== 'fish') return;
@@ -1955,8 +2106,14 @@ const CHAT_MODELS = [
   /* ---- 右键菜单 ---- */
   const MENU_ITEMS = [
     { icon: '💬', label: '窗口化聊天', act: openChatWindow },
-    { icon: '🎙', label: '语音闲聊（或按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
-    { icon: '🔊', label: '试听声音', act: () => { speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+    { icon: '🎙', label: 'bibo语音', sub: [
+      { icon: '🔊', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+      { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+      { sep: true },
+      { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
+        act: () => toggleSfx() },
+      { icon: '⚙️', label: '声音设置…', act: openChatSettings },
+    ] },
     { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
     { icon: '📝', label: '角色设定', act: openPersonaEditor },
     { icon: '⚙️', label: '聊天设置', act: openChatSettings },
@@ -1965,14 +2122,42 @@ const CHAT_MODELS = [
     { icon: '👁', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     { icon: '📍', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
   ];
+  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */
+  function toggleSfx() {
+    settings.sfxOn = settings.sfxOn === false;
+    saveSettings();
+    if (settings.sfxOn) { sfx('pop', { force: true }); bubbleSay('音效开啦，听见没？', 2200); }
+    else bubbleSay('音效关掉了，安静一会儿～', 2200);
+  }
   function buildMenu() {
     menu.textContent = '';
     for (const it of MENU_ITEMS) {
       if (it.sep) { menu.appendChild($new('div', 'pb2-msep')); continue; }
       const row = $new('div', 'pb2-mi');
       row.appendChild($new('span', null, it.icon));
-      row.appendChild($new('span', null, it.label));
-      row.addEventListener('click', () => { menu.hidden = true; it.act(); });
+      row.appendChild($new('span', 'pb2-mlabel', typeof it.label === 'function' ? it.label() : it.label));
+      if (it.sub) {
+        row.appendChild($new('span', 'pb2-marrow', '▾'));   // 折叠标记：点一下就地展开
+        const sub = $new('div', 'pb2-submenu');
+        for (const s of it.sub) {
+          if (s.sep) { sub.appendChild($new('div', 'pb2-msep')); continue; }
+          const r2 = $new('div', 'pb2-mi');
+          r2.appendChild($new('span', null, s.icon));
+          r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
+          r2.addEventListener('click', ev => { ev.stopPropagation(); menu.hidden = true; s.act(); });
+          sub.appendChild(r2);
+        }
+        row.appendChild(sub);
+        // v3.3.2：改成**就地展开**（原来是悬停向右弹出，桌宠在屏幕右下时会被窗口边界裁掉）
+        row.addEventListener('click', ev => {
+          ev.stopPropagation();
+          row.classList.toggle('pb2-sub-open');
+          const arrow = row.querySelector('.pb2-marrow');
+          if (arrow) arrow.textContent = row.classList.contains('pb2-sub-open') ? '▴' : '▾';
+        });
+      } else {
+        row.addEventListener('click', () => { menu.hidden = true; it.act(); });
+      }
       menu.appendChild(row);
     }
   }
@@ -2290,7 +2475,7 @@ const CHAT_MODELS = [
    * v3.1.0：不再硬编码 '/_plugins/pet-buddy/chat.html'——用素材目录推导（与该页同目录），
    * 插件改名 / 换宿主 / 被人拿去装到自己宿主里都仍然找得到。 */
   function openChatWindow() {
-    window.open(ASSET_DIR + 'chat.html', 'pb2-chat', 'width=470,height=720');
+    window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
   /* ================= 启动问候 ================= */
@@ -2311,7 +2496,7 @@ const CHAT_MODELS = [
     settings: () => Object.assign({}, settings),
     logs: () => logs.slice(),
     els: { root, petWrap, sprite, bubble, menu },
-    speech: speak,
+    assets: { dir: assetDir, url: assetUrl, resolve: resolveAssetUrls, probe: assetProbe, spriteUrl: spriteSkinUrl, grid: SPRITE_GRID },    speech: speak,
     speechProbe,
     speechClean,
     speechState,
@@ -2326,7 +2511,8 @@ const CHAT_MODELS = [
       renderRich, stickerEl, normSticker,
       sendVoiceChat, voiceChatByButton, speakReply,
       speechUnlock, speechStop, speechApplyVolume,
-      sfxApplyVolume, isSpriteSkin,
+      sfxApplyVolume, isSpriteSkin, toggleSfx, buildMenu, MENU_ITEMS,
+      verifySkinImage, spriteSkinClass,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

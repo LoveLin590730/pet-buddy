@@ -82,29 +82,79 @@
   let skinMode = 'fish'; // fish | img
   let petState = 'idle', stateStart = performance.now(), transient = null, transientUntil = 0;
   let lastPaint = '';
+  /* v3.3.2：素材基准**靠实测探测**（不再靠推导）——桌面版把 CSS 内联注入页面，
+     相对 URL 会以页面为基准；而宿主又会重写 CSS 里它"已知"的素材路径，
+     结果官方图能显示、新加的社区图 404。所以启动时拿 icon.png 逐个候选试加载，
+     第一个真能加载的才算数；探测完成后按最终前缀重画一次皮肤。 */
+  const assetProbe = { ok: false, base: '', how: '', tried: [] };
+  const SKIN_WARNED = {};   // 同一会话里每种皮肤只提示一次，避免反复弹同样的提示
+
+  /** 皮肤图可用性预检：失败不改用户设置、只临时穿回官方形象并说明一次 */
+  function verifySkinImage(skin, done) {
+    const item = SPRITE_SKINS[skin];
+    if (!item) { done(true, ''); return; }
+    let finished = false;
+    const im = new Image();
+    const timer = setTimeout(() => { if (!finished) { finished = true; done(false, '加载超时'); } }, 5000);
+    im.onload = () => { if (finished) return; finished = true; clearTimeout(timer); done(true, im.naturalWidth + 'x' + im.naturalHeight); };
+    im.onerror = () => { if (finished) return; finished = true; clearTimeout(timer); done(false, '读不到 ' + assetUrl(item.file)); };
+    im.src = assetUrl(item.file);
+  }
+
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
-    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img');
+    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex');
     if (sp) {
       skinMode = 'fish';
-      petWrap.classList.add('pb2-skin-fish');
-      try { sprite.style.backgroundImage = 'url("' + sp.url + '")'; } catch (e) { /* 保持 CSS 默认图 */ }
+      petWrap.classList.add(sp.cls);        // CSS 类仍然保留（宿主重写过的官方路径靠它兜底）
+      // 网格变量交给 CSS（同规格图集值相同；将来支持不同 cell 的图集只改这里）
+      root.style.setProperty('--pb2-sheet-w', SPRITE_GRID.W + 'px');
+      root.style.setProperty('--pb2-sheet-h', SPRITE_GRID.H + 'px');
+      // 探测到可用基准后，直接用实测前缀指定图（CSS 那条路在桌面版里对新素材不生效）
+      if (assetProbe.ok) { try { sprite.style.backgroundImage = 'url("' + spriteSkinUrl(s) + '")'; } catch (e) { /* 保留 CSS 兜底 */ } }
+      else { sprite.style.backgroundImage = ''; }
       lastPaint = ''; // 强制下一帧重画
+      // 基准还没探测出来时先不判失败（否则会误报"图没加载出来"）
+      if (!assetProbe.ok) { applyMonitor(); return; }
+      verifySkinImage(s, (ok, info) => {
+        if (ok || SKIN_WARNED[s]) return;
+        SKIN_WARNED[s] = true;
+        log('error', '皮肤图加载失败（' + s + '）：' + info);
+        try { sprite.style.backgroundImage = 'url("' + spriteSkinUrl('fish') + '")'; } catch (e) { petWrap.classList.add(SPRITE_SKINS.fish.cls); }
+        bubbleSay('这套衣服的图没读出来，先临时穿回原来的～（设置不动，下次再试）', 5600);
+      });
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
       let url = '';
-      if (s === 'maid') url = ASSET_SKIN_DEFAULT;
+      if (s === 'maid') url = assetUrl('pet-deepseek.webp');
       else {
         const c = (settings.customSkins || []).find(x => x.id === s);
         if (c) url = c.dataUrl;
       }
-      imgSkin.src = url || ASSET_SKIN_DEFAULT;
+      imgSkin.src = url || assetUrl('pet-deepseek.webp');
+      // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
+      imgSkin.onerror = () => {
+        if (SKIN_WARNED[s]) return;
+        SKIN_WARNED[s] = true;
+        log('error', '静态皮肤图加载失败：' + imgSkin.src);
+        petWrap.classList.remove('pb2-skin-img');
+        petWrap.classList.add(SPRITE_SKINS.fish.cls);
+        skinMode = 'fish'; lastPaint = '';
+        bubbleSay('这张图没读出来，先临时穿回原来的～（设置不动，下次再试）', 5200);
+      };
     }
     applyMonitor();
   }
   applySkin();
+  probeAssetBase((base, how, tried) => {
+    assetProbe.ok = !!base; assetProbe.base = base; assetProbe.how = how; assetProbe.tried = tried;
+    if (base) applyAssetBase(base);
+    log(base ? 'info' : 'error', '素材基准 = ' + (base || '(未探测到，用回退 ' + ASSET_DIR + ')') +
+      ' ｜ 候选试过 ' + tried.length + ' 个：' + tried.join(' , '));
+    applySkin();   // 用最终前缀重画皮肤与贴纸
+  });
 
   function paintFrame() {
     if (skinMode !== 'fish') return;
@@ -450,8 +500,14 @@
   /* ---- 右键菜单 ---- */
   const MENU_ITEMS = [
     { icon: '💬', label: '窗口化聊天', act: openChatWindow },
-    { icon: '🎙', label: '语音闲聊（或按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
-    { icon: '🔊', label: '试听声音', act: () => { speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+    { icon: '🎙', label: 'bibo语音', sub: [
+      { icon: '🔊', label: '试听语音', act: () => { speechUnlock(); speechProbe('哼哼，本小姐的声音，好听吧？'); } },
+      { icon: '🎙', label: '语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', act: () => voiceChatByButton() },
+      { sep: true },
+      { icon: '🔔', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'),
+        act: () => toggleSfx() },
+      { icon: '⚙️', label: '声音设置…', act: openChatSettings },
+    ] },
     { icon: '🎭', label: '修改桌宠模型', act: openModelPicker },
     { icon: '📝', label: '角色设定', act: openPersonaEditor },
     { icon: '⚙️', label: '聊天设置', act: openChatSettings },
@@ -460,14 +516,42 @@
     { icon: '👁', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     { icon: '📍', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
   ];
+  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */
+  function toggleSfx() {
+    settings.sfxOn = settings.sfxOn === false;
+    saveSettings();
+    if (settings.sfxOn) { sfx('pop', { force: true }); bubbleSay('音效开啦，听见没？', 2200); }
+    else bubbleSay('音效关掉了，安静一会儿～', 2200);
+  }
   function buildMenu() {
     menu.textContent = '';
     for (const it of MENU_ITEMS) {
       if (it.sep) { menu.appendChild($new('div', 'pb2-msep')); continue; }
       const row = $new('div', 'pb2-mi');
       row.appendChild($new('span', null, it.icon));
-      row.appendChild($new('span', null, it.label));
-      row.addEventListener('click', () => { menu.hidden = true; it.act(); });
+      row.appendChild($new('span', 'pb2-mlabel', typeof it.label === 'function' ? it.label() : it.label));
+      if (it.sub) {
+        row.appendChild($new('span', 'pb2-marrow', '▾'));   // 折叠标记：点一下就地展开
+        const sub = $new('div', 'pb2-submenu');
+        for (const s of it.sub) {
+          if (s.sep) { sub.appendChild($new('div', 'pb2-msep')); continue; }
+          const r2 = $new('div', 'pb2-mi');
+          r2.appendChild($new('span', null, s.icon));
+          r2.appendChild($new('span', 'pb2-mlabel', typeof s.label === 'function' ? s.label() : s.label));
+          r2.addEventListener('click', ev => { ev.stopPropagation(); menu.hidden = true; s.act(); });
+          sub.appendChild(r2);
+        }
+        row.appendChild(sub);
+        // v3.3.2：改成**就地展开**（原来是悬停向右弹出，桌宠在屏幕右下时会被窗口边界裁掉）
+        row.addEventListener('click', ev => {
+          ev.stopPropagation();
+          row.classList.toggle('pb2-sub-open');
+          const arrow = row.querySelector('.pb2-marrow');
+          if (arrow) arrow.textContent = row.classList.contains('pb2-sub-open') ? '▴' : '▾';
+        });
+      } else {
+        row.addEventListener('click', () => { menu.hidden = true; it.act(); });
+      }
       menu.appendChild(row);
     }
   }
@@ -785,7 +869,7 @@
    * v3.1.0：不再硬编码 '/_plugins/pet-buddy/chat.html'——用素材目录推导（与该页同目录），
    * 插件改名 / 换宿主 / 被人拿去装到自己宿主里都仍然找得到。 */
   function openChatWindow() {
-    window.open(ASSET_DIR + 'chat.html', 'pb2-chat', 'width=470,height=720');
+    window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
   /* ================= 启动问候 ================= */
@@ -806,7 +890,7 @@
     settings: () => Object.assign({}, settings),
     logs: () => logs.slice(),
     els: { root, petWrap, sprite, bubble, menu },
-    speech: speak,
+    assets: { dir: assetDir, url: assetUrl, resolve: resolveAssetUrls, probe: assetProbe, spriteUrl: spriteSkinUrl, grid: SPRITE_GRID },    speech: speak,
     speechProbe,
     speechClean,
     speechState,
@@ -821,7 +905,8 @@
       renderRich, stickerEl, normSticker,
       sendVoiceChat, voiceChatByButton, speakReply,
       speechUnlock, speechStop, speechApplyVolume,
-      sfxApplyVolume, isSpriteSkin,
+      sfxApplyVolume, isSpriteSkin, toggleSfx, buildMenu, MENU_ITEMS,
+      verifySkinImage, spriteSkinClass,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

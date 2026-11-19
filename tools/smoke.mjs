@@ -68,7 +68,8 @@ const probe = `
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
-  SPRITE_SKINS, isSpriteSkin, ASSET_SPRITE_CODEX,
+  SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX,
+  cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
 
@@ -219,9 +220,70 @@ console.log('\n[音效与社区皮肤 · v3.3]');
   eq('默认皮肤仍是官方图集', P.isSpriteSkin(P.settings.skin === undefined ? 'fish' : P.settings.skin), true);
   ok('社区皮肤带署名（许可要求）', /YunYueSama/.test(P.SPRITE_SKINS.codex.credit) && /codex-deepseek-pet/.test(P.SPRITE_SKINS.codex.credit), P.SPRITE_SKINS.codex.credit);
   ok('社区皮肤名称可直接显示', /大肥鱼/.test(P.SPRITE_SKINS.codex.name));
-  ok('两套精灵图都走插件根目录绝对路径（宿主只服务根级文件）',
-    P.SPRITE_SKINS.fish.url.indexOf('/_plugins/') >= 0 && P.SPRITE_SKINS.codex.url.indexOf('/_plugins/') >= 0,
+  ok('两套精灵图都指向插件根目录（含回退前缀）',
+    P.SPRITE_SKINS.fish.url.endsWith('feiyu-spritesheet.png') && P.SPRITE_SKINS.codex.url.endsWith('pet-whale-codex.webp'),
     P.SPRITE_SKINS.codex.url);
+}
+
+console.log('\n[桌面版兼容修复 · v3.3.1]');
+{
+  // 资源基准：宿主可能用 file 协议加载页面，JS 拼的根相对路径会失效 —— 改由 CSS 解析出绝对 URL
+  ok('无 getComputedStyle 环境下 resolveAssetUrls 安全回退（不抛错）',
+    P.resolveAssetUrls(null).ok === false);
+
+  // 用最小 DOM 桩验证"探针元素 + computed style"这条解析链（真实走的就是它）
+  const fakeEl = { style: {}, setAttribute() {}, remove() {}, appendChild() {} };
+  const fakeHost = { appendChild() {} };
+  sandbox.document = { createElement: () => fakeEl, body: fakeHost, documentElement: fakeHost };
+  sandbox.getComputedStyle = () => ({ backgroundImage: 'url("file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/icon.png")' });
+  const r = P.resolveAssetUrls(fakeHost);
+  ok('能从 CSS 探针解析出素材绝对目录（file:// 场景）',
+    r.ok === true && r.base === 'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/', JSON.stringify(r));
+  eq('解析后贴纸前缀跟着走（桌面版里贴纸也修好了）', P.assetDir(), 'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/');
+  eq('解析后皮肤图 URL 跟着走', P.spriteSkinUrl('codex'),
+    'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/pet-whale-codex.webp');
+  sandbox.getComputedStyle = () => ({ backgroundImage: 'none' });
+  ok('探针取不到时不误改（保留回退前缀）', P.cssAssetBase(fakeHost) === '');
+
+  // 候选前缀：根相对（走宿主静态服务）必须排第一，CSS/推导/页面目录作为后备
+  const cands = P.assetBaseCandidates();
+  eq('候选前缀首选根相对（新素材也能取到）', cands[0], '/_plugins/pet-buddy/');
+  ok('候选去重且不含无效项', cands.every((c) => c.indexOf('undefined') < 0) && new Set(cands).size === cands.length, JSON.stringify(cands));
+  // 补上 origin 与 CSS 基准后，应能收集出多个候选（真实页面就是这么拿的）
+  sandbox.location = { origin: 'http://127.0.0.1:8788', href: 'http://127.0.0.1:8788/' };
+  sandbox.getComputedStyle = () => ({ backgroundImage: 'url("http://127.0.0.1:8788/_plugins/pet-buddy/icon.png")' });
+  const cands2 = P.assetBaseCandidates();
+  ok('多个候选都能收集（根相对 / http 绝对 / CSS 解析）',
+    cands2.indexOf('/_plugins/pet-buddy/') === 0 &&
+    cands2.indexOf('http://127.0.0.1:8788/_plugins/pet-buddy/') >= 0 &&
+    cands2.indexOf('http://127.0.0.1:8788/') >= 0, JSON.stringify(cands2));
+  ok('没有 Image 构造器时探测安全返回（不抛错）',
+    await new Promise((res) => P.probeAssetBase((base, how) => res(base === '' && how === 'no-image'))));
+
+  const clientTxt = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cssTxt = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('折叠子菜单用点击就地展开（pb2-sub-open）', /pb2-sub-open/.test(clientTxt));
+  ok('CSS 里子菜单是缩进列表（不再 absolute 弹到菜单外）',
+    /\.pb2-submenu\s*\{[^}]*border-left/.test(cssTxt) && !/\.pb2-submenu\s*\{[^}]*position:\s*absolute/.test(cssTxt));
+  ok('皮肤图加载失败时只提示一次、不改用户设置（下次再试）',
+    /SKIN_WARNED/.test(clientTxt) && /设置不动，下次再试/.test(clientTxt));
+  ok('探测完成后会按最终前缀重画皮肤（不再依赖 CSS 相对路径）',
+    /probeAssetBase\(\(base, how, tried\)/.test(clientTxt) && /applyAssetBase/.test(clientTxt));
+
+  // 皮肤切图改走 CSS 类：产物里必须有对应的类规则（否则社区皮肤切过去就是空白）
+  const css = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('CSS 里有社区皮肤的切图规则（相对路径，http/file 都能加载）',
+    /\.pb2-pet-wrap\.pb2-skin-codex\s+\.pb2-sprite\s*\{[^}]*url\(["']?pet-whale-codex\.webp/.test(css));
+  ok('CSS 里有素材基准探针（--pb2-asset-base）', /--pb2-asset-base:\s*url\(["']?icon\.png/.test(css));
+  ok('精灵图尺寸走 CSS 变量（支持不同网格的图集）', /--pb2-sheet-w/.test(css));
+
+  const clientSrc = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('皮肤图加载失败会回退官方图集并提示（不再静默消失）',
+    /verifySkinImage/.test(clientTxt) && /临时穿回原来的/.test(clientTxt));
+  ok('右键菜单有「bibo语音」折叠子菜单 + 音效开关项',
+    /bibo语音/.test(clientSrc) && /pb2-submenu/.test(clientSrc) && /音效：/.test(clientSrc));
+  ok('托盘菜单里保留语音与音效入口（试听/闲聊/开关/设置）',
+    /试听语音/.test(clientSrc) && /语音闲聊/.test(clientSrc) && /toggleSfx/.test(clientSrc));
 }
 
 console.log('\n[语音合成与播报 · v3.2]');
