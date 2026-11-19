@@ -88,8 +88,9 @@
      第一个真能加载的才算数；探测完成后按最终前缀重画一次皮肤。 */
   const assetProbe = { ok: false, base: '', how: '', tried: [] };
   const SKIN_WARNED = {};   // 同一会话里每种皮肤只提示一次，避免反复弹同样的提示
-  // v3.3.3：旧的女仆皮肤已下线（素材自带桌子与手，叠浮空爪图层很违和）——老设置自动切到 BongoCat
-  if (settings.skin === 'maid') { settings.skin = 'bongo'; saveSettings(); }
+  /* v5.1：内置皮肤只剩「官方精灵图 + 动作包」，老设置里若还留着已移除的 id（社区桌宠包 /
+   * BongoCat / 和大人 / RYANFFY / 女仆）→ 一律回落官方精灵图，免得切到不存在的皮肤导致桌宠空白。 */
+  if (settings.skin && REMOVED_SKINS[settings.skin]) { settings.skin = 'fish'; saveSettings(); }
 
   /** 皮肤图可用性预检：失败不改用户设置、只临时穿回官方形象并说明一次 */
   function verifySkinImage(skin, done) {
@@ -382,7 +383,15 @@
         if (c) { url = c.dataUrl; anim = customSkinAnim(c); }   // v4.1：上传的 GIF/动画 WebP 也走这条路
       }
       petWrap.classList.toggle('pb2-skin-anim', anim);   // 动图不叠呼吸动画（和大人 120 帧同款处理）
-      imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
+      /* v5.1：拿不到图片素材（皮肤已删/素材丢失/自定义皮肤损坏）→ 回落到官方精灵图；
+       * 原来这里兜底指向已删除的 BongoCat 图，只会加载失败留一片空白。 */
+      if (!url) {
+        log('err', '皮肤素材缺失，回落官方精灵图：' + s);
+        settings.skin = 'fish'; saveSettings();
+        applySkin();
+        return;
+      }
+      imgSkin.src = url;
       // v3.6.1：图加载完之后要重算 wrap 尺寸（切换皮肤时那会儿还拿不到新图尺寸）
       imgSkin.onload = () => { if (skinMode === 'img') { lastPaint = ''; refreshLayout(); } };
       // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
@@ -1940,7 +1949,7 @@
     name: pk.name,
     desc: '动作包 · ' + pk.actions.length + ' 个动作：点击/拖动/余额/随机表演都会动' +
       '（来自 ' + pk.source + '，' + Math.round(pk.outTotalKB / 1024 * 10) / 10 + 'MB）',
-    thumb: assetUrl(pk.thumb || 'pet-bongo.png'),
+    thumb: assetUrl(pk.thumb || 'icon.png'),   // v5.1：bongo 素材已删，兜底换成插件图标
     contain: true,
   })));
   }

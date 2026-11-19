@@ -24,6 +24,9 @@ SOFTWARE.
 素材与第三方：
 - feiyu-spritesheet.webp：zhouwu97/ds-pet 官方 v2 精灵图（v4.1 起由 PNG 有损重编码为 WebP q98，体积 -59%），MIT（详见 LICENSE-dspet.txt）
 - dp-001..114.webm / dp-thumb.png：PC2005-cloud/dsh-pet 官方模型包的 114 个动作视频（VP9-alpha）  经 tools/import-petpack.mjs 重新编码（裁 62%×92% → 160px/12fps/crf45，55.2MB → 6.5MB），MIT（详见 LICENSE-dspet.txt）
+- 内置皮肤：只保留官方精灵图（feiyu-spritesheet.webp）与动作包（dp-*.webm，来自 dsh-pet）；
+  原内置的社区桌宠包 / BongoCat / 和大人 / RYANFFY 立绘素材已按用户要求移除（v5.1，省 3.2MB），
+  相关许可文件（LICENSE-bongocat.txt 等）保留以备查。
 - st-dsh-01..27.webp：同上游模型包 assets/memes 的 27 张表情（384×384 PNG → 256px WebP q86，4.6MB → 0.42MB），MIT（详见 LICENSE-dspet.txt）
 - st-deepseek-*.webp / chatgpt-renwu-jieshao.webp 等：蓝色大肥鱼档案馆（fisharchive.cc），CC BY-NC-SA 4.0（非商用、署名、相同方式共享）
 - st-wx-01..24.webp：微信表情包 640.wxpic 解码裁切（二创，非商用）

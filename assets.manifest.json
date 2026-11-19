@@ -39,21 +39,6 @@
       "license": "MIT（见 LICENSE-dspet.txt）"
     },
     {
-      "id": "skin",
-      "prefix": "pet-",
-      "count": 5,
-      "files": [
-        "pet-whale-codex.webp",
-        "pet-bongocat.png",
-        "pet-bongocat-down.png",
-        "pet-hedaren.webp",
-        "pet-dafeiyu-ryan.png"
-      ],
-      "use": "桌宠皮肤：pet-whale-codex.webp＝社区桌宠包图集（8 列 × 11 行同规格，按网格播动画，皮肤 codex）；pet-bongocat.png + pet-bongocat-down.png＝BongoCat 键盘猫（默认帧 + 键鼠按下帧，皮肤 bongo）；pet-hedaren.webp＝和大人待机动画（120 帧动画 WebP，皮肤 hedaren）；pet-dafeiyu-ryan.png＝大肥鱼 RYANFFY 立绘（静态图，皮肤 ryan）",
-      "source": "pet-whale-codex.webp：YunYueSama/codex-deepseek-pet 的 spritesheet.webp；pet-bongocat*.png：kuroni/bongocat-osu 的 img/catch/bg.png 与 left.png；pet-hedaren.webp：Yukilol13/dsh-hedaren-pet 的 app/animations/idle.webp；pet-dafeiyu-ryan.png：RYANFFY/deepseek-dafeiyu-pet 的 sprites/正面.png（全部原样未改）",
-      "license": "pet-whale-codex.webp：大肥鱼项目署名许可 1.0（见 LICENSE-deepseekpet.txt）；pet-bongocat*.png：MIT（见 LICENSE-bongocat.txt）；pet-hedaren.webp / pet-dafeiyu-ryan.png：MIT（见 LICENSE-community-pets.txt）"
-    },
-    {
       "id": "icon",
       "prefix": "icon",
       "count": 1,
@@ -285,6 +270,15 @@
       "use": "桌宠动作包「大肥鱼·鲸鲸娘（完整动作包）」：114 个动作视频（VP9-alpha webm），按语义角色播放（idle 1 / 点击 5 / 拖拽 1 / 余额 6 / 随机表演 80 …）",
       "source": "模型包 dsh-pet-source.zip（136.9MB，含形象/动作/交互配置）经 tools/import-petpack.mjs 整合：ffmpeg 裁 0.62×0.92 居中 → 160px / 12fps / crf45 / VP9-alpha，素材 55.2MB → 6.48MB（-88%）",
       "license": "上游 dsh-pet（PC2005-cloud/dsh-pet，MIT，见仓库 LICENSE 与 LICENSE-dspet.txt）"
+    },
+    {
+      "id": "skin-note",
+      "prefix": "-",
+      "count": 0,
+      "files": [],
+      "use": "内置皮肤已精简为「官方精灵图（feiyu-spritesheet.webp，见 sprite 组）+ 动作包（见 petpack-dshpack 组）」两类；原来的社区桌宠包 / BongoCat / 和大人 / RYANFFY 立绘素材（共 3.2MB）已按用户要求移除，图片皮肤改由用户自行上传（GIF / 动画 WebP / 静态图）。",
+      "source": "—",
+      "license": "—"
     }
   ]
 }

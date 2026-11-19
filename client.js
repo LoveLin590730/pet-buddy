@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '5.0.0';
+const PB_VERSION = '5.1.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -324,8 +324,7 @@ const CHAT_MODELS = [
   /* 素材前缀：默认按 ASSET_DIR 拼，但**启动时会用 CSS 解析出的绝对基准重算**
    * （见下面的 resolveAssetUrls——宿主用 file/内部协议加载页面时，根相对路径会失效）。 */
   let ASSET_SPRITE = ASSET_DIR + 'feiyu-spritesheet.webp';   // 官方精灵图（v4.1 起 WebP，体积 -59%）
-  let ASSET_SPRITE_CODEX = ASSET_DIR + 'pet-whale-codex.webp'; // 社区桌宠包精灵图（署名见 LICENSE-deepseekpet.txt）
-  let ASSET_SKIN_DEFAULT = ASSET_DIR + 'pet-bongocat.png';  // 内置静态皮肤（BongoCat 猫猫，v3.3.3 起）
+  let ASSET_SKIN_DEFAULT = ASSET_DIR + 'dp-thumb.png';       // 「女仆」贴纸用的形象图（v5.1：原 BongoCat 素材已删，改用动作包缩略图里的鲸鲸娘）
   let ASSET_STICKER = ASSET_DIR;                            // 贴纸前缀（st-*.webp）
 
   /** 精灵图网格规格（官方图集与社区包同规格；换规格时改这里 + CSS 变量由 JS 同步） */
@@ -339,47 +338,27 @@ const CHAT_MODELS = [
    * 新增社区图集只要：把图平铺放插件根目录 → 在这里加一条（file + 名称 + 署名）→ 登记素材清单，
    * 再在 client.css 里加一行 `.pb2-pet-wrap.<cls> .pb2-sprite { background-image: url("<file>"); }`。
    * 图片一律走 CSS 相对路径加载（http / file 协议都可靠），JS 只切类名。 */
+  /* ---- 精灵图皮肤（v5.1：按用户要求只保留官方图集；社区包/其它形象已移除） ---- */
   const SPRITE_SKINS = {
     fish:  { name: '大肥鱼·鲸鲸娘', desc: 'ds-pet 官方 v2 精灵图 · 全动作动画', file: 'feiyu-spritesheet.webp', cls: 'pb2-skin-fish', credit: '', url: ASSET_DIR + 'feiyu-spritesheet.webp' },
-    codex: { name: '大肥鱼·社区桌宠包', desc: '社区二创图集（同网格规格，直接换图可用）· 全动作动画', file: 'pet-whale-codex.webp', cls: 'pb2-skin-codex', credit: '素材：YunYueSama/codex-deepseek-pet（大肥鱼项目署名许可 1.0）', url: ASSET_DIR + 'pet-whale-codex.webp' },
   };
-  /** 某皮肤是否走精灵图动画（社区图集与内置官方图集同一套网格规格，无需改渲染） */
+  /** 某皮肤是否走精灵图动画（同一套网格规格，无需改渲染） */
   function isSpriteSkin(skin) { return !!SPRITE_SKINS[skin || 'fish']; }
   /** 皮肤的 CSS 类名（切图就靠它；空串=静态图皮肤） */
   function spriteSkinClass(skin) { const s = SPRITE_SKINS[skin]; return s ? s.cls : ''; }
   /** 皮肤精灵图的 URL（预览缩略图用；运行播放不依赖它） */
   function spriteSkinUrl(skin) { const s = SPRITE_SKINS[skin]; return s ? assetUrl(s.file) : ''; }
 
-  /* ---- 静态图皮肤（v3.3.3） ----
-   * pet-deepseek.webp（女仆）已按反馈删除：那张图自带桌子和手，再叠我们的浮空双爪图层很违和。
-   * 换成 **BongoCat 猫猫**：原版 BongoCat 的键盘猫画面（kuroni/bongocat-osu，MIT），
-   * 自带键盘与爪子 → 不叠图层，改用"按下帧"体现键鼠互动（敲键盘时爪子亮一下）。 */
-  const IMAGE_SKINS = {
-    bongo: {
-      name: 'BongoCat 猫猫',
-      desc: '键盘猫 · 敲键盘/动鼠标时爪子亮一下（素材：kuroni/bongocat-osu，MIT）',
-      file: 'pet-bongocat.png',
-      fileDown: 'pet-bongocat-down.png',
-      paw: false,           // 素材自带爪子，不叠浮空爪图层
-      credit: '素材：kuroni/bongocat-osu（MIT）',
-    },
-    /* v3.5.1：从社区桌面宠物项目里挑出来的两张形象（都是完整立绘/动画，不要再叠爪图层） */
-    hedaren: {
-      name: '和大人',
-      desc: '清代权臣 Q 版 · 120 帧待机动画（会呼吸、会摆）',
-      file: 'pet-hedaren.webp',
-      anim: true,           // 动画 WebP：<img> 会自己播
-      paw: false,
-      credit: '素材：Yukilol13/dsh-hedaren-pet（MIT）',
-    },
-    ryan: {
-      name: '大肥鱼·RYANFFY 立绘',
-      desc: '鲸鱼娘正面立绘（静态图）',
-      file: 'pet-dafeiyu-ryan.png',
-      paw: false,
-      credit: '素材：RYANFFY/deepseek-dafeiyu-pet（MIT）',
-    },
-  };
+  /* ---- 静态图皮肤（v5.1：内置的三张已按用户要求移除，现在这里为空） ----
+   * 留下的图片皮肤路径仍完整可用：**用户自己上传的图/GIF/动画 WebP** 走的就是这一套
+   * （applySkin 的 img 分支 + petAspect 按图片比例 + 上传/容量预检）。
+   * 历史：pet-deepseek.webp（女仆）因自带桌椅与浮空爪违和已删；
+   *       BongoCat / 和大人 / RYANFFY 立绘按用户要求一并删除（含素材文件）。 */
+  const IMAGE_SKINS = {};
+
+  /** 已移除的内置皮肤 id → 一律回落到官方精灵图（老用户设置里可能还留着这些 id） */
+  const REMOVED_SKINS = { codex: 1, bongo: 1, maid: 1, hedaren: 1, ryan: 1, ryanffy: 1 };
+
   /** 某皮肤是否走静态图（BongoCat / 用户上传的自定义图） */
   function isImageSkin(skin) { return !!IMAGE_SKINS[skin]; }
 
@@ -455,8 +434,7 @@ const CHAT_MODELS = [
     if (!base || base === ASSET_DIR_RESOLVED) return false;
     ASSET_DIR_RESOLVED = base;
     ASSET_SPRITE = base + 'feiyu-spritesheet.webp';
-    ASSET_SPRITE_CODEX = base + 'pet-whale-codex.webp';
-    ASSET_SKIN_DEFAULT = base + 'pet-bongocat.png';
+    ASSET_SKIN_DEFAULT = base + 'dp-thumb.png';
     ASSET_STICKER = base;
     for (const k of Object.keys(SPRITE_SKINS)) SPRITE_SKINS[k].url = base + SPRITE_SKINS[k].file;
     return true;
@@ -4361,8 +4339,9 @@ const CHAT_MODELS = [
      第一个真能加载的才算数；探测完成后按最终前缀重画一次皮肤。 */
   const assetProbe = { ok: false, base: '', how: '', tried: [] };
   const SKIN_WARNED = {};   // 同一会话里每种皮肤只提示一次，避免反复弹同样的提示
-  // v3.3.3：旧的女仆皮肤已下线（素材自带桌子与手，叠浮空爪图层很违和）——老设置自动切到 BongoCat
-  if (settings.skin === 'maid') { settings.skin = 'bongo'; saveSettings(); }
+  /* v5.1：内置皮肤只剩「官方精灵图 + 动作包」，老设置里若还留着已移除的 id（社区桌宠包 /
+   * BongoCat / 和大人 / RYANFFY / 女仆）→ 一律回落官方精灵图，免得切到不存在的皮肤导致桌宠空白。 */
+  if (settings.skin && REMOVED_SKINS[settings.skin]) { settings.skin = 'fish'; saveSettings(); }
 
   /** 皮肤图可用性预检：失败不改用户设置、只临时穿回官方形象并说明一次 */
   function verifySkinImage(skin, done) {
@@ -4655,7 +4634,15 @@ const CHAT_MODELS = [
         if (c) { url = c.dataUrl; anim = customSkinAnim(c); }   // v4.1：上传的 GIF/动画 WebP 也走这条路
       }
       petWrap.classList.toggle('pb2-skin-anim', anim);   // 动图不叠呼吸动画（和大人 120 帧同款处理）
-      imgSkin.src = url || assetUrl(IMAGE_SKINS.bongo.file);
+      /* v5.1：拿不到图片素材（皮肤已删/素材丢失/自定义皮肤损坏）→ 回落到官方精灵图；
+       * 原来这里兜底指向已删除的 BongoCat 图，只会加载失败留一片空白。 */
+      if (!url) {
+        log('err', '皮肤素材缺失，回落官方精灵图：' + s);
+        settings.skin = 'fish'; saveSettings();
+        applySkin();
+        return;
+      }
+      imgSkin.src = url;
       // v3.6.1：图加载完之后要重算 wrap 尺寸（切换皮肤时那会儿还拿不到新图尺寸）
       imgSkin.onload = () => { if (skinMode === 'img') { lastPaint = ''; refreshLayout(); } };
       // 静态图兜底：读不到就临时显示官方形象并说明一次（同样不动用户设置）
@@ -6213,7 +6200,7 @@ const CHAT_MODELS = [
     name: pk.name,
     desc: '动作包 · ' + pk.actions.length + ' 个动作：点击/拖动/余额/随机表演都会动' +
       '（来自 ' + pk.source + '，' + Math.round(pk.outTotalKB / 1024 * 10) / 10 + 'MB）',
-    thumb: assetUrl(pk.thumb || 'pet-bongo.png'),
+    thumb: assetUrl(pk.thumb || 'icon.png'),   // v5.1：bongo 素材已删，兜底换成插件图标
     contain: true,
   })));
   }

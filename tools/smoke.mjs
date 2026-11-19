@@ -74,7 +74,7 @@ const probe = `
   analyzeFrame, prosodyTrack, synthFollow, synthGuided, guidedTargets, guidedPickList, pickScaleMidi,
   resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
-  SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
+  SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, IMAGE_SKINS, isImageSkin, REMOVED_SKINS,
   imgAnimKind, customSkinAnim, customSkinStoreFits, CUSTOM_STATIC_MAX, CUSTOM_ANIM_MAX, CUSTOM_STORE_BUDGET,
   IMG_IDLE_FUNS, pickIdleFunClass, numToZh, numZhValue,
   zipEntries, zipImageEntries, zipExtract, zipBytesToDataUrl,
@@ -215,7 +215,7 @@ console.log('\n[余额来源：内部通道额度 + 缓存命中计价 · v3.1.0
   P.settings.gatewayKey = '';
   ok('素材常量指向插件根（宿主只服务根级文件，素材必须平铺）',
     P.ASSET_SPRITE === P.ASSET_DIR + 'feiyu-spritesheet.webp' && P.ASSET_STICKER === P.ASSET_DIR &&
-    P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'pet-bongocat.png',
+    P.ASSET_SKIN_DEFAULT === P.ASSET_DIR + 'dp-thumb.png',
     P.ASSET_SPRITE);
 }
 
@@ -448,18 +448,18 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
 }
 
 {
-  ok('和大人皮肤已登记（动画 WebP，120 帧）', !!P.IMAGE_SKINS.hedaren && P.IMAGE_SKINS.hedaren.file === 'pet-hedaren.webp' && P.IMAGE_SKINS.hedaren.anim === true);
-  ok('RYANFFY 大肥鱼立绘已登记（静态）', !!P.IMAGE_SKINS.ryan && P.IMAGE_SKINS.ryan.file === 'pet-dafeiyu-ryan.png' && !P.IMAGE_SKINS.ryan.anim);
-  ok('两个新皮肤都不叠浮空爪（素材自带身体）', P.IMAGE_SKINS.hedaren.paw === false && P.IMAGE_SKINS.ryan.paw === false);
-  ok('署名齐全（许可要求）', /Yukilol13/.test(P.IMAGE_SKINS.hedaren.credit) && /RYANFFY/.test(P.IMAGE_SKINS.ryan.credit));
-  ok('素材文件都在仓库里', existsSync(path.join(ROOT, 'pet-hedaren.webp')) && existsSync(path.join(ROOT, 'pet-dafeiyu-ryan.png')));
+  ok('内置皮肤已按用户要求精简（和大人等已移除，且老设置会回落官方精灵图）', !P.IMAGE_SKINS.hedaren && !P.IMAGE_SKINS.ryan && !P.IMAGE_SKINS.bongo && P.SPRITE_SKINS.codex === undefined && typeof P.REMOVED_SKINS === 'object');
+  ok('内置皮肤只剩「官方精灵图 + 动作包」两类（图片皮肤改为用户自行上传）', Object.keys(P.SPRITE_SKINS).length === 1 && !!P.SPRITE_SKINS.fish && Object.keys(P.IMAGE_SKINS).length === 0);
+  ok('被移除皮肤相关的字段已不存在（图片皮肤内置为空）', Object.keys(P.IMAGE_SKINS).length === 0);
+  ok('第三方皮肤素材已移除后，仓库不再依赖它们的署名文件', !/hedaren|ryanffy/i.test(Object.keys(P.SPRITE_SKINS).join(',')));
+  ok('被移除的皮肤素材已从仓库删除（省 3.2MB）', !existsSync(path.join(ROOT, 'pet-hedaren.webp')) && !existsSync(path.join(ROOT, 'pet-dafeiyu-ryan.png')) && !existsSync(path.join(ROOT, 'pet-whale-codex.webp')) && !existsSync(path.join(ROOT, 'pet-bongocat.png')));
   const mf = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
   const listed = mf.groups.flatMap((g) => g.files);
-  ok('两张新素材已登记进清单', listed.indexOf('pet-hedaren.webp') >= 0 && listed.indexOf('pet-dafeiyu-ryan.png') >= 0);
+  ok('素材清单里不再有被移除的皮肤文件', listed.indexOf('pet-hedaren.webp') < 0 && listed.indexOf('pet-whale-codex.webp') < 0);
   ok('许可说明文件随包分发', existsSync(path.join(ROOT, 'LICENSE-community-pets.txt')));
   const css2 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
   ok('动画皮肤不叠加呼吸动画（避免两层变形）', /\.pb2-skin-anim \.pb2-img-skin\s*\{[^}]*animation:\s*none/.test(css2));
-  ok('模型选择器会列出全部内置皮肤', Object.keys(P.IMAGE_SKINS).length >= 3);
+  ok('模型选择器列出内置皮肤：官方精灵图 1 个 + 动作包 1 个 + 老设置可回落', Object.keys(P.SPRITE_SKINS).length === 1 && Object.keys(P.IMAGE_SKINS).length === 0);
 }
 
 {
@@ -495,24 +495,25 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
 }
 console.log('\n[皮肤：BongoCat 与浮空爪图层 · v3.3.3]');
 {
-  const im = P.IMAGE_SKINS.bongo;
-  ok('内置静态皮肤换成 BongoCat 键盘猫', !!im && im.file === 'pet-bongocat.png' && /BongoCat/.test(im.name));
-  ok('BongoCat 皮肤：默认帧 + 按下帧 + 声明不叠浮空爪',
-    im.fileDown === 'pet-bongocat-down.png' && im.paw === false);
-  ok('皮肤分类判断（精灵图 / 静态图 / 自定义）',
-    P.isSpriteSkin('codex') && P.isImageSkin('bongo') && !P.isImageSkin('codex') && !P.isImageSkin('custom:1'));
+  /* v5.1：BongoCat / 和大人 / RYANFFY / 社区包 已按用户要求移除（连同素材），
+   * 内置只剩官方精灵图；图片皮肤路径仍为"用户自行上传"保留。 */
+  ok('内置图片皮肤已清空（图片皮肤改为用户自行上传）', Object.keys(P.IMAGE_SKINS).length === 0);
+  ok('已移除皮肤 id 一律回落官方精灵图（老设置不会切到空白）',
+    P.REMOVED_SKINS.codex === 1 && P.REMOVED_SKINS.bongo === 1 && P.REMOVED_SKINS.hedaren === 1);
+  ok('皮肤分类判断（只剩精灵图 + 自定义）',
+    P.isSpriteSkin('fish') && !P.isImageSkin('bongo') && !P.isImageSkin('custom:1'));
   ok('女仆素材已下线（文件与清单都不再有它）',
     !existsSync(path.join(ROOT, 'pet-deepseek.webp')) &&
     JSON.stringify(JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'))).indexOf('pet-deepseek') < 0);
   const clientTxt = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
-  ok('老设置 maid 自动迁移到 bongo', /settings\.skin === 'maid'/.test(clientTxt) && /settings\.skin = 'bongo'/.test(clientTxt));
+  ok('老设置里的已移除皮肤统一回落（REMOVED_SKINS 判定在产物里）', /REMOVED_SKINS\[settings\.skin\]/.test(clientTxt) && /settings\.skin = 'fish'/.test(clientTxt));
   ok('浮空爪图层对自带爪子的皮肤关闭（不再出现飘着的肉垫）',
     /currentPawEnabled/.test(clientTxt) && /im\.paw !== false/.test(clientTxt));
   ok('键鼠互动改走按下帧（pawFramePulse + 节流）',
     /pawFramePulse/.test(clientTxt) && /pawPulseAt/.test(clientTxt));
-  ok('BongoCat 素材已登记进素材清单',
+  ok('素材清单里不再有被移除的皮肤素材',
     JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8')).groups
-      .flatMap((g) => g.files).indexOf('pet-bongocat.png') >= 0);
+      .flatMap((g) => g.files).indexOf('pet-bongocat.png') < 0);
 }
 
 console.log('\n[素材清单 · v3.1.0]');
@@ -528,8 +529,8 @@ console.log('\n[素材清单 · v3.1.0]');
   eq('贴纸清单与代码 ARCHIVE 表逐条一致',
     listed.filter((f) => f.indexOf('st-') === 0).sort(),
     P.ARCHIVE.map((a) => 'st-' + a.id + '.webp').sort());
-  ok('社区桌宠包图集已登记（署名素材，随包分发）',
-    listed.indexOf('pet-whale-codex.webp') >= 0 && P.ASSET_SPRITE_CODEX.endsWith('pet-whale-codex.webp'));
+  ok('社区桌宠包已按用户要求移除（清单与磁盘都不再有它）',
+    listed.indexOf('pet-whale-codex.webp') < 0 && !existsSync(path.join(ROOT, 'pet-whale-codex.webp')));
 }
 
 console.log('\n[音效与社区皮肤 · v3.3]');
@@ -544,14 +545,11 @@ console.log('\n[音效与社区皮肤 · v3.3]');
   ok('音效开关关闭时直接不响', P.sfx('tap') === false);
   P.settings.sfxOn = true;
 
-  ok('精灵图皮肤：官方 + 社区包（同一套网格规格，可直接换图）',
-    P.isSpriteSkin('fish') && P.isSpriteSkin('codex') && !P.isSpriteSkin('maid') && !P.isSpriteSkin('custom:1'));
+  ok('精灵图皮肤只剩官方图集（社区包已移除）',
+    P.isSpriteSkin('fish') && !P.isSpriteSkin('codex') && !P.isSpriteSkin('custom:1'));
   eq('默认皮肤仍是官方图集', P.isSpriteSkin(P.settings.skin === undefined ? 'fish' : P.settings.skin), true);
-  ok('社区皮肤带署名（许可要求）', /YunYueSama/.test(P.SPRITE_SKINS.codex.credit) && /codex-deepseek-pet/.test(P.SPRITE_SKINS.codex.credit), P.SPRITE_SKINS.codex.credit);
-  ok('社区皮肤名称可直接显示', /大肥鱼/.test(P.SPRITE_SKINS.codex.name));
-  ok('两套精灵图都指向插件根目录（含回退前缀）',
-    P.SPRITE_SKINS.fish.url.endsWith('feiyu-spritesheet.webp') && P.SPRITE_SKINS.codex.url.endsWith('pet-whale-codex.webp'),
-    P.SPRITE_SKINS.codex.url);
+  ok('官方图集名称可直接显示', /大肥鱼/.test(P.SPRITE_SKINS.fish.name));
+  ok('官方图集指向插件根目录（含回退前缀）', P.SPRITE_SKINS.fish.url.endsWith('feiyu-spritesheet.webp'), P.SPRITE_SKINS.fish.url);
 }
 
 console.log('\n[桌面版兼容修复 · v3.3.1]');
@@ -569,8 +567,8 @@ console.log('\n[桌面版兼容修复 · v3.3.1]');
   ok('能从 CSS 探针解析出素材绝对目录（file:// 场景）',
     r.ok === true && r.base === 'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/', JSON.stringify(r));
   eq('解析后贴纸前缀跟着走（桌面版里贴纸也修好了）', P.assetDir(), 'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/');
-  eq('解析后皮肤图 URL 跟着走', P.spriteSkinUrl('codex'),
-    'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/pet-whale-codex.webp');
+  eq('解析后皮肤图 URL 跟着走', P.spriteSkinUrl('fish'),
+    'file:///C:/x/%E6%8F%92%E4%BB%B6%E5%85%BC%E5%AE%B9%E5%B1%82/pet-buddy/feiyu-spritesheet.webp');
   sandbox.getComputedStyle = () => ({ backgroundImage: 'none' });
   ok('探针取不到时不误改（保留回退前缀）', P.cssAssetBase(fakeHost) === '');
 
@@ -601,8 +599,8 @@ console.log('\n[桌面版兼容修复 · v3.3.1]');
 
   // 皮肤切图改走 CSS 类：产物里必须有对应的类规则（否则社区皮肤切过去就是空白）
   const css = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
-  ok('CSS 里有社区皮肤的切图规则（相对路径，http/file 都能加载）',
-    /\.pb2-pet-wrap\.pb2-skin-codex\s+\.pb2-sprite\s*\{[^}]*url\(["']?pet-whale-codex\.webp/.test(css));
+  ok('CSS 里官方图集的切图规则在（相对路径，http/file 都能加载）',
+    /\.pb2-pet-wrap\.pb2-skin-fish\s+\.pb2-sprite\s*\{[^}]*url\(["']?feiyu-spritesheet\.webp/.test(css));
   ok('CSS 里有素材基准探针（--pb2-asset-base）', /--pb2-asset-base:\s*url\(["']?icon\.png/.test(css));
   ok('精灵图尺寸走 CSS 变量（支持不同网格的图集）', /--pb2-sheet-w/.test(css));
 
