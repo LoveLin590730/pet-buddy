@@ -206,6 +206,25 @@
 .pb2-dbody button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(30,45,90,.12); }
 .pb2-dbody button:active { transform: translateY(0) scale(.985); }
 .pb2-dbody h4 { font-size: 12.5px; color: #5a6b96; letter-spacing: .02em; margin: 10px 0 6px; }
+
+/* ===== v4.7 自行移动（散步）：设置面板的选项 chip + 走动时的朝向/起伏 ===== */
+.pb2-chiprow { display: flex; flex-wrap: wrap; gap: 6px; }
+.pb2-dbody button.pb2-chip { font-size: 12px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid #cdd9f2; background: #fff; color: #4b5a80; cursor: pointer; }
+.pb2-dbody button.pb2-chip:hover { background: #f2f7ff; border-color: #9db8ee; }
+.pb2-dbody button.pb2-chip.pb2-chip-on { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+/* 向右走时镜像（动作素材默认朝左）；精灵图皮肤有自己的左右帧，不镜像。
+ * 用独立的 scale 属性而不是 transform：图片皮肤身上有呼吸动画（animation 的 transform
+ * 会盖掉普通声明），transform 与 scale 是两个属性，互不打架。 */
+.pb2-pet-wrap.pb2-face-right .pb2-img-skin,
+.pb2-pet-wrap.pb2-face-right .pb2-vid { scale: -1 1; }
+/* 图片皮肤没有行走帧：走动时给点轻微起伏，让人觉得它在挪 */
+@keyframes pb2-walking-bob {
+  0%, 100% { transform: translateY(0) rotate(-0.6deg); }
+  50% { transform: translateY(-3px) rotate(0.6deg); }
+}
+.pb2-pet-wrap.pb2-walking { animation: pb2-walking-bob .42s ease-in-out infinite; }
+.pb2-pet-wrap.pb2-walking.pb2-dragging { animation: none; }
 .pb2-model-card { transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
 .pb2-model-card:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(30,45,90,.14); }
 .pb2-dfoot { border-top: 1px solid #eef2fb; }

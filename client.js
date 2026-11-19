@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.6.0';
+const PB_VERSION = '4.7.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -178,6 +178,11 @@ const CHAT_MODELS = [
     gatewayBase: '', gatewayKey: '', gatewayModel: '',
     size: 96,                // 桌宠显示宽度 px
     monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+    /* v4.7 自行移动（散步）：桌宠自己走两步——时间/模式/速度都可调 */
+    walkOn: true,            // 总开关
+    walkMode: 'stroll',      // stroll 走走停停（水平）| roam 逛桌面（随机位置）| off 不自己动
+    walkEverySec: 180,       // 出发间隔基准（秒），实际会 ±抖动
+    walkSpeed: 'normal',     // slow 慢悠悠 | normal 正常 | fast 小跑
     /* v3.2 声音：播报走本地合成（bibibobo 声线），听写走宿主语音组件的本地离线模型 */
     speechOn: true,          // 语音播报开关（聊天回复念出来）
     speechVolume: 0.5,       // 音量 0..1
@@ -2303,6 +2308,154 @@ const CHAT_MODELS = [
     return assetUrl(file);
   }
 
+  /* ======== src/core/petwalk.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 自行移动（散步）
+ * ----------------------------------------------------------------------------
+ * 桌宠自己走两步：这是「时间 / 模式 / 方法」的纯逻辑部分（不碰 DOM，便于自检）——
+ *   时间：walkNextDelay() 算下一次出发间隔（基准 × 0.65~1.45 抖动，避免机械感）
+ *   模式：stroll 走走停停（水平散步）/ roam 逛桌面（随机位置）/ off 不自己动
+ *   方法：walkPlan() 按当前位置、屏幕、桌宠尺寸、速度，算出一段位移的目标点与时长；
+ *         walkEase() 提供"起步慢→中间快→停下慢"的缓动，配合原地踏步动画就像真在走。
+ * 素材说明：动作包里 moves 池的三个动作（螃蟹走路 / 原地漂浮踏步 / 原地左转奔跑）
+ *          都是**原地**动画，位移由代码平移桌宠完成——所以这里只产出"去哪儿、走多久"。
+ * 约束：只写顶层 const / function；不 import / 不 export；不碰 DOM。
+ * ==========================================================================*/
+
+  /** 散步模式（菜单按这个顺序循环） */
+  const WALK_MODES = [
+    { id: 'stroll', label: '走走停停' },
+    { id: 'roam',   label: '逛桌面' },
+    { id: 'off',    label: '不自己动' },
+  ];
+  /** 速度档（像素/秒） */
+  const WALK_SPEEDS = [
+    { id: 'slow',   label: '慢悠悠', pxPerSec: 42 },
+    { id: 'normal', label: '正常',   pxPerSec: 74 },
+    { id: 'fast',   label: '小跑',   pxPerSec: 124 },
+  ];
+  const WALK_MARGIN = 12;      // 离屏幕边缘至少留这么多（别贴边卡住）
+  const WALK_MIN_DIST = 70;    // 单段最短位移（太短看着像抖）
+  const WALK_MAX_DIST = 280;   // 单段最长位移
+  const WALK_MIN_MS = 420;     // 单段最短时长
+  const WALK_MAX_MS = 14000;   // 单段最长时长（防极慢速度走太久）
+
+  function walkModeOf(id) {
+    const s = String(id == null ? '' : id);
+    for (const m of WALK_MODES) if (m.id === s) return s;
+    return 'stroll';
+  }
+  function walkModeLabel(id) {
+    const s = walkModeOf(id);
+    for (const m of WALK_MODES) if (m.id === s) return m.label;
+    return '走走停停';
+  }
+  function walkSpeedOf(id) {
+    const s = String(id == null ? '' : id);
+    for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.pxPerSec;
+    return 74;
+  }
+  function walkSpeedLabel(id) {
+    const s = String(id == null ? '' : id);
+    for (const sp of WALK_SPEEDS) if (sp.id === s) return sp.label;
+    return '正常';
+  }
+
+  /** 由（随机种子, 路数）派生的稳定伪随机 0..1——一次规划里的多个随机量互不相同又可控 */
+  function walkRnd(rnd, slot) {
+    const x = Math.sin((Number(rnd) || 0) * 9301.13 + (Number(slot) || 0) * 49297.77) * 233280.17;
+    return x - Math.floor(x);
+  }
+
+  /** 下一次出发的等待秒数：基准 × 0.65~1.45 抖动（rnd 0..1）；基准夹在 20 秒~1 小时 */
+  function walkNextDelay(everySec, rnd) {
+    const base = clamp(Math.round(Number(everySec) || 180), 20, 3600);
+    const r = clamp(Number(rnd) || 0, 0, 1);
+    return Math.max(8, Math.round(base * (0.65 + r * 0.8)));
+  }
+
+  /** 缓动 0..1：easeInOutSine（起步与收尾都慢，中间快） */
+  function walkEase(t) {
+    const x = clamp(Number(t) || 0, 0, 1);
+    return 0.5 - Math.cos(Math.PI * x) / 2;
+  }
+
+  /** 某一刻的位置（线性插值 + 缓动） */
+  function walkPosAt(from, to, t) {
+    const e = walkEase(t);
+    return {
+      left: (Number(from && from.left) || 0) + ((Number(to && to.left) || 0) - (Number(from && from.left) || 0)) * e,
+      bottom: (Number(from && from.bottom) || 0) + ((Number(to && to.bottom) || 0) - (Number(from && from.bottom) || 0)) * e,
+    };
+  }
+
+  /** 规划一段位移。view=视口 {w,h}；size=桌宠 {w,h}；pos=当前位置 {left,bottom}；
+   *  mode=模式 id；speedId=速度档；rnd=随机种子 0..1。
+   *  返回 {from,to,dir,dist,durMs,vertical} 或 null（不移动）。 */
+  function walkPlan(view, size, pos, mode, speedId, rnd) {
+    const m = walkModeOf(mode);
+    if (m === 'off') return null;
+    const vw = Math.max(1, Number(view && view.w) || 0);
+    const vh = Math.max(1, Number(view && view.h) || 0);
+    const pw = Math.max(1, Number(size && size.w) || 0);
+    const ph = Math.max(1, Number(size && size.h) || 0);
+    const from = { left: Math.round(Number(pos && pos.left) || 0), bottom: Math.round(Number(pos && pos.bottom) || 0) };
+    const r = clamp(Number(rnd) || 0, 0, 1);
+    const maxLeft = Math.max(WALK_MARGIN, vw - pw - WALK_MARGIN);
+    const maxBottom = Math.max(WALK_MARGIN, vh - ph - WALK_MARGIN);
+
+    /* 水平：随机方向 + 随机距离；躲开"撞边还硬走"——到边了就往回走 */
+    const span = WALK_MAX_DIST - WALK_MIN_DIST;
+    let dist = WALK_MIN_DIST + walkRnd(r, 1) * span;
+    let dirRight = walkRnd(r, 2) < 0.5;
+    if (from.left <= WALK_MARGIN + 2) dirRight = true;              // 贴左墙 → 只能向右
+    else if (from.left >= maxLeft - 2) dirRight = false;            // 贴右墙 → 只能向左
+
+    let targetLeft = from.left + (dirRight ? dist : -dist);
+    if (targetLeft < WALK_MARGIN) { targetLeft = Math.min(maxLeft, WALK_MARGIN + (from.left - WALK_MARGIN) + dist / 2); }
+    if (targetLeft > maxLeft) { targetLeft = Math.max(WALK_MARGIN, maxLeft - dist / 2); }
+    targetLeft = clamp(Math.round(targetLeft), WALK_MARGIN, maxLeft);
+
+    /* 垂直（逛桌面模式才有）：上/下飘 60~200px */
+    let targetBottom = from.bottom;
+    if (m === 'roam') {
+      const vDist = 60 + walkRnd(r, 3) * 140;
+      const up = walkRnd(r, 4) < 0.5;
+      targetBottom = clamp(Math.round(from.bottom + (up ? vDist : -vDist)), WALK_MARGIN, maxBottom);
+    }
+
+    const dx = targetLeft - from.left, dy = targetBottom - from.bottom;
+    const real = Math.sqrt(dx * dx + dy * dy);
+    if (real < 16) return null;                                     // 几乎没动就别走了（防原地抽搐）
+
+    const pxPerSec = walkSpeedOf(speedId);
+    const durMs = clamp(Math.round(real / pxPerSec * 1000), WALK_MIN_MS, WALK_MAX_MS);
+    return {
+      from: from,
+      to: { left: targetLeft, bottom: targetBottom },
+      dir: dx >= 0 ? 'right' : 'left',
+      dist: Math.round(real),
+      durMs: durMs,
+      vertical: Math.abs(dy) > 4,
+      mode: m,
+    };
+  }
+
+  /** 一次散步走几段（走走停停更像在散步；逛桌面通常一段到位） */
+  function walkSegCount(mode, rnd) {
+    const m = walkModeOf(mode);
+    if (m === 'off') return 0;
+    if (m === 'roam') return 1;
+    return 1 + Math.floor(walkRnd(Number(rnd) || 0, 5) * 3);        // 1~3 段
+  }
+
+  /** 两段之间歇多久（毫秒）：400~1400，逛桌面短一点 */
+  function walkPauseMs(mode, rnd) {
+    const m = walkModeOf(mode);
+    const base = m === 'roam' ? 260 : 420;
+    return Math.round(base + walkRnd(Number(rnd) || 0, 6) * 1000);
+  }
+
   /* ======== src/core/balance.js ======== */
 /* ============================================================================
  * pet-buddy · 共享核心（core）· 余额与积分
@@ -4102,6 +4255,97 @@ const CHAT_MODELS = [
     }
   }
 
+  /* ================= v4.7 自行移动（散步）：桌宠自己走两步 =================
+   * 时间：walkNextDelay(基准, 随机) 得下次出发间隔（含抖动）；走完自动排下一次。
+   * 模式：stroll 走走停停（水平，1~3 段）/ roam 逛桌面（随机位置，一段到位）/ off 不动。
+   * 方法：walkPlan() 算出目标点与时长 → requestAnimationFrame 逐帧 applyPos 平移桌宠
+   *       （源码在 core/petwalk.js，纯逻辑、可自检）；同时播「原地踏步」类动作凑出走动感：
+   *       动作包皮肤播 moves 池（螃蟹走路/原地漂浮踏步/原地左转奔跑）；
+   *       精灵图皮肤切 running-left/right 帧；图片皮肤挂 .pb2-walking 轻微起伏。
+   * 朝向：素材默认朝左，向右走时给画面加 .pb2-face-right（镜像 scaleX(-1)）。
+   * 打断：拖动/点击/隐藏→立刻停下（不打断用户）。 */
+  let walkTimer = null, walkRaf = null, walkSegLeft = 0, walkBusy = false, walkStopped = false;
+
+  function walkActive() {
+    return settings.walkOn !== false && walkModeOf(settings.walkMode) !== 'off' && !settings.hidden;
+  }
+  function walkPos() {
+    const p = settings.pos;
+    if (p && p.left != null) return { left: p.left, bottom: p.bottom };
+    const r = petWrap.getBoundingClientRect();
+    return { left: Math.round(r.left), bottom: Math.round(window.innerHeight - r.bottom) };
+  }
+  function walkSchedule() {
+    clearTimeout(walkTimer); walkTimer = null;
+    if (!walkActive()) return;
+    const sec = walkNextDelay(settings.walkEverySec, Math.random());
+    walkTimer = setTimeout(() => { walkGo(); walkSchedule(); }, sec * 1000);
+  }
+  /** 出发：挑段数 → 走第一段 */
+  function walkGo() {
+    if (!walkActive() || drag || walkBusy || dialogMask) return;              // 正忙/面板开着就不动
+    if (transient && performance.now() < transientUntil) return;             // 正在播点击反应
+    walkBusy = true; walkStopped = false;
+    walkSegLeft = walkSegCount(settings.walkMode, Math.random());
+    log('info', '散步出发：模式=' + settings.walkMode + ' 段数=' + walkSegLeft);
+    walkSeg();
+  }
+  /** 走一段 */
+  function walkStepSeg() {
+    if (walkStopped) return;
+    if (walkSegLeft <= 0) { walkFinish(); return; }
+    walkSegLeft--;
+    const plan = walkPlan({ w: window.innerWidth, h: window.innerHeight }, petSize(), walkPos(),
+      settings.walkMode, settings.walkSpeed, Math.random());
+    if (!plan) { walkFinish(); return; }
+    walkFace(plan.dir);
+    walkAnimStart();
+    const t0 = performance.now();
+    const tick = (now) => {
+      if (walkStopped) return;
+      const t = clamp((now - t0) / plan.durMs, 0, 1);
+      const p = walkPosAt(plan.from, plan.to, t);
+      settings.pos = { left: Math.round(p.left), bottom: Math.round(p.bottom) };
+      applyPos(settings.pos);
+      if (t < 1) walkRaf = requestAnimationFrame(tick);
+      else {
+        saveSettings();
+        if (walkSegLeft > 0 && walkRnd(Math.random(), 5) > 0.12) {
+          setTimeout(() => { if (!walkStopped) walkStepSeg(); }, walkPauseMs(settings.walkMode, Math.random()));
+        } else walkFinish();
+      }
+    };
+    walkRaf = requestAnimationFrame(tick);
+  }
+  const walkSeg = walkStepSeg;   // 语义别名（walkGo 里叫得顺口）
+  function walkFinish() {
+    walkBusy = false; walkStopped = false; walkSegLeft = 0;
+    walkAnimStop(); walkFace('');
+    saveSettings();
+  }
+  /** 立刻停下（拖拽/点击/隐藏/换皮肤时调用） */
+  function walkHalt() {
+    if (!walkBusy && !walkRaf && !walkSegLeft) return;
+    walkStopped = true; walkBusy = false; walkSegLeft = 0;
+    if (walkRaf) { cancelAnimationFrame(walkRaf); walkRaf = null; }
+    walkAnimStop(); walkFace('');
+  }
+  /** 朝向：素材朝左，向右走镜像（精灵图有自己的左右帧，不用镜像） */
+  function walkFace(dir) {
+    petWrap.classList.toggle('pb2-face-right', dir === 'right');
+  }
+  function walkAnimStart() {
+    if (skinMode === 'pack') { packRole('moves', { loop: true }); return; }
+    if (skinMode === 'sprite') { transient = 'running-right'; transientUntil = Infinity; return; }
+    petWrap.classList.add('pb2-walking');
+  }
+  function walkAnimStop() {
+    if (skinMode === 'pack') { packPlayIdle(); return; }
+    if (skinMode === 'sprite') { if (transientUntil === Infinity) { transientUntil = 0; transient = 'waving'; } return; }
+    petWrap.classList.remove('pb2-walking');
+  }
+  walkSchedule();   // 首次排程（之后每次都自我续排；walkActive() 关掉时自动不排）
+
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
@@ -4316,6 +4560,7 @@ const CHAT_MODELS = [
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
     drag.moved = true;
     petWrap.classList.add('pb2-dragging');
+    walkHalt();   // v4.7：用户上手了，散步立刻停
     if (skinMode === 'pack' && !drag.packDragging) { drag.packDragging = true; packDrag(true); }   // v4.3：拖动动作
     transient = e.movementX < 0 ? 'running-left' : 'running-right';
     transientUntil = performance.now() + 300;
@@ -4354,6 +4599,7 @@ const CHAT_MODELS = [
 
   /** 戳一下的即时动作反馈（不等待 260ms 判定，手感即时）；动作包皮肤走包里的「点击回应」池 */
   function pokeReaction() {
+    walkHalt();   // v4.7：被戳了就停下（正走着也先停）
     if (skinMode === 'pack') { packRole('clicks'); return; }
     const pool = ['waving', 'jumping', 'waving', 'jumping', 'waiting'];
     transient = pool[Math.floor(Math.random() * pool.length)];
@@ -4677,7 +4923,9 @@ const CHAT_MODELS = [
       { icon: 'mask', label: '修改模型…', act: openModelPicker },
       { icon: 'note', label: '角色设定…', act: openPersonaEditor },
       { icon: 'pin', label: () => '大小：' + petSizeLabel(), act: () => cyclePetSize(), keepOpen: true },
-      { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+      { icon: 'pin', label: () => '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+      { icon: 'pin', label: () => '自行移动：' + (settings.walkOn !== false ? walkModeLabel(settings.walkMode) : '关'), act: () => cycleWalkMode(), keepOpen: true },
+      { icon: 'gear', label: '自行移动设置…', act: openWalkSettings },
       { icon: 'chat', label: () => '余额格式：' + balanceStyleLabel(), act: () => cycleBalanceStyle(), keepOpen: true },
       { icon: 'note', label: '台词与开场白…', act: openLineEditor },
       { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
@@ -4898,7 +5146,7 @@ const CHAT_MODELS = [
   document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; }, true);
   restoreDot.addEventListener('click', () => { settings.hidden = false; saveSettings(); applyHidden(); refreshLayout(); });
 
-  function applyHidden() { root.classList.toggle('pb2-hidden-mode', !!settings.hidden); }
+  function applyHidden() { root.classList.toggle('pb2-hidden-mode', !!settings.hidden); walkHalt(); }
   applyHidden();
 
   /* ================= 弹窗基建 ================= */
@@ -4926,6 +5174,73 @@ const CHAT_MODELS = [
     root.appendChild(dialogMask);
   }
   function closeDialog() { if (dialogMask) { dialogMask.remove(); dialogMask = null; } }
+
+  /* ---- v4.7 自行移动：模式循环 + 设置面板 ---- */
+  /** 菜单里点一下循环：走走停停 → 逛桌面 → 关 → 走走停停… */
+  function cycleWalkMode() {
+    const ids = WALK_MODES.map(m => m.id);
+    const cur = walkModeOf(settings.walkMode);
+    const next = ids[(ids.indexOf(cur) + 1) % ids.length];
+    settings.walkOn = next !== 'off';
+    settings.walkMode = next;
+    saveSettings();
+    walkHalt();
+    walkSchedule();     // 立刻按新设置重排下一次
+    if (next === 'off') bubbleSay('好，本小姐就在这儿待着～', 2400);
+    else bubbleSay('好呀，那本小姐自己溜达溜达（' + walkModeLabel(next) + '）～', 2600);
+  }
+  /** 间隔 / 速度 / 模式 + 「现在就走两步」 */
+  function openWalkSettings() {
+    openDialog('自行移动（散步）', body => {
+      body.appendChild($new('div', 'pb2-hint',
+        '时间：每隔一会儿自己起来走两步（间隔带随机抖动，不会像闹钟）；' +
+        '模式：走走停停＝在原地附近水平溜达，逛桌面＝换个位置；' +
+        '方法：代码平移桌宠位置 + 播「原地踏步」类动作，拖动/点击时立刻停下。'));
+      /* 模式 */
+      body.appendChild($new('h4', null, '模式'));
+      const modeBox = $new('div', 'pb2-chiprow');
+      for (const m of WALK_MODES) {
+        const b = $new('button', 'pb2-chip' + (walkModeOf(settings.walkMode) === m.id && settings.walkOn !== false ? ' pb2-chip-on' : ''), m.label);
+        b.addEventListener('click', () => {
+          settings.walkMode = m.id; settings.walkOn = m.id !== 'off'; saveSettings();
+          walkHalt(); walkSchedule(); refreshWalkChips();
+        });
+        modeBox.appendChild(b);
+      }
+      body.appendChild(modeBox);
+      /* 间隔 */
+      body.appendChild($new('h4', null, '出发间隔'));
+      const intBox = $new('div', 'pb2-chiprow');
+      for (const min of [1, 3, 5, 10, 20]) {
+        const b = $new('button', 'pb2-chip' + (Math.round((Number(settings.walkEverySec) || 180) / 60) === min ? ' pb2-chip-on' : ''), min + ' 分钟');
+        b.addEventListener('click', () => {
+          settings.walkEverySec = min * 60; saveSettings(); walkSchedule(); refreshWalkChips();
+        });
+        intBox.appendChild(b);
+      }
+      body.appendChild(intBox);
+      /* 速度 */
+      body.appendChild($new('h4', null, '走多快'));
+      const spBox = $new('div', 'pb2-chiprow');
+      for (const sp of WALK_SPEEDS) {
+        const b = $new('button', 'pb2-chip' + (walkSpeedOf(settings.walkSpeed) === sp.pxPerSec ? ' pb2-chip-on' : ''), sp.label + '（' + sp.pxPerSec + 'px/秒）');
+        b.addEventListener('click', () => { settings.walkSpeed = sp.id; saveSettings(); refreshWalkChips(); });
+        spBox.appendChild(b);
+      }
+      body.appendChild(spBox);
+      /* 一键试跑 */
+      const tryBtn = $new('button', 'pb2-primary', '现在就走两步');
+      tryBtn.style.marginTop = '10px';
+      tryBtn.addEventListener('click', () => { closeDialog(); walkHalt(); walkGo(); });
+      body.appendChild(tryBtn);
+      /** 点完刷新所有 chip 的选中态 */
+      function refreshWalkChips() {
+        modeBox.querySelectorAll('button').forEach((b, i) => b.classList.toggle('pb2-chip-on', walkModeOf(settings.walkMode) === WALK_MODES[i].id && settings.walkOn !== false));
+        intBox.querySelectorAll('button').forEach((b, i) => b.classList.toggle('pb2-chip-on', Math.round((Number(settings.walkEverySec) || 180) / 60) === [1, 3, 5, 10, 20][i]));
+        spBox.querySelectorAll('button').forEach((b, i) => b.classList.toggle('pb2-chip-on', walkSpeedOf(settings.walkSpeed) === WALK_SPEEDS[i].pxPerSec));
+      }
+    }, [{ label: '关闭' }]);
+  }
 
   /** 小输入弹窗（宿主里 window.prompt 不保证可用，自己做一个） */
   function askText(title, def, onOk) {

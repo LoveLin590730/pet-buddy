@@ -14,7 +14,7 @@ import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'deliver.js', 'petpack.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'deliver.js', 'petpack.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -79,6 +79,8 @@ const probe = `
   zipEntries, zipImageEntries, zipExtract, zipBytesToDataUrl,
   extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
   petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
+  WALK_MODES, WALK_SPEEDS, WALK_MARGIN, walkModeOf, walkModeLabel, walkSpeedOf, walkSpeedLabel, walkRnd, walkNextDelay,
+  walkEase, walkPosAt, walkPlan, walkSegCount, walkPauseMs,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
@@ -936,6 +938,94 @@ console.log('\n[v4.3 动作包（petpack）]');
   ok('模型面板列出动作包', /pack:' \+ pk\.id/.test(jsP) || /动作包 · /.test(jsP));
   ok('可复用的导入器在仓库里（记录安装过程）', existsSync(path.join(ROOT, 'tools/import-petpack.mjs')));
   ok('导入记录已写出', existsSync(path.join(ROOT, 'docs/petpack-dshpack-导入记录.md')));
+}
+
+console.log('\n[v4.7 自行移动（散步）]');
+{
+  const V = { w: 1280, h: 900 }, SZ = { w: 96, h: 134 };
+  // 时间：间隔抖动
+  eq('间隔抖动在 0.65~1.45 倍之间（下界）', P.walkNextDelay(180, 0), Math.round(180 * 0.65));
+  eq('间隔抖动在 0.65~1.45 倍之间（上界）', P.walkNextDelay(180, 1), Math.round(180 * 1.45));
+  ok('间隔基准被夹住（太小/太大都不离谱）', P.walkNextDelay(1, 0) >= 8 && P.walkNextDelay(99999, 1) <= 3600 * 1.45);
+  // 模式与速度
+  eq('模式兜底为走走停停', P.walkModeOf('不存在'), 'stroll');
+  eq('off 模式认得出', P.walkModeOf('off'), 'off');
+  eq('模式标签', P.walkModeLabel('roam'), '逛桌面');
+  eq('速度兜底 74px/秒', P.walkSpeedOf('xx'), 74);
+  eq('速度档：小跑 124', P.walkSpeedOf('fast'), 124);
+  eq('速度标签', P.walkSpeedLabel('slow'), '慢悠悠');
+  // 规划：off 不动
+  eq('off 模式不产生位移', P.walkPlan(V, SZ, { left: 600, bottom: 60 }, 'off', 'normal', 0.5), null);
+  // 规划：走走停停只改 left、且在屏幕内
+  let inBounds = true, onlyH = true, dirOK = true;
+  const speeds = { slow: 42, normal: 74, fast: 124 };
+  for (let i = 0; i < 200; i++) {
+    const r = i / 200;
+    const plan = P.walkPlan(V, SZ, { left: 600, bottom: 60 }, 'stroll', 'normal', r);
+    if (!plan) continue;
+    if (plan.to.left < P.WALK_MARGIN || plan.to.left > V.w - SZ.w - P.WALK_MARGIN) inBounds = false;
+    if (plan.to.bottom !== plan.from.bottom) onlyH = false;
+    const expect = plan.to.left >= plan.from.left ? 'right' : 'left';
+    if (plan.dir !== expect) dirOK = false;
+  }
+  ok('200 次规划目标点都在屏幕内（留边距）', inBounds);
+  ok('走走停停只水平移动（bottom 不变）', onlyH);
+  ok('方向与实际位移一致', dirOK);
+  // 规划：逛桌面会换位置（含垂直）且不越界
+  let roamV = 0, roamIn = true;
+  for (let i = 0; i < 200; i++) {
+    const plan = P.walkPlan(V, SZ, { left: 600, bottom: 400 }, 'roam', 'normal', i / 200);
+    if (!plan) continue;
+    if (plan.vertical) roamV++;
+    if (plan.to.bottom < P.WALK_MARGIN || plan.to.bottom > V.h - SZ.h - P.WALK_MARGIN) roamIn = false;
+  }
+  ok('逛桌面多数会带上垂直位移', roamV > 120, roamV + '/200');
+  ok('逛桌面目标点不越界', roamIn);
+  // 贴墙时不会硬撞：从最左出发只能向右
+  const wall = P.walkPlan(V, SZ, { left: P.WALK_MARGIN, bottom: 60 }, 'stroll', 'normal', 0.9);
+  eq('贴左墙出发只能向右', wall && wall.dir, 'right');
+  const wall2 = P.walkPlan(V, SZ, { left: V.w - SZ.w - P.WALK_MARGIN, bottom: 60 }, 'stroll', 'normal', 0.1);
+  eq('贴右墙出发只能向左', wall2 && wall2.dir, 'left');
+  // 时长与距离/速度一致
+  const p74 = P.walkPlan(V, SZ, { left: 600, bottom: 60 }, 'stroll', 'normal', 0.3);
+  const expectMs = Math.min(14000, Math.max(420, Math.round(p74.dist / 74 * 1000)));
+  ok('时长 = 距离 ÷ 速度（并夹在 0.42~14 秒）', Math.abs(p74.durMs - expectMs) <= 1, p74.durMs + ' vs ' + expectMs);
+  const pSlow = P.walkPlan(V, SZ, { left: 600, bottom: 60 }, 'stroll', 'slow', 0.3);
+  ok('同样的路走慢档更久', pSlow.durMs >= p74.durMs);
+  // 缓动：端点、单调、中点
+  eq('缓动 0 → 0', P.walkEase(0), 0);
+  ok('缓动 1 → 1', Math.abs(P.walkEase(1) - 1) < 1e-9);
+  ok('缓动中点 ≈ 0.5', Math.abs(P.walkEase(0.5) - 0.5) < 1e-9);
+  let mono = true;
+  for (let i = 1; i <= 20; i++) if (P.walkEase(i / 20) < P.walkEase((i - 1) / 20)) mono = false;
+  ok('缓动单调不回头', mono);
+  const at = P.walkPosAt({ left: 100, bottom: 100 }, { left: 300, bottom: 200 }, 0.5);
+  ok('插值中点在中途', Math.abs(at.left - 200) < 1e-9 && Math.abs(at.bottom - 150) < 1e-9);
+  ok('缓动端点即目标点', Math.abs(P.walkPosAt({ left: 0, bottom: 0 }, { left: 300, bottom: 0 }, 1).left - 300) < 1e-9);
+  // 段数与间歇
+  const segs = [0, 0.2, 0.5, 0.9].map(r => P.walkSegCount('stroll', r));
+  ok('走走停停段数 1~3', segs.every(s => s >= 1 && s <= 3), segs.join(','));
+  eq('逛桌面一段到位', P.walkSegCount('roam', 0.7), 1);
+  eq('关掉时不走', P.walkSegCount('off', 0.5), 0);
+  ok('间歇 0.2~1.4 秒之间', P.walkPauseMs('stroll', 0.5) >= 200 && P.walkPauseMs('stroll', 0.5) <= 1500);
+  ok('逛桌面歇得短一些', P.walkPauseMs('roam', 0.5) < P.walkPauseMs('stroll', 0.5));
+  // 派生随机：同一 (种子, 路数) 稳定、不同路数不同
+  eq('派生随机可复现', P.walkRnd(0.42, 3), P.walkRnd(0.42, 3));
+  ok('不同路数取值不同', P.walkRnd(0.42, 3) !== P.walkRnd(0.42, 4));
+  ok('派生随机都在 0..1', [0, 1, 7].every(k => { const v = P.walkRnd(0.31, k); return v >= 0 && v < 1; }));
+  // 接线（产物侧）
+  const jsW = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cssW = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('运行时：定时出发 + rAF 平移 + 到点续排', /function walkSchedule/.test(jsW) && /requestAnimationFrame\(tick\)/.test(jsW) && /function walkGo/.test(jsW));
+  ok('散步时叫对应动作（pack moves / sprite 跑步帧 / 图片起伏）',
+    /packRole\('moves', \{ loop: true \}\)/.test(jsW) && /transient = 'running-right'/.test(jsW) && /pb2-walking/.test(jsW));
+  ok('拖动/点击/隐藏会打断散步', /walkHalt\(\);   \/\/ v4.7：用户上手了/.test(jsW) && /walkHalt\(\);   \/\/ v4.7：被戳了就停下/.test(jsW));
+  ok('菜单有「自行移动」与设置入口', /自行移动：/.test(jsW) && /openWalkSettings/.test(jsW));
+  ok('设置面板有 模式/间隔/速度/试跑', /出发间隔/.test(jsW) && /走多快/.test(jsW) && /现在就走两步/.test(jsW));
+  ok('设置默认值齐全（开关/模式/间隔/速度）',
+    /walkOn: true/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')));
+  ok('朝向镜像与走动起伏的样式在', /\.pb2-pet-wrap\.pb2-face-right \.pb2-vid/.test(cssW) && /pb2-walking-bob/.test(cssW));
+  ok('选项 chip 样式在', /button\.pb2-chip/.test(cssW));
 }
 
 console.log('\n[语音听写 · v3.2]');

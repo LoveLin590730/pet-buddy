@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.6.0';
+const PB_VERSION = '4.7.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -45,6 +45,11 @@ const CHAT_MODELS = [
     gatewayBase: '', gatewayKey: '', gatewayModel: '',
     size: 96,                // 桌宠显示宽度 px
     monitor: true,           // BongoCat 式鼠标/键盘监控（女仆/自定义皮肤）
+    /* v4.7 自行移动（散步）：桌宠自己走两步——时间/模式/速度都可调 */
+    walkOn: true,            // 总开关
+    walkMode: 'stroll',      // stroll 走走停停（水平）| roam 逛桌面（随机位置）| off 不自己动
+    walkEverySec: 180,       // 出发间隔基准（秒），实际会 ±抖动
+    walkSpeed: 'normal',     // slow 慢悠悠 | normal 正常 | fast 小跑
     /* v3.2 声音：播报走本地合成（bibibobo 声线），听写走宿主语音组件的本地离线模型 */
     speechOn: true,          // 语音播报开关（聊天回复念出来）
     speechVolume: 0.5,       // 音量 0..1
