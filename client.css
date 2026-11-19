@@ -292,16 +292,25 @@
   padding: 2px 8px 8px; overflow-y: auto; align-content: start; }
 .pb2-stkp-grid::-webkit-scrollbar { width: 7px; }
 .pb2-stkp-grid::-webkit-scrollbar-thumb { background: #d7def2; border-radius: 4px; }
-.pb2-stkp-cell { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
-  border: 1px solid #e3e9f7; border-radius: 8px; background: #fff; cursor: pointer; overflow: hidden;
+/* v5.2：格子高宽只由 aspect-ratio 决定，内容一律绝对定位居中（不参与尺寸计算）——
+ * 之前图片按自身尺寸撑开格子，导致格子高度错乱、图叠在一起、fish 组还因缺尺寸显示空白。 */
+.pb2-stkp-cell { position: relative; aspect-ratio: 1 / 1; min-width: 0; overflow: hidden;
+  border: 1px solid #e3e9f7; border-radius: 8px; background: #fff; cursor: pointer;
   transition: border-color .12s ease, transform .12s ease; }
 .pb2-stkp-cell:hover { border-color: #9db4e8; transform: translateY(-1px); }
-.pb2-stkp-cell .sticker { margin: 0; }
-/* 各类贴纸在 42px 小格里统一缩到合适尺寸（精灵图格是固定 86×93，得用 scale） */
-.pb2-stkp-cell .sticker.pb2-st-fish, .pb2-stkp-cell .sticker.fish-st { transform: scale(.42); }
-.pb2-stkp-cell .sticker.stick-st img { max-width: 38px; max-height: 38px; }
-.pb2-stkp-cell .sticker.bean-st svg { width: 30px; height: 30px; }
-.pb2-stkp-cell .sticker.maid-st img { max-width: 38px; max-height: 38px; }
+.pb2-stkp-cell > .sticker { position: absolute; left: 50%; top: 50%; margin: 0; }
+/* 精灵图格（86×93 的固定尺寸元素，得带上背景与尺寸再缩放；缺一个就是空白） */
+.pb2-stkp-cell > .sticker.pb2-st-fish {
+  width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat; background-size: 800% 1100%;
+  transform: translate(-50%, -50%) scale(.40); }
+.pb2-stkp-cell > .sticker.stick-st img {
+  position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; max-width: none; max-height: none;
+  object-fit: contain; transform: translate(-50%, -50%); border-radius: 6px; display: block; }
+.pb2-stkp-cell > .sticker.bean-st { width: 32px; height: 32px; transform: translate(-50%, -50%); }
+.pb2-stkp-cell > .sticker.bean-st svg { width: 100%; height: 100%; display: block; }
+.pb2-stkp-cell > .sticker.maid-st img {
+  position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; object-fit: contain;
+  transform: translate(-50%, -50%); border-radius: 6px; display: block; }
 .pb2-stkp-cell.pb2-del-mode { border-color: #e8a0ae; background: #fff5f7; }
 .pb2-stkp-cell.pb2-del-mode::after { content: '×'; position: absolute; right: 2px; top: 1px; color: #d9455f; font-size: 12px; }
 .pb2-stkp-cell.pb2-stkp-add { font-size: 18px; color: #8aa8f0; border-style: dashed; }

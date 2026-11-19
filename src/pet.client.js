@@ -264,10 +264,13 @@
     if (!plan) { walkFinish(); return; }
     walkFace(plan.dir);
     walkAnimStart();
-    const t0 = performance.now();
+    /* v5.2：行走动作有**前摇**（起手抬脚那几帧）——先原地踏步 WALK_WARMUP_MS 再开始位移，
+     * 看着才是"先迈步再走"；位移本身照旧，只是把时钟推后一点。 */
+    const t0 = performance.now() + WALK_WARMUP_MS;
     const tick = (now) => {
       if (walkStopped) return;
       const t = clamp((now - t0) / plan.durMs, 0, 1);
+      if (t <= 0) { walkRaf = requestAnimationFrame(tick); return; }   // 前摇期：原地踏步
       const p = walkPosAt(plan.from, plan.to, t);
       settings.pos = { left: Math.round(p.left), bottom: Math.round(p.bottom) };
       applyPos(settings.pos);

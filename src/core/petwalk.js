@@ -28,6 +28,7 @@
   const WALK_MAX_DIST = 280;   // 单段最长位移
   const WALK_MIN_MS = 420;     // 单段最短时长
   const WALK_MAX_MS = 14000;   // 单段最长时长（防极慢速度走太久）
+  const WALK_WARMUP_MS = 500;  // v5.2：行走动作有前摇——先原地踏步这么久再开始位移（至少 0.5s）
 
   function walkModeOf(id) {
     const s = String(id == null ? '' : id);

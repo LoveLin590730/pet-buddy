@@ -83,6 +83,7 @@ const probe = `
   extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
   petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
   WALK_MODES, WALK_SPEEDS, WALK_MARGIN, walkModeOf, walkModeLabel, walkSpeedOf, walkSpeedLabel, walkRnd, walkNextDelay,
+  WALK_WARMUP_MS,
   walkEase, walkPosAt, walkPlan, walkSegCount, walkPauseMs,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
@@ -1152,7 +1153,7 @@ console.log('\n[v5.0 气泡聊天里的表情面板]');
   ok('发送函数支持直接发一段文本（textOverride）', /async function chatpSend\(textOverride\)/.test(js0));
   ok('独立窗口删除也改成保下标（两端一致）', /S\.customStickers\[idx\] = null/.test(html0) && !/customStickers\.splice\(idx, 1\)/.test(html0));
   ok('气泡表情面板样式在（tab/网格/小格缩放/管理态/加号格）',
-    /\.pb2-stkp-tabs/.test(css0) && /\.pb2-stkp-cell \.sticker\.pb2-st-fish/.test(css0) &&
+    /\.pb2-stkp-tabs/.test(css0) && /\.pb2-stkp-cell > \.sticker\.pb2-st-fish/.test(css0) &&
     /\.pb2-stkp-cell\.pb2-del-mode/.test(css0) && /\.pb2-stkp-cell\.pb2-stkp-add/.test(css0));
   ok('面板限高可滚动（不撑破气泡框）', /\.pb2-stkp \{ border-top/.test(css0) && /max-height: 236px/.test(css0));
   ok('表情网格能真正渲染各类贴纸（用 core 的 stickerEl）', /const el = stickerEl\(it\.g, it\.n\)/.test(js0));
@@ -1189,6 +1190,35 @@ console.log('\n[v5.1 控件统一（按钮/文件选择/滑块/拖动）]');
     /chatp\.classList\.add\('pb2-dragging'\)/.test(js1) && /chatp\.classList\.remove\('pb2-dragging'\)/.test(js1) &&
     /\.pb2-chatp\.pb2-dragging \{/.test(css1));
   ok('桌宠拖动也有 grabbing 光标', /\.pb2-pet-wrap\.pb2-dragging \{ cursor: grabbing/.test(css1));
+}
+
+console.log('\n[v5.2 表情格布局 + 行走前摇]');
+{
+  const js2 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const html2 = readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
+  const css2 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  // —— 表情格：内容绝对定位居中（不再撑破格子），fish 精灵图格有尺寸+背景（否则是空元素）
+  ok('气泡表情格：格子 overflow hidden + 内容绝对定位居中',
+    /\.pb2-stkp-cell \{ position: relative; aspect-ratio: 1 \/ 1; min-width: 0; overflow: hidden;/.test(css2) &&
+    /\.pb2-stkp-cell > \.sticker \{ position: absolute; left: 50%; top: 50%; margin: 0; \}/.test(css2));
+  ok('气泡 fish 格补齐尺寸与背景（这是"没预览"的根因）',
+    /\.pb2-stkp-cell > \.sticker\.pb2-st-fish \{[\s\S]{0,160}width: 86px; height: 93px; background: url\("feiyu-spritesheet\.webp"\)/.test(css2));
+  ok('气泡三类图都限死尺寸并用 object-fit contain',
+    /\.pb2-stkp-cell > \.sticker\.stick-st img \{[\s\S]{0,200}object-fit: contain/.test(css2) &&
+    /\.pb2-stkp-cell > \.sticker\.bean-st svg \{ width: 100%; height: 100%/.test(css2) &&
+    /\.pb2-stkp-cell > \.sticker\.maid-st img \{[\s\S]{0,200}object-fit: contain/.test(css2));
+  ok('旧的 flex 居中版格子已替换（不再有 .pb2-stkp-cell .sticker { margin: 0; } 单条）',
+    !/\.pb2-stkp-cell \.sticker \{ margin: 0; \}/.test(css2));
+  // —— 独立聊天窗口同修
+  ok('窗口表情格同款修法（overflow hidden + 绝对定位 + fish 尺寸背景）',
+    /#stgrid \.cell \{ position: relative; aspect-ratio: 1; min-width: 0; overflow: hidden/.test(html2) &&
+    /#stgrid \.cell > \.sticker\.fish-st \{[\s\S]{0,160}width: 86px; height: 93px; background: url\("feiyu-spritesheet\.webp"\)/.test(html2));
+  ok('窗口里那条 scale(0.82) 已去掉（撑破格子的元凶）', !/\.cell \.sticker \{ transform: scale\(0\.82\)/.test(html2));
+  // —— 行走前摇
+  eq('前摇常量 500ms（至少 0.5s）', P.WALK_WARMUP_MS, 500);
+  ok('前摇期间原地踏步不位移（时钟推后 500ms）',
+    /const t0 = performance\.now\(\) \+ WALK_WARMUP_MS/.test(js2) && /if \(t <= 0\) \{ walkRaf = requestAnimationFrame\(tick\); return; \}/.test(js2));
+  ok('前摇常量在 core 里（可自检）', /const WALK_WARMUP_MS = 500;/.test(readFileSync(path.join(ROOT, 'src/core/petwalk.js'), 'utf8')));
 }
 
 console.log('\n[语音听写 · v3.2]');

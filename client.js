@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '5.1.0';
+const PB_VERSION = '5.2.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -2542,6 +2542,7 @@ const CHAT_MODELS = [
   const WALK_MAX_DIST = 280;   // 单段最长位移
   const WALK_MIN_MS = 420;     // 单段最短时长
   const WALK_MAX_MS = 14000;   // 单段最长时长（防极慢速度走太久）
+  const WALK_WARMUP_MS = 500;  // v5.2：行走动作有前摇——先原地踏步这么久再开始位移（至少 0.5s）
 
   function walkModeOf(id) {
     const s = String(id == null ? '' : id);
@@ -4517,10 +4518,13 @@ const CHAT_MODELS = [
     if (!plan) { walkFinish(); return; }
     walkFace(plan.dir);
     walkAnimStart();
-    const t0 = performance.now();
+    /* v5.2：行走动作有**前摇**（起手抬脚那几帧）——先原地踏步 WALK_WARMUP_MS 再开始位移，
+     * 看着才是"先迈步再走"；位移本身照旧，只是把时钟推后一点。 */
+    const t0 = performance.now() + WALK_WARMUP_MS;
     const tick = (now) => {
       if (walkStopped) return;
       const t = clamp((now - t0) / plan.durMs, 0, 1);
+      if (t <= 0) { walkRaf = requestAnimationFrame(tick); return; }   // 前摇期：原地踏步
       const p = walkPosAt(plan.from, plan.to, t);
       settings.pos = { left: Math.round(p.left), bottom: Math.round(p.bottom) };
       applyPos(settings.pos);
