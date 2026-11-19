@@ -67,7 +67,7 @@ const probe = `
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
-  speechSegments, pauseOf, synthPaced,
+  speechSegments, pauseOf, synthPaced, balanceLine,
   analyzeFrame, prosodyTrack, synthFollow, synthGuided, guidedTargets, guidedPickList, pickScaleMidi,
   resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
@@ -252,7 +252,36 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[断句 + 模型移除 + 两重音色 · v3.7]');
+console.log('\n[开场白 + 余额三格式 · v3.8]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('余额格式三种（简洁/详细/傲娇）', /id: 'short'/.test(t) && /id: 'detail'/.test(t) && /id: 'playful'/.test(t));
+  ok('默认用简洁格式（不再一长串）', P.DEFAULTS.balanceStyle === 'short');
+  ok('可循环切换余额格式并立即展示', /function cycleBalanceStyle/.test(t) && /onPetSingleClick\(\);/.test(t));
+  ok('菜单里有「余额格式」和「开场白…」', /余额格式：/.test(t) && /开场白…/.test(t));
+  ok('开场白可在设置里编辑（带变量说明）', /function openGreetingEditor/.test(t) && /\{greet\}/.test(t) && /\{nickname\}/.test(t));
+  ok('开场白默认空（空=用默认那句）', P.DEFAULTS.greeting === '');
+  ok('启动时走 openLine（自定义优先）', /function openLine/.test(t) && /bubbleSay\(openLine\(\)/.test(t));
+
+  // 三种格式的文案差异（用一份假数据）
+  const d = { valey: false, valley: false, prompt: 1000000, cacheHit: 800000, output: 20000, calls: 5,
+              costCredits: 240, cost: 0.24, sessions: 2, staleSessions: 0, apiOk: true, date: '2026-11-19',
+              realOk: true, realToday: 120,
+              companyQuota: { ok: true, points: 100000, remainPoints: 88000, usedPoints: 12000, periodText: '每月 1 号' },
+              credits: { ok: false } };
+  P.settings.balanceStyle = 'short';
+  const s = P.balanceLine(d);
+  P.settings.balanceStyle = 'playful';
+  const pl = P.balanceLine(d);
+  P.settings.balanceStyle = 'detail';
+  const de = P.balanceLine(d);
+  ok('简洁格式：短（≤ 40 字）且含剩余与今日', s.length <= 40 && /88,000/.test(s) && /今日/.test(s), s);
+  ok('傲娇格式：带口吻词', /哼/.test(pl) && /88,000/.test(pl), pl);
+  ok('详细格式：含总额与已用', /100,000/.test(de) && /12,000/.test(de), de);
+  ok('详细格式比简洁长', de.length > s.length, de.length + ' vs ' + s.length);
+  P.settings.balanceStyle = 'short';
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const sp = readFileSync(path.join(ROOT, 'src/core/speech.js'), 'utf8');

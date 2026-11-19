@@ -177,6 +177,64 @@
     return s;
   }
 
+  /** v3.8 余额文案格式表（标签给 UI 用） */
+  const BALANCE_STYLES = [
+    { id: 'short', label: '简洁' },
+    { id: 'detail', label: '详细' },
+    { id: 'playful', label: '傲娇' },
+  ];
+
+  /** v3.8 余额格式 id（非法值回退 short） */
+  function balanceStyleId() {
+    const s = String(settings.balanceStyle || 'short');
+    return BALANCE_STYLES.some(x => x.id === s) ? s : 'short';
+  }
+
+  /* v3.8 余额文案三种格式（放 core 便于离线自检；pet.client.js 只负责切换 UI） */
+  function balanceLine(d) {
+    const c = d.credits || {};
+    const q = d.companyQuota || {};
+    const style = balanceStyleId();
+    const per = perYuanCredits();
+    const yuan = (pts) => fmtMoney(Math.round((Number(pts) / per) * 100) / 100);
+    const todayReal = d.realOk ? fmtCredits(d.realToday || 0) : '';
+    const todayEst = fmtCredits(d.costCredits || 0);
+    // 余额主体（三种来源统一成一句话）
+    const shortBase = q.ok ? '还剩 ' + fmtCredits(q.remainPoints) + ' 分（≈' + yuan(q.remainPoints) + '）'
+      : (c.ok && c.unlimited) ? '账户不限额'
+        : c.ok ? '还剩 ' + fmtCredits(c.remainCredits) + ' 分'
+          : Number(settings.quota) > 0 ? '额度 ' + fmtMoney(Number(settings.quota))
+            : '额度未知';
+
+    if (style === 'short') {
+      return shortBase + (todayReal ? ' · 今日 +' + todayReal + ' 分' : (d.apiOk ? '' : ''));
+    }
+    if (style === 'playful') {
+      const tails = ['省着点用哦～', '别太浪！', '够你用到月底啦～', '记得摸摸我～', '本小姐算得可准了'];
+      const tail = tails[(new Date().getDate() + (d.sessions || 0)) % tails.length];
+      if (q.ok) {
+        return '哼哼，' + shortBase + (todayReal ? '，今天已经花掉 ' + todayReal + ' 分' : '') +
+          '。月度就 ' + fmtCredits(q.points) + ' 分' + (q.periodText ? '，' + q.periodText + '刷新' : '') + '。' + tail;
+      }
+      return '哼，' + shortBase + (todayReal ? '，今天花掉 ' + todayReal + ' 分' : '') + '。' + tail;
+    }
+    // detail：完整口径（但比旧版短很多）
+    const parts = [];
+    if (q.ok) {
+      parts.push('剩余 ' + fmtCredits(q.remainPoints) + ' / ' + fmtCredits(q.points) + ' 分（已用 ' + fmtCredits(q.usedPoints) + '）');
+      if (q.periodText) parts.push(q.periodText + '刷新');
+    } else if (c.ok && c.unlimited) {
+      parts.push('账户不限额');
+    } else if (c.ok) {
+      parts.push('剩余积分 ' + fmtCredits(c.remainCredits));
+    } else if (Number(settings.quota) > 0) {
+      parts.push('自填额度 ' + fmtMoney(Number(settings.quota)));
+    }
+    if (todayReal) parts.push('今日 +' + todayReal + ' 分');
+    parts.push('估算 ' + todayEst + ' 分（' + (d.sessions || 0) + ' 个新会话·' + (d.valley ? '谷' : '峰') + '价·入 ' + fmtTok(d.prompt) + '（命中 ' + fmtTok(d.cacheHit) + '）·出 ' + fmtTok(d.output) + '·' + d.calls + ' 次' + (d.staleSessions ? '；' + d.staleSessions + ' 个跨天会话未计入' : '') + '）');
+    return parts.join(' ｜ ');
+  }
+
   let CREDITS_CACHE = { at: 0, data: null };
   function perYuanCredits() { return Number(settings.perYuan) > 0 ? Number(settings.perYuan) : 1000; }
   function fmtCredits(n) { return Math.round(n).toLocaleString('en-US'); }

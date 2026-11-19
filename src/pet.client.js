@@ -329,25 +329,26 @@
   }
 
   /* ---- 单击：余额气泡 ---- */
-  /** v3.1.0 统一余额文案（积分制，1000 分 = 1 元）：三级来源
-   *  ① 助手接口的内部通道额度（companyQuota，真实、无需令牌）→ 首选；
-   *  ② sk- 网关 Key 的账单（订阅额度 − 累计用量，OpenAI 兼容 billing）；
-   *  ③ 用户在聊天设置里自填的额度。
-   *  今日消耗给两个口径：额度接口按天增量（真实，口径是今天打开插件起）＋ token 估算（标注估算）。 */
-  function balanceLine(d) {
-    const c = d.credits || {};
-    const q = d.companyQuota || {};
-    const detail = (d.valley ? '谷' : '峰') + '价·入 ' + fmtTok(d.prompt) + ' tok（命中 ' + fmtTok(d.cacheHit) + '）·出 ' + fmtTok(d.output) + '·' + d.calls + ' 次';
-    const stale = d.staleSessions ? '；' + d.staleSessions + ' 个跨天会话未计入' : '';
-    const est = '估算 ' + fmtCredits(d.costCredits || 0) + ' 分（' + d.sessions + ' 个新会话·' + detail + stale + '）';
-    const real = d.realOk ? '今日 +' + fmtCredits(d.realToday || 0) + ' 分' + (d.realSince ? '（' + d.realSince + ' 起）' : '') : '';
-    const today = real ? real + '·' + est : est;
-    if (q.ok) return quotaLine(q) + ' ｜ ' + today;
-    if (c.ok && c.unlimited) return '账户不限额 ｜ ' + today;
-    if (c.ok) return '剩余积分 ' + fmtCredits(c.remainCredits) + ' ｜ ' + today;
-    if (Number(settings.quota) > 0) return '自填额度 ' + fmtMoney(Number(settings.quota)) + ' ｜ ' + today;
-    return today;
+  /** v3.8 三种余额文案格式（可切换）：
+   *   short   简洁 —— 一行说清"还剩多少"
+   *   detail  详细 —— 剩余/总额/已用/今日/刷新日
+   *   playful 傲娇 —— 大肥鱼口吻，带一句嘴碎
+   *  数据来源同前：① 内部通道额度（真实）② sk- 网关账单 ③ 自填额度 */
+
+  function balanceStyleLabel() {
+    const f = BALANCE_STYLES.find(x => x.id === balanceStyleId());
+    return f ? f.label : '简洁';
   }
+  function cycleBalanceStyle() {
+    const ids = BALANCE_STYLES.map(x => x.id);
+    const i = Math.max(0, ids.indexOf(balanceStyleId()));
+    settings.balanceStyle = ids[(i + 1) % ids.length];
+    saveSettings(); sfx('tap');
+    bubbleSay('余额格式：' + balanceStyleLabel(), 2200);
+    onPetSingleClick();   // 立刻用新格式给你看一遍
+  }
+
+
   function onPetSingleClick() {
     const greet = periodGreet();
     const nick = settings.nickname ? '，' + settings.nickname : '';
@@ -563,6 +564,8 @@
       { icon: 'mask', label: '修改模型…', act: openModelPicker },
       { icon: 'note', label: '角色设定…', act: openPersonaEditor },
       { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
+      { icon: 'chat', label: () => '余额格式：' + balanceStyleLabel(), act: () => cycleBalanceStyle(), keepOpen: true },
+      { icon: 'note', label: '开场白…', act: openGreetingEditor },
       { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     ] },
     { icon: 'gear', label: '设置', sub: [
@@ -905,6 +908,43 @@
     });
   }
 
+  /** 开场白编辑（v3.8）：支持 {greet} 与 {nickname} 两个变量 */
+  function openGreetingEditor() {
+    openDialog('开场白', body => {
+      body.appendChild($new('div', 'pb2-hint', '启动时桌宠说的第一句话。留空＝用默认那句。可用变量：{greet}（早上好/中午好…）、{nickname}（你的昵称）。'));
+      const ta = $new('textarea');
+      ta.rows = 4;
+      ta.style.width = '100%';
+      ta.style.boxSizing = 'border-box';
+      ta.placeholder = '例：{greet}，{nickname}！大肥鱼上线了，戳我看余额～';
+      ta.value = String(settings.greeting || '');
+      body.appendChild(ta);
+      const row = $new('div', 'pb2-row');
+      const preset = $new('button', null, '用回默认'); preset.type = 'button';
+      preset.addEventListener('click', () => { ta.value = ''; });
+      const preview = $new('button', null, '试听这句'); preview.type = 'button';
+      preview.addEventListener('click', () => {
+        const save0 = settings.greeting;
+        settings.greeting = ta.value;
+        speechUnlock();
+        bubbleSay(openLine(), 5000);
+        speak(openLine());
+        settings.greeting = save0;
+      });
+      row.appendChild(preset); row.appendChild(preview);
+      body.appendChild(row);
+      setTimeout(() => { try { ta.focus(); } catch (e) { /* 焦点无所谓 */ } }, 40);
+    }, [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: () => {
+        const ta = dialogMask && dialogMask.querySelector('textarea');
+        settings.greeting = ta ? ta.value.trim() : '';
+        saveSettings(); sfx('ok');
+        bubbleSay(settings.greeting ? '开场白换好啦，下次启动就这么说～' : '开场白改回默认啦～', 2600);
+      } },
+    ]);
+  }
+
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
@@ -1128,6 +1168,21 @@
         mon.appendChild(op);
       });
       body.appendChild(mon);
+      body.appendChild($new('label', null, '桌宠 · 余额气泡格式（点一下桌宠时怎么念账）'));
+      const balStyleSel = $new('select');
+      [['short', '简洁：还剩 X 分（约 Y 元）· 今日 +N 分'],
+       ['detail', '详细：剩余/总额/已用 + 今日 + 估算明细'],
+       ['playful', '傲娇：大肥鱼口吻，带一句嘴碎']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if (balanceStyleId() === v) op.selected = true;
+        balStyleSel.appendChild(op);
+      });
+      body.appendChild(balStyleSel);
+      body.appendChild($new('label', null, '桌宠 · 开场白（启动第一句；{greet} {nickname} 可用）'));
+      const greetingInp = $new('input'); greetingInp.type = 'text';
+      greetingInp.placeholder = '留空＝默认';
+      greetingInp.value = String(settings.greeting || '');
+      body.appendChild(greetingInp);
       body.appendChild($new('label', null, '声音 · 语音播报（聊天回复念出来）'));
       const spOn = $new('select');
       [['1', '开启'], ['0', '关闭（不说话）']].forEach(([v, l]) => {
@@ -1197,6 +1252,8 @@
         settings.speechVolume = Number(spVol.value);
         settings.speechStep = Number(spStep.value) || 0.13;
         settings.speechMaxChars = Number(spMax.value) || 60;
+        settings.balanceStyle = balStyleSel.value;
+        settings.greeting = greetingInp.value.trim();
         settings.speechMode = spFollow.value;
         settings.speechFollow = spFollow.value !== 'classic';
         settings.ttsVoice = ttsVoiceSel.value;
@@ -1228,7 +1285,7 @@
       body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceSel, ttsRateInp, sfxOnSel, sfxVol };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceSel, ttsRateInp, balStyleSel, greetingInp, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -1250,6 +1307,8 @@
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
+          settings.balanceStyle = f.balStyleSel.value;
+          settings.greeting = f.greetingInp.value.trim();
           settings.speechMode = f.spFollow.value;
           settings.speechFollow = f.spFollow.value !== 'classic';
           settings.ttsVoice = f.ttsVoiceSel.value;
@@ -1352,12 +1411,27 @@
     window.open(assetDir() + 'chat.html', 'pb2-chat', 'width=470,height=720');
   }
 
-  /* ================= 启动问候 ================= */
+  /* ================= 启动问候（v3.8：可在设置里自定义） ================= */
+  /** 开场白：自定义优先，支持 {greet} 时段问候、{nickname} 昵称两个变量 */
+  function openLine() {
+    const greet = periodGreet();
+    const nick = settings.nickname || '';
+    const custom = String(settings.greeting || '').trim();
+    if (custom) {
+      return custom
+        .replace(/\{greet\}/g, greet)
+        .replace(/\{nickname\}/g, nick)
+        .replace(/[，,]\s*([！!。～~…])/g, '$1')   // 变量为空留下的「，！」
+        .replace(/[，,]{2,}/g, '，')
+        .replace(/^[，,、\s！!。～~]+/, '')
+        .replace(/[{}]/g, '')
+        .trim();
+    }
+    return greet + (nick ? '，' + nick : '') + '！大肥鱼在岗，戳我看账，双击聊天～';
+  }
   setTimeout(() => {
     if (settings.hidden) return;
-    const greet = periodGreet();
-    const nick = settings.nickname ? '，' + settings.nickname : '';
-    bubbleSay(greet + nick + '！大肥鱼在岗，戳我看账，双击聊天～', 6000);
+    bubbleSay(openLine(), 6000);
   }, 900);
 
   /* ================= 对外（测试钩子，只读） ================= */

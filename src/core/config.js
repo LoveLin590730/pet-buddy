@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.7.0';
+const PB_VERSION = '3.8.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -62,6 +62,9 @@ const CHAT_MODELS = [
     sfxOn: true,             // 交互音效开关
     sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
     hiddenSkins: [],         // v3.7 被移除的内置皮肤 id（可从模型面板恢复）
+    /* v3.8 开场白与余额格式 */
+    greeting: '',            // 自定义开场白（空=默认；支持 {greet} 时段问候、{nickname} 昵称）
+    balanceStyle: 'short',   // 余额气泡格式：short 简洁 / detail 详细 / playful 傲娇
     /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
     phrases: [],
   };
