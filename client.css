@@ -307,6 +307,41 @@
 .pb2-stkp-cell.pb2-stkp-add { font-size: 18px; color: #8aa8f0; border-style: dashed; }
 .pb2-stkp-cell.pb2-stkp-add:hover { background: #f2f7ff; }
 
+/* ============================================================================
+ * v5.1 控件统一：能点的都长得一样（按钮 / 文件选择行 / 滑块 / 拖动反馈）
+ *   三级按钮：.pb2-mini（默认次要）／.pb2-mini-danger（危险，红）／.pb2-chip（选项）
+ * ==========================================================================*/
+.pb2-mini { font-size: 11.5px; line-height: 1.6; padding: 3px 10px; border-radius: 8px;
+  border: 1px solid #c9d3ec; background: #fff; color: #3d519c; cursor: pointer; white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, transform .1s ease; }
+.pb2-mini:hover { background: #eef2fd; border-color: #9db4e8; }
+.pb2-mini:active { transform: translateY(1px); }
+.pb2-mini.pb2-mini-danger { color: #c0415a; border-color: #edc4cf; background: #fff; }
+.pb2-mini.pb2-mini-danger:hover { background: #fdf1f4; border-color: #e39caf; }
+/* 模型卡：缩略图 + 右侧信息列（名称 / 描述 / 按钮行），按钮一行右对齐不再竖排 */
+.pb2-model-card { align-items: flex-start; }
+.pb2-model-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pb2-model-desc { overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pb2-model-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-top: 4px; }
+/* 文件选择行：按钮 + 文件名（原生控件藏起来） */
+.pb2-filerow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pb2-filename { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: #7c88ad;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 滑块（桌宠大小 / 音量 / 语速）：统一轨道与拇指 */
+.pb2-dbody input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 20px;
+  background: transparent; padding: 0; border: 0; cursor: pointer; }
+.pb2-dbody input[type=range]::-webkit-slider-runnable-track { height: 5px; border-radius: 3px;
+  background: linear-gradient(90deg, #a9c0f2, #dbe4f8); }
+.pb2-dbody input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+  width: 15px; height: 15px; border-radius: 50%; background: #4a68d8; border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(30,45,90,.3); margin-top: -5px; }
+.pb2-dbody input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(122,152,240,.25); }
+/* 拖动反馈：正在拖的面板/桌宠给个"提起来"的观感 */
+.pb2-chatp.pb2-dragging { opacity: .92; box-shadow: 0 24px 56px rgba(25,35,75,.34); cursor: grabbing; }
+.pb2-chatp.pb2-dragging .pb2-chatp-head { cursor: grabbing; }
+.pb2-pet-wrap.pb2-dragging { cursor: grabbing; }
+
 /* 后台日志：等宽、可复制、长行折行（思考过程面板专用） */.pb2-logrow { border-left: 2px solid #dde5f7; padding: 4px 8px; margin: 0;
   font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 11.5px;
   color: #3c4767; background: #fafcff; border-radius: 0 6px 6px 0;

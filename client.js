@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '5.0.0';
+const PB_VERSION = '5.1.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -5433,6 +5433,31 @@ const CHAT_MODELS = [
     return b;
   }
 
+  /** v5.1 统一的文件选择行：隐藏原生控件，用按钮触发，右侧显示选中的文件名。
+   *  原生 input[type=file] 那个灰色小方块和整体风格太不搭，所有选文件的地方都走这里。 */
+  function fileField(host, opts) {
+    const o = opts || {};
+    const row = $new('div', 'pb2-filerow');
+    const inp = $new('input');
+    inp.type = 'file';
+    if (o.accept) inp.accept = o.accept;
+    if (o.multiple) inp.multiple = true;
+    inp.style.display = 'none';
+    const btn = chipBtn(o.label || '选择文件…', false, () => inp.click());
+    const nameEl = $new('span', 'pb2-filename', '未选择文件');
+    inp.addEventListener('change', () => {
+      const fs = Array.from(inp.files || []);
+      nameEl.textContent = !fs.length ? '未选择文件' : (fs.length === 1 ? fs[0].name : fs.length + ' 个文件');
+      nameEl.title = fs.map(f => f.name).join('\n');
+      if (o.onPick) o.onPick(fs);
+      inp.value = '';                     // 允许再次选同一个文件
+    });
+    row.appendChild(btn); row.appendChild(nameEl); row.appendChild(inp);
+    if (o.hint) host.appendChild($new('div', 'pb2-hint', o.hint));
+    host.appendChild(row);
+    return { row: row, input: inp, name: nameEl, btn: btn };
+  }
+
   /* ================= v4.8 表情包管理（设置里独立入口：批量导入/导出） =================
    * 内置：档案馆 16 + 微信 24 + 大肥鱼模型包 27 = 67 张（只读，随插件走）
    * 自定义：存本机 localStorage（settings.customStickers，元素是 dataUrl，用 custom:<下标> 引用，
@@ -6129,12 +6154,13 @@ const CHAT_MODELS = [
         th.style.backgroundImage = 'url("' + m.thumb + '")';
         if (m.bgPos) { th.style.backgroundSize = '1536px 2288px'; th.style.backgroundPosition = m.bgPos; }
         else if (m.contain) { th.style.backgroundSize = 'contain'; th.style.backgroundPosition = 'center'; th.style.backgroundRepeat = 'no-repeat'; }
-        const info = $new('div');
+        const info = $new('div', 'pb2-model-info');
         info.appendChild($new('div', 'pb2-model-name', m.name));
         info.appendChild($new('div', 'pb2-model-desc', m.desc));
         // v3.7：内置模型也能移除（从列表隐藏，素材不动；随时可恢复）
+        // v5.1：按钮行移进右侧信息列（底部一行、右对齐），不再竖排错位
         const acts = $new('div', 'pb2-model-acts');
-        const del = $new('button', 'pb2-model-act pb2-model-del', '移除');
+        const del = $new('button', 'pb2-mini', '移除');
         del.type = 'button';
         del.title = '从列表移除（素材不删，可在下方「恢复已移除」找回）';
         del.addEventListener('click', ev => {
@@ -6149,7 +6175,7 @@ const CHAT_MODELS = [
         });
         acts.appendChild(del);
         // v3.9：彻底删除（永久从列表消失；素材文件仍在本机插件目录，面板里会告知文件名）
-        const wipe = $new('button', 'pb2-model-act pb2-model-del', '彻底删除');
+        const wipe = $new('button', 'pb2-mini pb2-mini-danger', '彻底删除');
         wipe.type = 'button';
         wipe.title = '永久移除该模型（不再出现在恢复列表）';
         wipe.addEventListener('click', ev => {
@@ -6175,7 +6201,8 @@ const CHAT_MODELS = [
           ]);
         });
         acts.appendChild(wipe);
-        card.appendChild(th); card.appendChild(info); card.appendChild(acts);
+        info.appendChild(acts);          // v5.1：按钮行挂在信息列底部（一行右对齐）
+        card.appendChild(th); card.appendChild(info);
         card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
         grid.appendChild(card);
       }
@@ -6191,29 +6218,30 @@ const CHAT_MODELS = [
         body.appendChild(restoreRow);
       }
       body.appendChild($new('h4', null, '自定义模型（上传图片或 zip 包 · 可改名/导出/删除）'));
-      const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
-      const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
-      impBtn.addEventListener('click', () => impFile.click());
-      impFile.addEventListener('change', () => {
-        const f = impFile.files && impFile.files[0];
-        if (!f) return;
-        importSkinPackFile(f, (n, err) => {
-          if (n > 0) { openModelPicker(); bubbleSay('导入了 ' + n + ' 个模型～', 2800); }
-          else bubbleSay('导入失败：' + (err || '文件里没有可用模型'), 4400);
-        });
+      /* v5.1：文件选择统一成「按钮 + 文件名」（原生控件的灰色小方块太突兀） */
+      const impField = fileField(body, {
+        label: '导入模型包（.json）', accept: '.json,application/json',
+        onPick: (fs) => {
+          const f = fs[0];
+          if (!f) return;
+          importSkinPackFile(f, (n, err) => {
+            if (n > 0) { openModelPicker(); bubbleSay('导入了 ' + n + ' 个模型～', 2800); }
+            else bubbleSay('导入失败：' + (err || '文件里没有可用模型'), 4400);
+          });
+        },
       });
-      const impRow = $new('div', 'pb2-row');
-      impRow.appendChild(impBtn); impRow.appendChild(impFile);
       const all = settings.customSkins || [];
       if (all.length > 1) {
-        const expAll = $new('button', null, '全部导出'); expAll.type = 'button';
-        expAll.addEventListener('click', () => exportSkinPack(all));
-        impRow.appendChild(expAll);
+        const expAll = chipBtn('全部导出', false, () => exportSkinPack(all));
+        impField.row.appendChild(expAll);
       }
-      body.appendChild(impRow);
-      const file = $new('input'); file.type = 'file'; file.accept = 'image/*,.zip,application/zip';
-      file.addEventListener('change', () => {
-        const f = file.files && file.files[0];
+      /* v5.1：上传图片/zip 也用统一的文件选择行 */
+      fileField(body, {
+        label: '上传图片或 zip 包',
+        accept: 'image/*,.zip,application/zip',
+        hint: '静态图 ≤2MB、动图 ≤4MB、zip 会列出里面的图让你挑',
+        onPick: (fs) => {
+        const f = fs[0];
         if (!f) return;
         /* v4.2：zip 模型包（网上下载的常是这个形式）→ 解出图片清单让你挑一张 */
         if (/\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed') {
@@ -6244,8 +6272,8 @@ const CHAT_MODELS = [
           bubbleSay(anim ? '会动的新衣服穿好啦～' : '新衣服穿好啦～', 2400);
         };
         rd.readAsDataURL(f);
+        },
       });
-      body.appendChild(file);
       const customs = settings.customSkins || [];
       if (customs.length) {
         const grid2 = $new('div', 'pb2-model-grid');
@@ -6253,18 +6281,18 @@ const CHAT_MODELS = [
           const card = $new('div', 'pb2-model-card' + (settings.skin === c.id ? ' pb2-selected' : ''));
           const th = $new('div', 'pb2-model-thumb');
           th.style.backgroundImage = 'url("' + c.dataUrl + '")';
-          const info = $new('div');
+          const info = $new('div', 'pb2-model-info');
           info.appendChild($new('div', 'pb2-model-name', c.name));
           info.appendChild($new('div', 'pb2-model-desc', customSkinAnim(c) ? '自定义动图（GIF/动画 WebP）' : '自定义上传'));
           const acts = $new('div', 'pb2-model-acts');
-          const ren = $new('button', 'pb2-model-act', '改名'); ren.type = 'button';
+          const ren = $new('button', 'pb2-mini', '改名'); ren.type = 'button';
           ren.addEventListener('click', ev => {
             ev.stopPropagation();
             askText('给这张模型起个名字', c.name || '', (v) => { c.name = v.slice(0, 24); saveSettings(); openModelPicker(); });
           });
-          const exp = $new('button', 'pb2-model-act', '导出'); exp.type = 'button';
+          const exp = $new('button', 'pb2-mini', '导出'); exp.type = 'button';
           exp.addEventListener('click', ev => { ev.stopPropagation(); exportSkinPack([c]); });
-          const del = $new('button', 'pb2-model-act pb2-model-del', '删除'); del.type = 'button';
+          const del = $new('button', 'pb2-mini pb2-mini-danger', '删除'); del.type = 'button';
           del.addEventListener('click', ev => {
             ev.stopPropagation();
             settings.customSkins = settings.customSkins.filter(x => x.id !== c.id);
@@ -6272,7 +6300,8 @@ const CHAT_MODELS = [
             saveSettings(); applySkin(); refreshLayout(); openModelPicker();
           });
           acts.appendChild(ren); acts.appendChild(exp); acts.appendChild(del);
-          card.appendChild(th); card.appendChild(info); card.appendChild(acts);
+          info.appendChild(acts);        // v5.1：按钮行在信息列底部
+          card.appendChild(th); card.appendChild(info);
           card.addEventListener('click', () => { settings.skin = c.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); });
           grid2.appendChild(card);
         }
@@ -6894,6 +6923,7 @@ const CHAT_MODELS = [
       dragDx = ev.clientX - r.left; dragDy = ev.clientY - r.top;
       chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
       chatp.style.left = r.left + 'px'; chatp.style.top = r.top + 'px';
+      chatp.classList.add('pb2-dragging');     // v5.1：拖动时给个"提起来"的反馈
       try { head.setPointerCapture(ev.pointerId); } catch (e) { /* 老内核 */ }
     });
     head.addEventListener('pointermove', ev => {
@@ -6906,6 +6936,7 @@ const CHAT_MODELS = [
     const endDrag = () => {
       if (!dragging) return;
       dragging = false;
+      chatp.classList.remove('pb2-dragging');
       sfx('tap');
       // v4.6：不再记住拖动后的位置——面板的职责是"始终贴桌宠头顶"，下次打开自动回去
     };

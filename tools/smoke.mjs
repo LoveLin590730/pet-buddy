@@ -485,7 +485,7 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
   ok('模型：改名（小输入弹窗，不依赖 window.prompt）', /function askText/.test(t) && /给这张模型起个名字/.test(t));
   ok('模型：导出模型包（.json 下载）', /function exportSkinPack/.test(t) && /petbuddy-skins-/.test(t));
   ok('模型：导入模型包（校验 dataUrl / 上限 24 个）', /function importSkinPackFile/.test(t) && /slice\(-24\)/.test(t));
-  ok('模型：删除保留（自定义可删，内置不可删）', /pb2-model-del/.test(t) && /settings\.customSkins\.filter/.test(t));
+  ok('模型：删除保留（自定义可删，内置只能移除）', /pb2-mini-danger/.test(t) && /settings\.customSkins\.filter/.test(t));
   ok('常用语：增 / 删 / 改 / 查（列表 + 点一条就念）',
     /function openPhraseBook/.test(t) && /'添加'/.test(t) && /'说'/.test(t) && /'改'/.test(t) && /'删'/.test(t));
   ok('常用语上限 30 条且去重', /最多 30 条/.test(t) && /arr\.some\(x => x\.text === t\)/.test(t));
@@ -1156,6 +1156,39 @@ console.log('\n[v5.0 气泡聊天里的表情面板]');
     /\.pb2-stkp-cell\.pb2-del-mode/.test(css0) && /\.pb2-stkp-cell\.pb2-stkp-add/.test(css0));
   ok('面板限高可滚动（不撑破气泡框）', /\.pb2-stkp \{ border-top/.test(css0) && /max-height: 236px/.test(css0));
   ok('表情网格能真正渲染各类贴纸（用 core 的 stickerEl）', /const el = stickerEl\(it\.g, it\.n\)/.test(js0));
+}
+
+console.log('\n[v5.1 控件统一（按钮/文件选择/滑块/拖动）]');
+{
+  const js1 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css1 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  // —— 模型卡：按钮行进信息列底部，一行右对齐
+  ok('模型卡改为「缩略图 + 信息列(名称/描述/按钮行)」', /pb2-model-info/.test(js1) && !/card\.appendChild\(th\); card\.appendChild\(info\); card\.appendChild\(acts\)/.test(js1));
+  ok('按钮行挂在信息列里（两个面板都改了）',
+    /info\.appendChild\(acts\);          \/\/ v5\.1/.test(js1) && /info\.appendChild\(acts\);        \/\/ v5\.1/.test(js1));
+  ok('按钮一行右对齐且可换行（不再竖排错位）', /\.pb2-model-acts \{ display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end/.test(css1));
+  ok('描述最多两行省略（不再把按钮挤走）', /\.pb2-model-desc \{ overflow: hidden;[\s\S]{0,80}-webkit-line-clamp: 2/.test(css1));
+  // —— 三级按钮统一
+  ok('统一小按钮 .pb2-mini（默认/危险）', /\.pb2-mini \{/.test(css1) && /\.pb2-mini\.pb2-mini-danger \{/.test(css1));
+  ok('移除用默认、彻底删除/删除用危险色',
+    /pb2-mini', '移除'/.test(js1) && /pb2-mini pb2-mini-danger', '彻底删除'/.test(js1) && /pb2-mini pb2-mini-danger', '删除'/.test(js1));
+  ok('旧的 pb2-model-act / pb2-model-del 已不再使用', !/pb2-model-act'/.test(js1) && !/pb2-model-del/.test(js1));
+  // —— 文件选择统一
+  ok('新增 fileField（隐藏原生控件 + 按钮 + 文件名）', /function fileField\(host, opts\)/.test(js1) && /\.pb2-filerow \{/.test(css1));
+  ok('文件名超出省略、带 title 全名', /\.pb2-filename \{[\s\S]{0,120}text-overflow: ellipsis/.test(css1) && /nameEl\.title = fs\.map/.test(js1));
+  ok('导入模型包与上传图片/zip 都走 fileField',
+    /fileField\(body, \{\s*label: '导入模型包（\.json）'/.test(js1) && /label: '上传图片或 zip 包'/.test(js1));
+  ok('页面里不再直接往弹窗塞原生 file 控件（只剩 fileField 内部那一个）',
+    (js1.match(/type = 'file'/g) || []).length <= 4, String((js1.match(/type = 'file'/g) || []).length));
+  // —— 滑块统一
+  ok('滑块有统一轨道与拇指样式', /\.pb2-dbody input\[type=range\] \{/.test(css1) &&
+    /::-webkit-slider-runnable-track/.test(css1) && /::-webkit-slider-thumb/.test(css1));
+  ok('三处滑块都吃到统一样式（大小/音量/语速）', (js1.match(/type = 'range'/g) || []).length >= 4);
+  // —— 拖动反馈
+  ok('气泡面板拖动时加反馈类（半透明 + 抬起阴影 + grabbing）',
+    /chatp\.classList\.add\('pb2-dragging'\)/.test(js1) && /chatp\.classList\.remove\('pb2-dragging'\)/.test(js1) &&
+    /\.pb2-chatp\.pb2-dragging \{/.test(css1));
+  ok('桌宠拖动也有 grabbing 光标', /\.pb2-pet-wrap\.pb2-dragging \{ cursor: grabbing/.test(css1));
 }
 
 console.log('\n[语音听写 · v3.2]');
