@@ -175,3 +175,5 @@
 .pb2-menu .pb2-mi.pb2-cycle .pb2-mlabel { color: #3b4a72; }
 /* 菜单最大宽度：窄屏也不横向溢出（长条目靠省略号收） */
 .pb2-menu { max-width: min(90vw, 430px); }
+/* v3.5.1 动画 WebP 皮肤（和大人）：自带逐帧动画，别再叠呼吸缩放 */
+.pb2-pet-wrap.pb2-skin-anim .pb2-img-skin { animation: none; }

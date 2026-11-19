@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.5.0';
+const PB_VERSION = '3.5.1';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -341,6 +341,22 @@ const CHAT_MODELS = [
       fileDown: 'pet-bongocat-down.png',
       paw: false,           // 素材自带爪子，不叠浮空爪图层
       credit: '素材：kuroni/bongocat-osu（MIT）',
+    },
+    /* v3.5.1：从社区桌面宠物项目里挑出来的两张形象（都是完整立绘/动画，不要再叠爪图层） */
+    hedaren: {
+      name: '和大人',
+      desc: '清代权臣 Q 版 · 120 帧待机动画（会呼吸、会摆）',
+      file: 'pet-hedaren.webp',
+      anim: true,           // 动画 WebP：<img> 会自己播
+      paw: false,
+      credit: '素材：Yukilol13/dsh-hedaren-pet（MIT）',
+    },
+    ryan: {
+      name: '大肥鱼·RYANFFY 立绘',
+      desc: '鲸鱼娘正面立绘（静态图）',
+      file: 'pet-dafeiyu-ryan.png',
+      paw: false,
+      credit: '素材：RYANFFY/deepseek-dafeiyu-pet（MIT）',
     },
   };
   /** 某皮肤是否走静态图（BongoCat / 用户上传的自定义图） */
@@ -2054,7 +2070,7 @@ const CHAT_MODELS = [
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
-    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex');
+    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex', 'pb2-skin-anim');
     if (sp) {
       skinMode = 'fish';
       petWrap.classList.add(sp.cls);        // CSS 类仍然保留（宿主重写过的官方路径靠它兜底）
@@ -2077,7 +2093,8 @@ const CHAT_MODELS = [
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
-      const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat）
+      const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat / 和大人 / RYANFFY）
+      petWrap.classList.toggle('pb2-skin-anim', !!(im && im.anim));   // 动画 WebP 不再叠呼吸动画
       let url = '';
       if (im) url = assetUrl(im.file);
       else {

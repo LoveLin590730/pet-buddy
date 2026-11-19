@@ -28,7 +28,7 @@ try {
   $plug = Join-Path $stage 'pet-buddy'
   New-Item -ItemType Directory -Path $plug -Force | Out-Null
   Copy-Item client.js, chat.html, client.css, manifest.json, icon.png -Destination $plug
-  Copy-Item README.md, CHANGELOG.md, LICENSE, LICENSE-dspet.txt, LICENSE-deepseekpet.txt, LICENSE-bongocat.txt, assets.manifest.json -Destination $plug
+  Copy-Item README.md, CHANGELOG.md, LICENSE, LICENSE-dspet.txt, LICENSE-deepseekpet.txt, LICENSE-bongocat.txt, LICENSE-community-pets.txt, assets.manifest.json -Destination $plug
   foreach ($f in $assets) { Copy-Item $f $plug -Force }
   $oc = Join-Path $root 'tools\oneclick'
   Copy-Item (Join-Path $oc 'install-plugin.ps1') $stage -Force

@@ -106,7 +106,7 @@
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
-    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex');
+    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex', 'pb2-skin-anim');
     if (sp) {
       skinMode = 'fish';
       petWrap.classList.add(sp.cls);        // CSS 类仍然保留（宿主重写过的官方路径靠它兜底）
@@ -129,7 +129,8 @@
     } else {
       skinMode = 'img';
       petWrap.classList.add('pb2-skin-img');
-      const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat）
+      const im = IMAGE_SKINS[s];     // v3.3.3：内置静态皮肤（BongoCat / 和大人 / RYANFFY）
+      petWrap.classList.toggle('pb2-skin-anim', !!(im && im.anim));   // 动画 WebP 不再叠呼吸动画
       let url = '';
       if (im) url = assetUrl(im.file);
       else {

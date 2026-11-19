@@ -251,7 +251,22 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[右键菜单：朗读三件套 + 显示优化 · v3.5]');
+console.log('\n[社区桌宠形象接入 · v3.5.1]');
+{
+  ok('和大人皮肤已登记（动画 WebP，120 帧）', !!P.IMAGE_SKINS.hedaren && P.IMAGE_SKINS.hedaren.file === 'pet-hedaren.webp' && P.IMAGE_SKINS.hedaren.anim === true);
+  ok('RYANFFY 大肥鱼立绘已登记（静态）', !!P.IMAGE_SKINS.ryan && P.IMAGE_SKINS.ryan.file === 'pet-dafeiyu-ryan.png' && !P.IMAGE_SKINS.ryan.anim);
+  ok('两个新皮肤都不叠浮空爪（素材自带身体）', P.IMAGE_SKINS.hedaren.paw === false && P.IMAGE_SKINS.ryan.paw === false);
+  ok('署名齐全（许可要求）', /Yukilol13/.test(P.IMAGE_SKINS.hedaren.credit) && /RYANFFY/.test(P.IMAGE_SKINS.ryan.credit));
+  ok('素材文件都在仓库里', existsSync(path.join(ROOT, 'pet-hedaren.webp')) && existsSync(path.join(ROOT, 'pet-dafeiyu-ryan.png')));
+  const mf = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+  const listed = mf.groups.flatMap((g) => g.files);
+  ok('两张新素材已登记进清单', listed.indexOf('pet-hedaren.webp') >= 0 && listed.indexOf('pet-dafeiyu-ryan.png') >= 0);
+  ok('许可说明文件随包分发', existsSync(path.join(ROOT, 'LICENSE-community-pets.txt')));
+  const css2 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('动画皮肤不叠加呼吸动画（避免两层变形）', /\.pb2-skin-anim \.pb2-img-skin\s*\{[^}]*animation:\s*none/.test(css2));
+  ok('模型选择器会列出全部内置皮肤', Object.keys(P.IMAGE_SKINS).length >= 3);
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const css = readFileSync(path.join(ROOT, 'client.css'), 'utf8');

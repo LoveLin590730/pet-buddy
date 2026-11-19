@@ -73,6 +73,22 @@
       paw: false,           // 素材自带爪子，不叠浮空爪图层
       credit: '素材：kuroni/bongocat-osu（MIT）',
     },
+    /* v3.5.1：从社区桌面宠物项目里挑出来的两张形象（都是完整立绘/动画，不要再叠爪图层） */
+    hedaren: {
+      name: '和大人',
+      desc: '清代权臣 Q 版 · 120 帧待机动画（会呼吸、会摆）',
+      file: 'pet-hedaren.webp',
+      anim: true,           // 动画 WebP：<img> 会自己播
+      paw: false,
+      credit: '素材：Yukilol13/dsh-hedaren-pet（MIT）',
+    },
+    ryan: {
+      name: '大肥鱼·RYANFFY 立绘',
+      desc: '鲸鱼娘正面立绘（静态图）',
+      file: 'pet-dafeiyu-ryan.png',
+      paw: false,
+      credit: '素材：RYANFFY/deepseek-dafeiyu-pet（MIT）',
+    },
   };
   /** 某皮肤是否走静态图（BongoCat / 用户上传的自定义图） */
   function isImageSkin(skin) { return !!IMAGE_SKINS[skin]; }

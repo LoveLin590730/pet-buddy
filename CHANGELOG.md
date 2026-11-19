@@ -3,6 +3,31 @@
 版本号唯一来源：`src/core/config.js` 的 `PB_VERSION`；`node build.mjs` 会写回 `manifest.json`。
 本文件承接自 v2.2.3 之前塞在 `manifest.json` 里 description 字段的版本历史。
 
+## v3.5.1 — 2026-11-19 · 接入你下载的社区桌宠形象（和大人动画 + RYANFFY 立绘）
+
+**一句话**：把 `桌宠模型\` 里三个项目翻了一遍，挑出两张能直接用、许可也干净的素材接成新皮肤。
+
+- **新增皮肤「和大人」**（`skin=hedaren`）：清代权臣 Q 版，**120 帧待机动画 WebP**（278×306）。
+  源自 [Yukilol13/dsh-hedaren-pet](https://github.com/Yukilol13/dsh-hedaren-pet) v0.3.1 的
+  `app/animations/idle.webp`（**MIT**，原样未改）。
+- **新增皮肤「大肥鱼·RYANFFY 立绘」**（`skin=ryan`）：鲸鱼娘正面立绘 255×340（静态 PNG）。
+  源自 [RYANFFY/deepseek-dafeiyu-pet](https://github.com/RYANFFY/deepseek-dafeiyu-pet) v1.1.5 的
+  `sprites/正面.png`（**MIT**，原样未改）。
+- **动画怎么播的**：不用改渲染器——现有的静态图皮肤本来就是 `<img>`，**动画 WebP 放进去自己就播**。
+  只补了一处细节：新增 `pb2-skin-anim` 类，**动画皮肤不再叠 CSS 呼吸缩放**（否则两层变形打架）；
+  静态皮肤（RYANFFY）仍保留呼吸动画。
+- **都不叠浮空爪**：这两张素材本身是完整角色（自带身体与手），`paw: false`，不会再出现"飘着的肉垫"。
+- **许可**：两个项目都是 MIT；新增 `LICENSE-community-pets.txt`（署名 + MIT 要点）随包分发，
+  模型选择卡片上也直接显示来源。
+- **第三个项目（大肥鱼高清版 YunYueSama）没接**：目录里只有效果预览图
+  （`character-sheet.png` / `all-actions-contact.png` / `motion-preview.webp`），
+  真正的素材打包在 244MB 的便携 EXE 内，没有可单独取用的图集。要接的话得先解包那个 EXE。
+- **实测**（真浏览器）：和大人 `naturalWidth×Height = 278×306`、`complete = true`、
+  浏览器 `ImageDecoder` 读出 **frameCount = 120、animated = true**（确认是真动画）；
+  RYANFFY `255×340`、无 anim 类（呼吸动画生效）。
+- **体积**：素材 +2.0 MB，一键安装器 7.1 → **9.4 MB**。
+- 自检 **168 项全绿**（新增 9 项：两个皮肤登记/署名/文件存在/清单登记/许可文件/动画类规则）。
+
 ## v3.5.0 — 2026-11-19 · 右键菜单重构：朗读模式/音色/速度直接可调 + 显示优化
 
 **一句话**：把朗读的三项设置搬到右键菜单里，点一下就切换、当前值直接写在菜单上；同时把菜单的显示收拾干净。
