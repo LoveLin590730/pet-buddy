@@ -1085,9 +1085,10 @@ console.log('\n[v4.8 表情包扩展与管理 + 弹窗规范]');
   ok('底部按钮右对齐 + 最小宽度', /\.pb2-dfoot \{ padding: 10px 16px 12px/.test(css8) && /\.pb2-dfoot button \{ min-width: 76px/.test(css8));
   ok('窄屏适配（铺满 + 卡片转竖向）', /@media \(max-width: 560px\)/.test(css8) && /\.pb2-model-card \{ flex-direction: column/.test(css8));
   ok('日志面板等宽折行样式在', /\.pb2-logrow \{/.test(css8) && /white-space: pre-wrap/.test(css8));
-  ok('逐个弹窗都有分组标题（聊天设置 3 组 / 角色设定 / 常用语 / 试听 / 日志）',
-    ['通道与模型', '额度显示', '网关 / 身份牌', '性格设定', '加一条', '已保存的常用语', '试听时说这一句', '最近 100 条']
-      .every(t => js8.indexOf(t) >= 0));
+  ok('逐个弹窗都有分组标题（通用 3 组 / 聊天 4 组 / 声音 3 组 / 角色设定 / 常用语 / 试听 / 日志）',
+    ['连接与额度', '网关 / 身份牌', '人设与台词', '内容库', '聊天行为', '会话',
+     '语音播报（聊天回复念出来）', '音效（点桌宠、弹面板、拖拽吸附', '性格设定', '加一条', '已保存的常用语',
+     '试听时说这一句', '最近 100 条'].every(t => js8.indexOf(t) >= 0));
   ok('零散 marginTop 的"手工间距"已清掉', !/style\.marginTop/.test(js8));
 }
 
@@ -1219,6 +1220,50 @@ console.log('\n[v5.2 表情格布局 + 行走前摇]');
   ok('前摇期间原地踏步不位移（时钟推后 500ms）',
     /const t0 = performance\.now\(\) \+ WALK_WARMUP_MS/.test(js2) && /if \(t <= 0\) \{ walkRaf = requestAnimationFrame\(tick\); return; \}/.test(js2));
   ok('前摇常量在 core 里（可自检）', /const WALK_WARMUP_MS = 500;/.test(readFileSync(path.join(ROOT, 'src/core/petwalk.js'), 'utf8')));
+}
+
+console.log('\n[v5.3 设置拆分为 通用/聊天/声音]');
+{
+  const js3 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  // —— 三个弹窗各自独立存在
+  ok('三个设置弹窗都在（通用/聊天/声音）',
+    /function openGeneralSettings\(\)/.test(js3) && /function openChatSettings\(\)/.test(js3) && /function openSoundSettings\(\)/.test(js3));
+  ok('弹窗标题分别是 通用设置 / 聊天设置 / 声音设置',
+    /openDialog\('通用设置'/.test(js3) && /openDialog\('聊天设置'/.test(js3) && /openDialog\('声音设置'/.test(js3));
+  ok('菜单三项各自指向对应弹窗（不再两个指向同一个）',
+    /'通用设置…', act: openGeneralSettings/.test(js3) && /'聊天设置…', act: openChatSettings/.test(js3) &&
+    /'声音设置…', act: openSoundSettings/.test(js3));
+  ok('旧的巨型设置弹窗已清除（不再有 _fields 大对象）', !/openDialog\._fields/.test(js3) && !/openLegacySettings/.test(js3));
+  // —— 分组函数
+  ok('通用设置按三组构建（连接与额度 / 网关身份牌 / 桌宠）',
+    /function buildConnFields\(body\)/.test(js3) && /function buildGatewayFields\(body\)/.test(js3) && /function buildPetFields\(body\)/.test(js3));
+  ok('通用设置含：通道/模型/额度/每元积分/网关 baseURL/令牌/网关模型名/称呼/大小/形变/监控/余额格式/开场白',
+    ['连接与额度', '聊天通道', '聊天模型（助手通道）', '剩余额度（元，自填可选', '每元积分', '网关 / 身份牌',
+     '网关 baseURL', '网关令牌 / 身份牌', '网关模型名', '我的称呼', '大小（40–200 px', '互动形变',
+     'BongoCat 式鼠标/键盘监控', '余额气泡格式', '开场白（启动第一句'].every(t => js3.indexOf(t) >= 0));
+  // —— 声音设置只留声音
+  ok('声音设置含语音全项 + 音效 + 语音闲聊',
+    ['语音播报（聊天回复念出来）', '朗读模式', 'bibo音色', '朗读音色', '合成音量', '合成语速', '朗读语速',
+     '单次朗读上限', '试听这一句', '改试听文本', '音效（点桌宠、弹面板、拖拽吸附', '音效开关', '音效音量',
+     '试听音效', '语音闲聊'].every(t => js3.indexOf(t) >= 0));
+  ok('声音设置里不再夹带通道/额度/桌宠类内容（按弹窗内部顺序校验）', (() => {
+    const seg = js3.slice(js3.indexOf("openDialog('声音设置'"), js3.indexOf("openDialog('聊天设置'"));
+    return !/聊天通道|剩余额度|BongoCat|我的称呼|网关 baseURL/.test(seg);
+  })());
+  // —— 聊天设置：入口 + 行为开关
+  ok('聊天设置含：角色设定/台词开场白/常用语/表情包管理 四个入口',
+    ['chipBtn(\'角色设定…\'', 'chipBtn(\'台词与开场白…\'', 'chipBtn(\'常用语…\'', 'chipBtn(\'表情包管理…\'']
+      .every(t => js3.indexOf(t) >= 0));
+  ok('聊天设置含三个行为开关（双击输入框/记录互通/保留条数）',
+    /双击桌宠：就地输入框/.test(js3) && /聊天记录互通/.test(js3) && /气泡面板里的消息最多留几条/.test(js3));
+  ok('聊天设置含会话信息与重置入口', /当前用的是一个助手子对话/.test(js3) && /重置会话（下次聊天重新建）/.test(js3));
+  // —— 开关真的接管行为
+  ok('关掉「双击输入框」后双击不弹输入框', /settings\.quickChat === false/.test(js3) && /双击输入框关掉了/.test(js3));
+  ok('关掉「记录互通」后不从会话记录补历史', /if \(settings\.chatSync === false\) return false;/.test(js3));
+  ok('面板按 chatKeep 裁消息（只影响显示）', /function chatpTrimMsgs/.test(js3) && /chatpTrimMsgs\(\);/.test(js3));
+  ok('三个开关有默认值（开/开/60）', /quickChat: true,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')) &&
+    /chatSync: true,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')) &&
+    /chatKeep: 60,/.test(readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8')));
 }
 
 console.log('\n[语音听写 · v3.2]');

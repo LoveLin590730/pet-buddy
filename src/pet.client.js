@@ -686,8 +686,9 @@
     }
   }
 
-  /* ---- 双击：就地输入框 ---- */
+  /* ---- 双击：就地输入框（通用设置里可关；关掉时双击不开输入框） ---- */
   function onPetDoubleClick() {
+    if (settings.quickChat === false) { bubbleSay('（双击输入框关掉了，用右键「气泡聊天」吧～）', 2600); return; }
     showBubble(b => {
       const input = $new('input', 'pb2-bubble-in');
       input.type = 'text'; input.maxLength = 500;
@@ -899,10 +900,11 @@
       { icon: 'eyeoff', label: '隐藏桌宠', act: () => { settings.hidden = true; saveSettings(); applyHidden(); } },
     ] },
     { icon: 'gear', label: '设置', sub: [
-      { icon: 'gear', label: '聊天设置…', act: openChatSettings },
-      { icon: 'speaker', label: '声音设置…', act: openChatSettings },
+      { icon: 'gear', label: '通用设置…', act: openGeneralSettings },
+      { icon: 'chat', label: '聊天设置…', act: openChatSettings },
+      { icon: 'speaker', label: '声音设置…', act: openSoundSettings },
       { icon: 'mask', label: '表情包管理…', act: openStickerManager },
-    { icon: 'brain', label: '查看思考过程', act: openLogViewer },
+      { icon: 'brain', label: '查看思考过程', act: openLogViewer },
     ] },
   ];
   /** 菜单图标：'ic-xxx' 这样的名字走自绘 PNG；其他字符串当 emoji 用（兼容扩展项） */
@@ -2084,122 +2086,179 @@
     ]);
   }
 
-  /* ---- 聊天设置：通道 / 模型 / 额度 / 网关 ---- */
-  function openChatSettings() {
-    openDialog('聊天设置', body => {
-      body.appendChild($new('h4', null, '通道与模型'));
-      body.appendChild($new('label', null, '聊天通道'));
-      const ch = $new('select');
-      [['assistant', '助手子对话（统一）· 默认'], ['gateway', '网关令牌（OpenAI 兼容）'], ['mock', '模拟模式（离线）']].forEach(([v, l]) => {
-        const op = $new('option', null, l); op.value = v; if (settings.channel === v) op.selected = true; ch.appendChild(op);
-      });
-      body.appendChild(ch);
-      body.appendChild($new('label', null, '聊天模型（助手通道）'));
-      const mdl = $new('select');
-      CHAT_MODELS.forEach(m => {
-        const op = $new('option', null, m.label);
-        op.value = m.provider + '|' + m.model;
-        if (settings.chatProvider === m.provider && settings.chatModel === m.model) op.selected = true;
-        mdl.appendChild(op);
-      });
-      body.appendChild(mdl);
-      body.appendChild($new('h4', null, '额度显示'));
-      body.appendChild($new('label', null, '剩余额度（元，自填可选；填了余额报告会带上）'));
-      const quota = $new('input'); quota.type = 'number'; quota.min = '0'; quota.step = '0.01';
-      quota.value = Number(settings.quota) > 0 ? String(settings.quota) : '';
-      body.appendChild(quota);
-      body.appendChild($new('label', null, '每元积分（积分制换算，后端 1000 分 = 1 元）'));
-      const py = $new('input'); py.type = 'number'; py.min = '1'; py.step = '1';
-      py.value = perYuanCredits();
-      body.appendChild(py);
-      body.appendChild($new('h4', null, '网关 / 身份牌（内部通道用不到，可留空）'));
-      body.appendChild($new('label', null, '网关 baseURL（只有 sk- 开头的 API Key 才需要；内部通道看助手额度，不用填）'));
-      const gb = $new('input'); gb.type = 'text'; gb.placeholder = 'https://.../v1（可留空）'; gb.value = settings.gatewayBase || '';
-      body.appendChild(gb);
-      body.appendChild($new('label', null, '网关令牌（只存本浏览器 localStorage，不进日志）'));
-      const gk = $new('input'); gk.type = 'password';
-      gk.placeholder = '留空即可 ｜ sk-xxxx（网关 API Key）｜ jxai-姓名-设备号（内部通道身份牌）';
-      gk.value = settings.gatewayKey || '';
-      body.appendChild(gk);
-      // v3.1.0 令牌格式识别：即时告诉用户填的是什么、余额从哪来
-      const tkHint = $new('div', 'pb2-hint', tokenHint(gk.value));
-      const tkExtra = $new('div', 'pb2-hint');
-      body.appendChild(tkHint); body.appendChild(tkExtra);
-      const refreshTokenHint = () => {
-        const t = parseGatewayToken(gk.value);
-        tkHint.textContent = tokenHint(gk.value);
-        tkExtra.textContent = '';
-        if (t.kind === 'inner') {
-          const used = settings.nickname === t.name;
-          const b = chipBtn(used ? '昵称已是「' + t.name + '」' : '用「' + t.name + '」当昵称', false, () => {
-            settings.nickname = t.name; saveSettings();
-            b.textContent = '昵称已是「' + t.name + '」';
-            bubbleSay('身份牌收到！以后叫你 ' + t.name + '～', 2800);
-          });
-          tkExtra.appendChild(b);
+  /* ================= v5.3 设置拆分：通用 / 聊天 / 声音 =================
+   * 之前「聊天设置…」和「声音设置…」指向同一个巨型弹窗（20 个字段横跨四个领域）。
+   * 现在按"这设置属于谁"分三处：
+   *   通用设置：连接与额度（通道/模型/额度/网关/身份牌）+ 桌宠（大小/形变/称呼/监控/余额格式/开场白）
+   *   聊天设置：聊天外观与内容入口（角色人设、台词开场白、常用语、表情包、会话管理、两个行为开关）
+   *   声音设置：只放声音（语音播报全项 + 音效 + 语音闲聊入口）
+   * 三个弹窗各自保存自己那部分，互不影响；分组标题统一（左侧蓝条）。 */
+
+  /** 连接与额度（通道 / 模型 / 额度 / 网关身份牌）——通用设置第一组 */
+  function buildConnFields(body) {
+    const F = {};
+    body.appendChild($new('h4', null, '连接与额度'));
+    body.appendChild($new('label', null, '聊天通道'));
+    const ch = $new('select');
+    [['assistant', '助手子对话（统一）· 默认'], ['gateway', '网关令牌（OpenAI 兼容）'], ['mock', '模拟模式（离线）']].forEach(([v, l]) => {
+      const op = $new('option', null, l); op.value = v; if (settings.channel === v) op.selected = true; ch.appendChild(op);
+    });
+    body.appendChild(ch); F.ch = ch;
+    body.appendChild($new('label', null, '聊天模型（助手通道）'));
+    const mdl = $new('select');
+    CHAT_MODELS.forEach(m => {
+      const op = $new('option', null, m.label);
+      op.value = m.provider + '|' + m.model;
+      if (settings.chatProvider === m.provider && settings.chatModel === m.model) op.selected = true;
+      mdl.appendChild(op);
+    });
+    body.appendChild(mdl); F.mdl = mdl;
+    body.appendChild($new('label', null, '剩余额度（元，自填可选；填了余额报告会带上）'));
+    const quota = $new('input'); quota.type = 'number'; quota.min = '0'; quota.step = '0.01';
+    quota.value = Number(settings.quota) > 0 ? String(settings.quota) : '';
+    body.appendChild(quota); F.quota = quota;
+    body.appendChild($new('label', null, '每元积分（积分制换算，后端 1000 分 = 1 元）'));
+    const py = $new('input'); py.type = 'number'; py.min = '1'; py.step = '1';
+    py.value = perYuanCredits();
+    body.appendChild(py); F.py = py;
+    return F;
+  }
+
+  /** 网关 / 身份牌 —— 通用设置第二组 */
+  function buildGatewayFields(body) {
+    const F = {};
+    body.appendChild($new('h4', null, '网关 / 身份牌（内部通道用不到，可留空）'));
+    body.appendChild($new('label', null, '网关 baseURL（只有 sk- 开头的 API Key 才需要）'));
+    const gb = $new('input'); gb.type = 'text'; gb.placeholder = 'https://.../v1（可留空）'; gb.value = settings.gatewayBase || '';
+    body.appendChild(gb); F.gb = gb;
+    body.appendChild($new('label', null, '网关令牌 / 身份牌（只存本浏览器，不进日志）'));
+    const gk = $new('input'); gk.type = 'password';
+    gk.placeholder = '留空即可 ｜ sk-xxxx（网关 API Key）｜ jxai-姓名-设备号（内部通道身份牌）';
+    gk.value = settings.gatewayKey || '';
+    body.appendChild(gk); F.gk = gk;
+    const tkHint = $new('div', 'pb2-hint', '');
+    const tkExtra = $new('div', 'pb2-chiprow');
+    body.appendChild(tkHint); body.appendChild(tkExtra);
+    const refreshTokenHint = () => {
+      const t = parseGatewayToken(gk.value);
+      tkHint.textContent = tokenHint(gk.value);
+      tkExtra.textContent = '';
+      if (t.kind === 'inner') {
+        const used = settings.nickname === t.name;
+        tkExtra.appendChild(chipBtn(used ? '昵称已是「' + t.name + '」' : '用「' + t.name + '」当昵称', false, () => {
+          settings.nickname = t.name; saveSettings();
+          bubbleSay('身份牌收到！以后叫你 ' + t.name + '～', 2800);
+          refreshTokenHint();
+        }));
+      }
+    };
+    gk.addEventListener('input', refreshTokenHint);
+    refreshTokenHint();
+    body.appendChild($new('label', null, '网关模型名'));
+    const gm = $new('input'); gm.type = 'text'; gm.placeholder = 'deepseek-chat'; gm.value = settings.gatewayModel || '';
+    body.appendChild(gm); F.gm = gm;
+    return F;
+  }
+
+  /** 桌宠本体（大小 / 形变 / 称呼 / 监控 / 余额格式 / 开场白）——通用设置第三组 */
+  function buildPetFields(body) {
+    const F = {};
+    body.appendChild($new('h4', null, '桌宠'));
+    body.appendChild($new('label', null, '我的称呼（它这么叫你；留空＝让它自己从聊天里认）'));
+    const nickRow = $new('div', 'pb2-row');
+    const nickInp = $new('input'); nickInp.type = 'text';
+    nickInp.placeholder = '例如：阳哥';
+    nickInp.value = String(settings.nickname || '');
+    nickInp.style.flex = '1 1 auto';
+    const nickClear = chipBtn('清空', false, () => {
+      nickInp.value = '';
+      settings.nickname = ''; settings.nicknameLock = false;
+      saveSettings(); sfx('tap');
+      bubbleSay('称呼清空啦，以后我重新认～', 2600);
+    });
+    nickRow.appendChild(nickInp); nickRow.appendChild(nickClear);
+    body.appendChild(nickRow); F.nickInp = nickInp;
+    body.appendChild($new('label', null, '大小（40–200 px，桌宠显示宽度）'));
+    const sizeRange = $new('input'); sizeRange.type = 'range';
+    sizeRange.min = '40'; sizeRange.max = '200'; sizeRange.step = '4';
+    sizeRange.value = String(clamp(Number(settings.size) || 96, 40, 200));
+    body.appendChild(sizeRange); F.sizeRange = sizeRange;
+    const sizeHint = $new('div', 'pb2-hint', '当前：' + (Number(settings.size) || 96) + ' px');
+    sizeRange.addEventListener('input', () => { sizeHint.textContent = '当前：' + sizeRange.value + ' px'; });
+    body.appendChild(sizeHint);
+    body.appendChild($new('label', null, '互动形变（点桌宠时像弹簧压一下）'));
+    const jellySel = $new('select');
+    [['1', '开启（果冻挤压）'], ['0', '关闭']].forEach(([v, l]) => {
+      const op = $new('option', null, l); op.value = v;
+      if ((settings.jellyOn !== false ? '1' : '0') === v) op.selected = true;
+      jellySel.appendChild(op);
+    });
+    body.appendChild(jellySel); F.jellySel = jellySel;
+    body.appendChild($new('label', null, 'BongoCat 式鼠标/键盘监控（女仆/自定义皮肤：爪子跟随鼠标、按键弹键帽）'));
+    const mon = $new('select');
+    [['1', '开启（页面聚焦时生效）'], ['0', '关闭']].forEach(([v, l]) => {
+      const op = $new('option', null, l); op.value = v;
+      if ((settings.monitor !== false ? '1' : '0') === v) op.selected = true;
+      mon.appendChild(op);
+    });
+    body.appendChild(mon); F.mon = mon;
+    body.appendChild($new('label', null, '余额气泡格式（点一下桌宠时怎么念账）'));
+    const balStyleSel = $new('select');
+    [['short', '简洁：还剩 X 分（约 Y 元）· 今日 +N 分'],
+     ['detail', '详细：剩余/总额/已用 + 今日 + 估算明细'],
+     ['playful', '傲娇：大肥鱼口吻，带一句嘴碎']].forEach(([v, l]) => {
+      const op = $new('option', null, l); op.value = v;
+      if (balanceStyleId() === v) op.selected = true;
+      balStyleSel.appendChild(op);
+    });
+    body.appendChild(balStyleSel); F.balStyleSel = balStyleSel;
+    body.appendChild($new('label', null, '开场白（启动第一句；{greet} {nickname} 可用）'));
+    const greetingInp = $new('input'); greetingInp.type = 'text';
+    greetingInp.placeholder = '留空＝默认';
+    greetingInp.value = String(settings.greeting || '');
+    body.appendChild(greetingInp); F.greetingInp = greetingInp;
+    return F;
+  }
+
+  /* ---- 通用设置：连接与额度 + 网关身份牌 + 桌宠 ---- */
+  function openGeneralSettings() {
+    openDialog('通用设置', body => {
+      const F = Object.assign(buildConnFields(body), buildGatewayFields(body), buildPetFields(body));
+      openDialog._gen = F;
+    }, [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: () => {
+        const f = openDialog._gen; if (!f) return;
+        settings.channel = f.ch.value;
+        const pm = f.mdl.value.split('|');
+        if (settings.chatProvider !== pm[0] || settings.chatModel !== pm[1]) {
+          settings.chatProvider = pm[0]; settings.chatModel = pm[1];
+          localStorage.removeItem(CHAT_LS_SID);   // 换模型 → 重建统一子对话
         }
-      };
-      gk.addEventListener('input', refreshTokenHint);
-      refreshTokenHint();
-      body.appendChild($new('label', null, '网关模型名'));
-      const gm = $new('input'); gm.type = 'text'; gm.placeholder = 'deepseek-chat'; gm.value = settings.gatewayModel || '';
-      body.appendChild(gm);
-      body.appendChild($new('label', null, 'BongoCat 式鼠标/键盘监控（女仆/自定义皮肤：爪子跟随鼠标、按键弹键帽）'));
-      const mon = $new('select');
-      [['1', '开启（页面聚焦时生效）'], ['0', '关闭']].forEach(([v, l]) => {
-        const op = $new('option', null, l); op.value = v;
-        if ((settings.monitor !== false ? '1' : '0') === v) op.selected = true;
-        mon.appendChild(op);
-      });
-      body.appendChild(mon);
-      body.appendChild($new('label', null, '桌宠 · 我的称呼（它这么叫你；留空=让它自己猜）'));
-      const nickRow = $new('div', 'pb2-row');
-      const nickInp = $new('input'); nickInp.type = 'text';
-      nickInp.placeholder = '例如：阳哥';
-      nickInp.value = String(settings.nickname || '');
-      nickInp.style.flex = '1 1 auto';
-      const nickClear = $new('button', null, '清空'); nickClear.type = 'button';
-      nickClear.title = '清掉称呼，并允许它以后自己从聊天里认';
-      nickClear.addEventListener('click', () => {
-        nickInp.value = '';
-        settings.nickname = ''; settings.nicknameLock = false;
-        saveSettings(); sfx('tap');
-        bubbleSay('称呼清空啦，以后我重新认～', 2600);
-      });
-      nickRow.appendChild(nickInp); nickRow.appendChild(nickClear);
-      body.appendChild(nickRow);
-      body.appendChild($new('label', null, '桌宠 · 大小（40–200 px，桌宠显示宽度）'));
-      const sizeRange = $new('input'); sizeRange.type = 'range';
-      sizeRange.min = '40'; sizeRange.max = '200'; sizeRange.step = '4';
-      sizeRange.value = String(clamp(Number(settings.size) || 96, 40, 200));
-      body.appendChild(sizeRange);
-      const sizeHint = $new('div', 'pb2-hint', '当前：' + (Number(settings.size) || 96) + ' px');
-      sizeRange.addEventListener('input', () => { sizeHint.textContent = '当前：' + sizeRange.value + ' px'; });
-      body.appendChild(sizeHint);
-      body.appendChild($new('label', null, '桌宠 · 互动形变（点桌宠时像弹簧压一下）'));
-      const jellySel = $new('select');
-      [['1', '开启（果冻挤压）'], ['0', '关闭']].forEach(([v, l]) => {
-        const op = $new('option', null, l); op.value = v;
-        if ((settings.jellyOn !== false ? '1' : '0') === v) op.selected = true;
-        jellySel.appendChild(op);
-      });
-      body.appendChild(jellySel);
-      body.appendChild($new('label', null, '桌宠 · 余额气泡格式（点一下桌宠时怎么念账）'));
-      const balStyleSel = $new('select');
-      [['short', '简洁：还剩 X 分（约 Y 元）· 今日 +N 分'],
-       ['detail', '详细：剩余/总额/已用 + 今日 + 估算明细'],
-       ['playful', '傲娇：大肥鱼口吻，带一句嘴碎']].forEach(([v, l]) => {
-        const op = $new('option', null, l); op.value = v;
-        if (balanceStyleId() === v) op.selected = true;
-        balStyleSel.appendChild(op);
-      });
-      body.appendChild(balStyleSel);
-      body.appendChild($new('label', null, '桌宠 · 开场白（启动第一句；{greet} {nickname} 可用）'));
-      const greetingInp = $new('input'); greetingInp.type = 'text';
-      greetingInp.placeholder = '留空＝默认';
-      greetingInp.value = String(settings.greeting || '');
-      body.appendChild(greetingInp);
-      body.appendChild($new('label', null, '声音 · 语音播报（聊天回复念出来）'));
+        settings.quota = Number(f.quota.value) || 0;
+        settings.perYuan = Number(f.py.value) > 0 ? Number(f.py.value) : 1000;
+        settings.gatewayBase = f.gb.value.trim();
+        settings.gatewayKey = f.gk.value;
+        settings.gatewayModel = f.gm.value.trim();
+        settings.nickname = String(f.nickInp.value || '').trim();
+        settings.nicknameLock = !!settings.nickname;
+        settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
+        settings.jellyOn = f.jellySel.value === '1';
+        settings.monitor = f.mon.value === '1';
+        settings.balanceStyle = f.balStyleSel.value;
+        settings.greeting = f.greetingInp.value.trim();
+        CREDITS_CACHE = { at: 0, data: null };   // 换算/凭据变更 → 立即重取
+        saveSettings(); applyMonitor(); refreshLayout();
+        bubbleSay('设置好了～', 2000);
+      } },
+    ]);
+  }
+
+  /* ---- 声音设置：只有声音（语音播报 + 音效 + 语音闲聊） ---- */
+  function openSoundSettings() {
+    openDialog('声音设置', body => {
+      body.appendChild($new('h4', null, '语音播报（聊天回复念出来）'));
+      body.appendChild($new('label', null, '语音播报'));
       const spOn = $new('select');
       [['1', '开启'], ['0', '关闭（不说话）']].forEach(([v, l]) => {
         const op = $new('option', null, l); op.value = v;
@@ -2207,27 +2266,7 @@
         spOn.appendChild(op);
       });
       body.appendChild(spOn);
-      body.appendChild($new('label', null, '声音 · bibo音色（合成器声线，影响「语调引导 / 经典合成」）'));
-      const spVoice = $new('select');
-      Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
-        const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
-        if ((settings.speechVoice || 'fish') === k) op.selected = true;
-        spVoice.appendChild(op);
-      });
-      body.appendChild(spVoice);
-      body.appendChild($new('label', null, '声音 · 音量'));
-      const spVol = $new('input'); spVol.type = 'range'; spVol.min = '0'; spVol.max = '1'; spVol.step = '0.05';
-      spVol.value = String(speechVolume());
-      body.appendChild(spVol);
-      body.appendChild($new('label', null, '声音 · 语速（每字间隔秒，越小越快）'));
-      const spStep = $new('input'); spStep.type = 'range'; spStep.min = '0.08'; spStep.max = '0.3'; spStep.step = '0.01';
-      spStep.value = String(clamp(Number(settings.speechStep) || 0.13, 0.08, 0.3));
-      body.appendChild(spStep);
-      body.appendChild($new('label', null, '声音 · 单次朗读上限（字，超出截断）'));
-      const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
-      spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
-      body.appendChild(spMax);
-      body.appendChild($new('label', null, '声音 · 风格（引导＝经典音色+按真人语调选音；普通朗读＝直接用真人声）'));
+      body.appendChild($new('label', null, '朗读模式（引导＝经典音色+按真人语调选音；普通朗读＝直接用真人声）'));
       const spFollow = $new('select');
       [['guided', '语调引导（还是哔哔啵啵的音色，音高贴真人语调）'],
        ['classic', '经典合成（完全按字，音高固定几档）'],
@@ -2237,7 +2276,15 @@
         spFollow.appendChild(op);
       });
       body.appendChild(spFollow);
-      body.appendChild($new('label', null, '声音 · 朗读音色（宿主 TTS 的音色，影响「普通朗读」）'));
+      body.appendChild($new('label', null, 'bibo音色（合成器声线，影响「语调引导 / 经典合成」）'));
+      const spVoice = $new('select');
+      Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
+        const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
+        if ((settings.speechVoice || 'fish') === k) op.selected = true;
+        spVoice.appendChild(op);
+      });
+      body.appendChild(spVoice);
+      body.appendChild($new('label', null, '朗读音色（宿主 TTS 音色，影响「普通朗读」）'));
       const ttsVoiceSel = $new('select');
       const buildVoiceOptions = () => {
         ttsVoiceSel.textContent = '';
@@ -2257,29 +2304,42 @@
       buildVoiceOptions();
       body.appendChild(ttsVoiceSel);
       fetchTtsVoices().then(() => buildVoiceOptions());   // 拿到宿主音色表后刷新一次
-      body.appendChild($new('label', null, '声音 · 朗读语速（0.5–2，1 为正常）'));
+      body.appendChild($new('label', null, '合成音量（语调引导 / 经典合成用了 bibo 音色时生效）'));
+      const spVol = $new('input'); spVol.type = 'range'; spVol.min = '0'; spVol.max = '1'; spVol.step = '0.05';
+      spVol.value = String(speechVolume());
+      body.appendChild(spVol);
+      body.appendChild($new('label', null, '合成语速（每字间隔秒，越小越快）'));
+      const spStep = $new('input'); spStep.type = 'range'; spStep.min = '0.08'; spStep.max = '0.3'; spStep.step = '0.01';
+      spStep.value = String(clamp(Number(settings.speechStep) || 0.12, 0.08, 0.3));
+      body.appendChild(spStep);
+      body.appendChild($new('label', null, '朗读语速（0.5–2，1 为正常，TTS 真人声）'));
       const ttsRateInp = $new('input'); ttsRateInp.type = 'number';
       ttsRateInp.min = '0.5'; ttsRateInp.max = '2'; ttsRateInp.step = '0.1';
       ttsRateInp.value = String(clamp(Number(settings.ttsRate) || 1, 0.5, 2));
       body.appendChild(ttsRateInp);
-      const probe = $new('button', null, '试听一句'); probe.type = 'button';      probe.addEventListener('click', () => { // 先落盘当前值再试听，听到的即保存后的效果
+      body.appendChild($new('label', null, '单次朗读上限（字，超出截断）'));
+      const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
+      spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
+      body.appendChild(spMax);
+      const probeRow = $new('div', 'pb2-chiprow');
+      probeRow.appendChild(chipBtn('试听这一句', true, () => {   // 先落盘当前值，听到的即保存后的效果
         settings.speechOn = spOn.value === '1';
-        settings.speechVoice = spVoice.value;
-        settings.speechVolume = Number(spVol.value);
-        settings.speechStep = Number(spStep.value) || 0.13;
-        settings.speechMaxChars = Number(spMax.value) || 60;
-        settings.balanceStyle = balStyleSel.value;
-        settings.greeting = greetingInp.value.trim();
         settings.speechMode = spFollow.value;
         settings.speechFollow = spFollow.value !== 'classic';
+        settings.speechVoice = spVoice.value;
         settings.ttsVoice = ttsVoiceSel.value;
+        settings.speechVolume = Number(spVol.value);
+        settings.speechStep = Number(spStep.value) || 0.12;
         settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
-        speechApplyVolume(); saveSettings();
-        ttsCache.clear(); trackCache.clear();   // 换风格/音色/语速后，缓存作废
-        speechProbe('哼哼，本小姐的声线，就是这个味道吧？');
-      });
-      body.appendChild(probe);
-      body.appendChild($new('label', null, '音效 · 开关（点桌宠 / 弹面板 / 拖拽吸附 / 听写提示）'));
+        settings.speechMaxChars = Number(spMax.value) || 60;
+        speechApplyVolume(); ttsCache.clear(); trackCache.clear(); saveSettings();
+        speechUnlock(); speechProbe(probeText());
+      }));
+      probeRow.appendChild(chipBtn('改试听文本…', false, () => { closeDialog(); openProbeTextEditor(); }));
+      body.appendChild(probeRow);
+      /* 音效 */
+      body.appendChild($new('h4', null, '音效（点桌宠、弹面板、拖拽吸附…）'));
+      body.appendChild($new('label', null, '音效开关'));
       const sfxOnSel = $new('select');
       [['1', '开启'], ['0', '关闭']].forEach(([v, l]) => {
         const op = $new('option', null, l); op.value = v;
@@ -2287,62 +2347,117 @@
         sfxOnSel.appendChild(op);
       });
       body.appendChild(sfxOnSel);
-      body.appendChild($new('label', null, '音效 · 音量（与语音音量独立）'));
+      body.appendChild($new('label', null, '音效音量（与语音音量独立）'));
       const sfxVol = $new('input'); sfxVol.type = 'range'; sfxVol.min = '0'; sfxVol.max = '1'; sfxVol.step = '0.05';
       sfxVol.value = String(sfxVolume());
       body.appendChild(sfxVol);
-      const sfxProbe = $new('button', null, '试听音效'); sfxProbe.type = 'button';
-      sfxProbe.addEventListener('click', () => { // 先落盘当前值，再连着把五个音效响一遍
+      const sfxRow = $new('div', 'pb2-chiprow');
+      sfxRow.appendChild(chipBtn('试听音效', false, () => {
         settings.sfxOn = sfxOnSel.value === '1';
         settings.sfxVolume = Number(sfxVol.value);
         sfxApplyVolume(); saveSettings();
         ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320));
-      });
-      body.appendChild(sfxProbe);
-      body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
-      body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceSel, ttsRateInp, balStyleSel, greetingInp, sfxOnSel, sfxVol };
+      }));
+      body.appendChild(sfxRow);
+      /* 语音闲聊 */
+      body.appendChild($new('h4', null, '语音闲聊'));
+      const viRow = $new('div', 'pb2-chiprow');
+      viRow.appendChild(chipBtn('开始语音闲聊（按住 ' + VI_HOTKEY_LABEL + '）', false, () => { closeDialog(); voiceChatByButton(); }));
+      body.appendChild(viRow);
+      body.appendChild($new('div', 'pb2-hint',
+        '按住「' + VI_HOTKEY_LABEL + '」说话、松开就发给我（助手窗口要在前台）；也可以点上面的按钮，说完静音 2 秒自动收尾。' +
+        '听写用宿主「语音」组件的本地离线模型。左 Alt 是助手自带的听写，本插件不占用。' +
+        '浏览器策略：没有用户手势时不会自动出声，点一下桌宠即可解锁。'));
+      body.appendChild($new('div', 'pb2-hint',
+        '积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道，默认走这条，不用填令牌）；' +
+        '② sk- 开头的网关 API Key；③ 通用设置里自填额度。'));
+      openDialog._snd = { spOn, spFollow, spVoice, ttsVoiceSel, spVol, spStep, ttsRateInp, spMax, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
-          const f = openDialog._fields; if (!f) return;
-          settings.channel = f.ch.value;
-          const pm = f.mdl.value.split('|');
-          if (settings.chatProvider !== pm[0] || settings.chatModel !== pm[1]) {
-            settings.chatProvider = pm[0]; settings.chatModel = pm[1];
-            localStorage.removeItem(CHAT_LS_SID); // 换模型 → 重建统一子对话
-          }
-          settings.quota = Number(f.quota.value) || 0;
-          settings.perYuan = Number(f.py.value) > 0 ? Number(f.py.value) : 1000;
-          settings.gatewayBase = f.gb.value.trim();
-          settings.gatewayKey = f.gk.value;
-          settings.gatewayModel = f.gm.value.trim();
-          settings.monitor = f.mon.value === '1';
-          settings.speechOn = f.spOn.value === '1';
-          settings.speechVoice = f.spVoice.value;
-          settings.speechVolume = Number(f.spVol.value);
-          settings.speechStep = Number(f.spStep.value) || 0.13;
-          settings.speechMaxChars = Number(f.spMax.value) || 60;
-          settings.nickname = String(f.nickInp.value || '').trim();
-          settings.nicknameLock = !!settings.nickname;
-          settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
-          settings.jellyOn = f.jellySel.value === '1';
-          settings.balanceStyle = f.balStyleSel.value;
-          settings.greeting = f.greetingInp.value.trim();
-          settings.speechMode = f.spFollow.value;
-          settings.speechFollow = f.spFollow.value !== 'classic';
-          settings.ttsVoice = f.ttsVoiceSel.value;
-          settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
-          settings.sfxOn = f.sfxOnSel.value === '1';
-          settings.sfxVolume = Number(f.sfxVol.value);
-          speechApplyVolume();
-          sfxApplyVolume();
-          ttsCache.clear(); trackCache.clear();
-          CREDITS_CACHE = { at: 0, data: null }; // 换算/凭据变更 → 立即重取
-          saveSettings(); applyMonitor(); bubbleSay('设置好了～', 2000);
-        } },
+        const f = openDialog._snd; if (!f) return;
+        settings.speechOn = f.spOn.value === '1';
+        settings.speechMode = f.spFollow.value;
+        settings.speechFollow = f.spFollow.value !== 'classic';
+        settings.speechVoice = f.spVoice.value;
+        settings.ttsVoice = f.ttsVoiceSel.value;
+        settings.speechVolume = Number(f.spVol.value);
+        settings.speechStep = Number(f.spStep.value) || 0.12;
+        settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
+        settings.speechMaxChars = Number(f.spMax.value) || 60;
+        settings.sfxOn = f.sfxOnSel.value === '1';
+        settings.sfxVolume = Number(f.sfxVol.value);
+        speechApplyVolume(); sfxApplyVolume();
+        ttsCache.clear(); trackCache.clear();
+        saveSettings(); bubbleSay('设置好了～', 2000);
+      } },
     ]);
   }
+
+  /* ---- 聊天设置：聊天外观与内容入口 ---- */
+  function openChatSettings() {
+    openDialog('聊天设置', body => {
+      body.appendChild($new('h4', null, '人设与台词'));
+      body.appendChild($new('div', 'pb2-hint', '它是什么性格、怎么说话、开场第一句说什么——都在这里改。'));
+      const r1 = $new('div', 'pb2-chiprow');
+      r1.appendChild(chipBtn('角色设定…', false, () => { closeDialog(); openPersonaEditor(); }));
+      r1.appendChild(chipBtn('台词与开场白…', false, () => { closeDialog(); openLineEditor(); }));
+      body.appendChild(r1);
+      body.appendChild($new('h4', null, '内容库'));
+      body.appendChild($new('div', 'pb2-hint', '常用语（点「说」就念出来）与表情包（内置 67 张 + 自定义，可批量导入导出）。'));
+      const r2 = $new('div', 'pb2-chiprow');
+      r2.appendChild(chipBtn('常用语…', false, () => { closeDialog(); openPhraseBook(); }));
+      r2.appendChild(chipBtn('表情包管理…', false, () => { closeDialog(); openStickerManager(); }));
+      body.appendChild(r2);
+      body.appendChild($new('h4', null, '聊天行为'));
+      body.appendChild($new('label', null, '双击桌宠：就地输入框（关掉则双击不出输入框）'));
+      const dbl = $new('select');
+      [['1', '开启'], ['0', '关闭']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.quickChat !== false ? '1' : '0') === v) op.selected = true;
+        dbl.appendChild(op);
+      });
+      body.appendChild(dbl);
+      body.appendChild($new('label', null, '双击/面板的聊天记录互通（双击聊的内容会同步进气泡面板）'));
+      const sync = $new('select');
+      [['1', '开启（推荐）'], ['0', '关闭（面板只看自己在面板里聊的）']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.chatSync !== false ? '1' : '0') === v) op.selected = true;
+        sync.appendChild(op);
+      });
+      body.appendChild(sync);
+      body.appendChild($new('label', null, '气泡面板里的消息最多留几条（超出只清面板显示，会话记录不动）'));
+      const keep = $new('input'); keep.type = 'number'; keep.min = '10'; keep.max = '200'; keep.step = '10';
+      keep.value = String(clamp(Math.round(Number(settings.chatKeep) || 60), 10, 200));
+      body.appendChild(keep);
+      body.appendChild($new('h4', null, '会话'));
+      const sid = deliverSid();
+      body.appendChild($new('div', 'pb2-hint', '当前用的是一个助手子对话（双击、气泡面板、独立窗口共用同一份记录）：' + (sid ? sid : '（还没建，首次聊天时自动创建）')));
+      const r3 = $new('div', 'pb2-chiprow');
+      r3.appendChild(chipBtn('查看思考过程', false, () => { closeDialog(); openLogViewer(); }));
+      r3.appendChild(chipBtn('重置会话（下次聊天重新建）', false, () => {
+        try { localStorage.removeItem(CHAT_LS_SID); } catch (e) { /* 忽略 */ }
+        if (chatpMsgs) chatpMsgs.textContent = '';
+        chatpLastSeq = 0;
+        bubbleSay('会话重置啦，下次聊天我重新认识你～', 3200);
+      }));
+      body.appendChild(r3);
+      body.appendChild($new('div', 'pb2-hint', '玩法：双击就地聊、右键「气泡聊天」开面板；面板里能发内置与自定义表情。'));
+      openDialog._chat = { dbl, sync, keep };
+    }, [
+      { label: '关闭' },
+      { label: '保存', primary: true, onClick: () => {
+        const f = openDialog._chat; if (!f) return;
+        settings.quickChat = f.dbl.value === '1';
+        settings.chatSync = f.sync.value === '1';
+        settings.chatKeep = clamp(Math.round(Number(f.keep.value) || 60), 10, 200);
+        saveSettings();
+        if (chatpSync) chatpSync();   // 同步开关变了，立刻按新设置刷一次
+        bubbleSay('设置好了～', 2000);
+      } },
+    ]);
+  }
+
 
   /* ---- 思考过程查看器 ---- */
   function openLogViewer() {
@@ -2528,8 +2643,15 @@
     else row.textContent = text;
     if (kind === 'pet') renderDeliverables(row, text, DELIV_ACT);   // v4.4：成果卡片（打开文件 / 定位文件夹）
     chatpMsgs.appendChild(row);
+    chatpTrimMsgs();                                                // v5.3：按设置裁掉过老的消息（只影响显示）
     chatpMsgs.scrollTop = chatpMsgs.scrollHeight;
     return row;
+  }
+  /** v5.3：气泡面板最多留 settings.chatKeep 条（会话记录不动，只是面板显示裁短） */
+  function chatpTrimMsgs() {
+    if (!chatpMsgs) return;
+    const keep = clamp(Math.round(Number(settings.chatKeep) || 60), 10, 200);
+    while (chatpMsgs.childElementCount > keep) chatpMsgs.removeChild(chatpMsgs.firstElementChild);
   }
 
   /* ---- v4.5 双击闲聊 ↔ 气泡聊天联动 ----
@@ -2560,6 +2682,7 @@
   /** 从会话记录拉增量补进面板；返回是否成功（false → 调用方保留乐观条目） */
   async function chatpSync() {
     if (!chatp || !chatpMsgs || chatpSyncing) return false;
+    if (settings.chatSync === false) return false;   // v5.3：关掉互通就不从会话记录补历史
     const sid = deliverSid();
     if (!sid) return false;
     chatpSyncing = true;

@@ -227,7 +227,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '5.2.0';
+const PB_VERSION = '5.3.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -271,6 +271,10 @@ const CHAT_MODELS = [
     walkSpeed: 'normal',     // slow 慢悠悠 | normal 正常 | fast 小跑
     /* v4.8 表情包：自定义贴纸（本机，可批量导入导出）；元素是 dataUrl，用 custom:<下标> 引用 */
     customStickers: [],
+    /* v5.3 设置分类后的新开关：聊天行为 */
+    quickChat: true,         // 双击桌宠：就地输入框
+    chatSync: true,          // 双击闲聊与气泡面板的聊天记录互通
+    chatKeep: 60,            // 气泡面板最多保留几条消息（只影响显示）
     /* v3.2 声音：播报走本地合成（bibibobo 声线），听写走宿主语音组件的本地离线模型 */
     speechOn: true,          // 语音播报开关（聊天回复念出来）
     speechVolume: 0.5,       // 音量 0..1
