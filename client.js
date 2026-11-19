@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.8.0';
+const PB_VERSION = '3.9.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -195,6 +195,7 @@ const CHAT_MODELS = [
     sfxOn: true,             // 交互音效开关
     sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
     hiddenSkins: [],         // v3.7 被移除的内置皮肤 id（可从模型面板恢复）
+    deletedSkins: [],        // v3.9 被"彻底删除"的皮肤 id（永久，不再出现在恢复列表）
     /* v3.8 开场白与余额格式 */
     greeting: '',            // 自定义开场白（空=默认；支持 {greet} 时段问候、{nickname} 昵称）
     balanceStyle: 'short',   // 余额气泡格式：short 简洁 / detail 详细 / playful 傲娇
@@ -1872,9 +1873,18 @@ const CHAT_MODELS = [
   }
 
   function extractNickname(text) {
-    const m = text.match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/);
-    if (m && m[1] && !/谁|什么|干嘛|哦|吗|吧|了|的/.test(m[1])) { settings.nickname = m[1]; saveSettings(); return m[1]; }
-    return null;
+    // v3.9：① 用户在设置里手动设过称呼 → 锁定，不再被聊天内容改掉
+    //         ② 只认「我叫/我是/叫我/喊我」+ 2~6 字，且名字里不能有虚词/代词/动词
+    //         （之前的 1~12 字太宽，"我是我们建个营销群嘛"这种会被截成一句垃圾当名字）
+    if (settings.nicknameLock) return null;
+    const m = String(text == null ? '' : text).match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{2,6})/);
+    if (!m || !m[1]) return null;
+    const name = m[1];
+    if (/[谁什么干嘛哦吗吧呢嘛啊呀了吧的了着过我们你们他们它们这那哪个说想要把让给和跟在有没不就都也还又很太你我他建群聊]/.test(name)) return null;
+    if (/^[们的个建是说想]/.test(name)) return null;
+    const old = settings.nickname;
+    settings.nickname = name; saveSettings();
+    return old === name ? null : name;
   }
   const BAL_RE = /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|账单|今日花费/;
 
@@ -2351,6 +2361,7 @@ const CHAT_MODELS = [
     if (e.button !== 0) return;
     speechUnlock(); // v3.2：点桌宠就是用户手势——顺手解锁音频（之后自动播报才出声）
     sfx('tap');     // v3.3：点桌宠一声「啵」
+    jellyPulse();   // v3.9：配合音效做一下果冻挤压（可在菜单里关）
     const startL = parseFloat(petWrap.style.left) || 0;
     const startB = parseFloat(petWrap.style.bottom) || 0;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, startL, startB, moved: false, downAt: Date.now() };
@@ -2425,6 +2436,39 @@ const CHAT_MODELS = [
     // 260ms 等待可能的第二次点击（双击）
     if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; onPetDoubleClick(); return; }
     clickTimer = setTimeout(() => { clickTimer = null; onPetSingleClick(); }, 260);
+  }
+
+  /* v3.9：互动形变（果冻挤压）——点一下桌宠像弹簧那样压一下，配合点击音效 */
+  let jellyTimer = null;
+  function jellyPulse() {
+    if (settings.jellyOn === false) return;
+    petWrap.classList.remove('pb2-jelly');
+    // 强制回流，保证连续点击也能重新播动画
+    void petWrap.offsetWidth;
+    petWrap.classList.add('pb2-jelly');
+    if (jellyTimer) clearTimeout(jellyTimer);
+    jellyTimer = setTimeout(() => petWrap.classList.remove('pb2-jelly'), 460);
+  }
+  /** 桌宠大小档位（菜单里循环；设置面板里还有无级滑块） */
+  const PET_SIZES = [
+    { label: '小', size: 72 },
+    { label: '中', size: 96 },
+    { label: '大', size: 128 },
+    { label: '特大', size: 168 },
+  ];
+  function petSizeLabel() {
+    const cur = Number(settings.size) || 96;
+    let best = PET_SIZES[1], bestD = Infinity;
+    PET_SIZES.forEach(x => { const d = Math.abs(x.size - cur); if (d < bestD) { bestD = d; best = x; } });
+    return best.label + '（' + cur + 'px）';
+  }
+  function cyclePetSize() {
+    const cur = Number(settings.size) || 96;
+    let i = PET_SIZES.findIndex(x => Math.abs(x.size - cur) < 6);
+    if (i < 0) i = 1;
+    settings.size = PET_SIZES[(i + 1) % PET_SIZES.length].size;
+    saveSettings(); refreshLayout(); sfx('tap');
+    bubbleSay('桌宠大小：' + petSizeLabel(), 2200);
   }
 
   /* ---- 单击：余额气泡 ---- */
@@ -2657,11 +2701,13 @@ const CHAT_MODELS = [
     { icon: 'bell', label: 'bibo音效', sub: [
       { icon: 'bell', label: () => '音效：' + (settings.sfxOn !== false ? '开' : '关'), act: () => toggleSfx(), keepOpen: true },
       { icon: 'speed', label: () => '音效音量：' + Math.round(sfxVolume() * 100) + '%', act: () => cycleSfxVolume(), keepOpen: true },
+      { icon: 'talk', label: () => '互动形变：' + (settings.jellyOn !== false ? '开（果冻挤压）' : '关'), act: () => toggleJelly(), keepOpen: true },
       { icon: 'speaker', label: '试听音效', act: () => { speechUnlock(); ['tap', 'pop', 'drop', 'ok', 'err'].forEach((n, i) => setTimeout(() => sfx(n, { force: true }), i * 320)); } },
     ] },
     { icon: 'mask', label: '桌宠', sub: [
       { icon: 'mask', label: '修改模型…', act: openModelPicker },
       { icon: 'note', label: '角色设定…', act: openPersonaEditor },
+      { icon: 'pin', label: () => '大小：' + petSizeLabel(), act: () => cyclePetSize(), keepOpen: true },
       { icon: 'pin', label: '位置重置', act: () => { settings.pos = null; saveSettings(); refreshLayout(); bubbleSay('回到窝啦～', 2200); } },
       { icon: 'chat', label: () => '余额格式：' + balanceStyleLabel(), act: () => cycleBalanceStyle(), keepOpen: true },
       { icon: 'note', label: '开场白…', act: openGreetingEditor },
@@ -2796,7 +2842,14 @@ const CHAT_MODELS = [
     speechProbe('这个速度，跟得上吗？');
   }
 
-  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */  function toggleSfx() {
+  /** 一键开关音效（菜单里用；改完给一声反馈：切到开时响一下） */
+  function toggleJelly() {
+    settings.jellyOn = settings.jellyOn === false;
+    saveSettings();
+    if (settings.jellyOn) { jellyPulse(); sfx('pop', { force: true }); bubbleSay('互动形变开啦，再点我一下试试～', 2400); }
+    else bubbleSay('互动形变关掉了（音效还在）', 2200);
+  }
+  function toggleSfx() {
     settings.sfxOn = settings.sfxOn === false;
     saveSettings();
     if (settings.sfxOn) { sfx('pop', { force: true }); bubbleSay('音效开啦，听见没？', 2200); }
@@ -3048,7 +3101,8 @@ const CHAT_MODELS = [
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
       const hidden = Array.isArray(settings.hiddenSkins) ? settings.hiddenSkins : [];
-      body.appendChild($new('h4', null, '内置模型（可移除，移除后可恢复）'));
+      const deleted = Array.isArray(settings.deletedSkins) ? settings.deletedSkins : [];
+      body.appendChild($new('h4', null, '内置模型（可移除/彻底删除）'));
       const grid = $new('div', 'pb2-model-grid');
       const allBuiltin = Object.keys(SPRITE_SKINS).map(id => ({
         id,
@@ -3063,7 +3117,7 @@ const CHAT_MODELS = [
         thumb: assetUrl(IMAGE_SKINS[id].file),
         contain: true,
       })));
-      const builtin = allBuiltin.filter(m => hidden.indexOf(m.id) < 0);
+      const builtin = allBuiltin.filter(m => hidden.indexOf(m.id) < 0 && deleted.indexOf(m.id) < 0);
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
         const th = $new('div', 'pb2-model-thumb');
@@ -3089,6 +3143,33 @@ const CHAT_MODELS = [
           openModelPicker();
         });
         acts.appendChild(del);
+        // v3.9：彻底删除（永久从列表消失；素材文件仍在本机插件目录，面板里会告知文件名）
+        const wipe = $new('button', 'pb2-model-act pb2-model-del', '彻底删除');
+        wipe.type = 'button';
+        wipe.title = '永久移除该模型（不再出现在恢复列表）';
+        wipe.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const file = SPRITE_SKINS[m.id] ? SPRITE_SKINS[m.id].file : (IMAGE_SKINS[m.id] ? IMAGE_SKINS[m.id].file : '');
+          openDialog('彻底删除「' + m.name + '」？', b2 => {
+            b2.appendChild($new('div', 'pb2-hint',
+              '删除后这个模型**永久**从列表消失（不会出现在「恢复已移除」里）。' +
+              (file ? '素材文件 ' + file + ' 仍在插件目录（…\\插件兼容层\\pet-buddy\\），想连文件一起清掉就在文件夹里删它。' : '') +
+              '要暂时收起来的话，用「移除」就够了。'));
+          }, [
+            { label: '算了' },
+            { label: '确认彻底删除', primary: true, onClick: () => {
+              const list = Array.isArray(settings.deletedSkins) ? settings.deletedSkins.slice() : [];
+              if (list.indexOf(m.id) < 0) list.push(m.id);
+              settings.deletedSkins = list;
+              settings.hiddenSkins = (settings.hiddenSkins || []).filter(x => x !== m.id);
+              if (settings.skin === m.id) { settings.skin = 'fish'; applySkin(); refreshLayout(); }
+              saveSettings(); sfx('err');
+              bubbleSay('「' + m.name + '」已彻底删除' + (file ? '（素材 ' + file + ' 可手动删）' : ''), 4200);
+              setTimeout(() => openModelPicker(), 60);
+            } },
+          ]);
+        });
+        acts.appendChild(wipe);
         card.appendChild(th); card.appendChild(info); card.appendChild(acts);
         card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
         grid.appendChild(card);
@@ -3267,6 +3348,38 @@ const CHAT_MODELS = [
         mon.appendChild(op);
       });
       body.appendChild(mon);
+      body.appendChild($new('label', null, '桌宠 · 我的称呼（它这么叫你；留空=让它自己猜）'));
+      const nickRow = $new('div', 'pb2-row');
+      const nickInp = $new('input'); nickInp.type = 'text';
+      nickInp.placeholder = '例如：阳哥';
+      nickInp.value = String(settings.nickname || '');
+      nickInp.style.flex = '1 1 auto';
+      const nickClear = $new('button', null, '清空'); nickClear.type = 'button';
+      nickClear.title = '清掉称呼，并允许它以后自己从聊天里认';
+      nickClear.addEventListener('click', () => {
+        nickInp.value = '';
+        settings.nickname = ''; settings.nicknameLock = false;
+        saveSettings(); sfx('tap');
+        bubbleSay('称呼清空啦，以后我重新认～', 2600);
+      });
+      nickRow.appendChild(nickInp); nickRow.appendChild(nickClear);
+      body.appendChild(nickRow);
+      body.appendChild($new('label', null, '桌宠 · 大小（40–200 px，桌宠显示宽度）'));
+      const sizeRange = $new('input'); sizeRange.type = 'range';
+      sizeRange.min = '40'; sizeRange.max = '200'; sizeRange.step = '4';
+      sizeRange.value = String(clamp(Number(settings.size) || 96, 40, 200));
+      body.appendChild(sizeRange);
+      const sizeHint = $new('div', 'pb2-hint', '当前：' + (Number(settings.size) || 96) + ' px');
+      sizeRange.addEventListener('input', () => { sizeHint.textContent = '当前：' + sizeRange.value + ' px'; });
+      body.appendChild(sizeHint);
+      body.appendChild($new('label', null, '桌宠 · 互动形变（点桌宠时像弹簧压一下）'));
+      const jellySel = $new('select');
+      [['1', '开启（果冻挤压）'], ['0', '关闭']].forEach(([v, l]) => {
+        const op = $new('option', null, l); op.value = v;
+        if ((settings.jellyOn !== false ? '1' : '0') === v) op.selected = true;
+        jellySel.appendChild(op);
+      });
+      body.appendChild(jellySel);
       body.appendChild($new('label', null, '桌宠 · 余额气泡格式（点一下桌宠时怎么念账）'));
       const balStyleSel = $new('select');
       [['short', '简洁：还剩 X 分（约 Y 元）· 今日 +N 分'],
@@ -3406,6 +3519,10 @@ const CHAT_MODELS = [
           settings.speechVolume = Number(f.spVol.value);
           settings.speechStep = Number(f.spStep.value) || 0.13;
           settings.speechMaxChars = Number(f.spMax.value) || 60;
+          settings.nickname = String(f.nickInp.value || '').trim();
+          settings.nicknameLock = !!settings.nickname;
+          settings.size = clamp(Number(f.sizeRange.value) || 96, 40, 200);
+          settings.jellyOn = f.jellySel.value === '1';
           settings.balanceStyle = f.balStyleSel.value;
           settings.greeting = f.greetingInp.value.trim();
           settings.speechMode = f.spFollow.value;
@@ -3489,8 +3606,7 @@ const CHAT_MODELS = [
     close.title = '收起来（右键 →「气泡聊天」可再打开）';
     close.addEventListener('click', () => { chatp.hidden = true; sfx('tap'); });
     head.appendChild(close);
-    chatp.appendChild(head);
-    chatpMsgs = $new('div', 'pb2-chatp-msgs');
+    chatp.appendChild(head);    chatpMsgs = $new('div', 'pb2-chatp-msgs');
     chatp.appendChild(chatpMsgs);
     const foot = $new('div', 'pb2-chatp-foot');
     chatpInput = $new('input');
@@ -3502,6 +3618,37 @@ const CHAT_MODELS = [
     chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });
     foot.appendChild(chatpInput); foot.appendChild(chatpBtn);
     chatp.appendChild(foot);
+    /* v3.9：标题栏可拖动（记住位置，下次打开还在原处） */
+    const savedPos = settings.chatpPos || null;
+    if (savedPos && savedPos.left != null) {
+      chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
+      chatp.style.left = savedPos.left + 'px'; chatp.style.top = savedPos.top + 'px';
+    }
+    let dragging = false, dragDx = 0, dragDy = 0;
+    head.addEventListener('pointerdown', ev => {
+      if (ev.target === close) return;
+      dragging = true;
+      const r = chatp.getBoundingClientRect();
+      dragDx = ev.clientX - r.left; dragDy = ev.clientY - r.top;
+      chatp.style.right = 'auto'; chatp.style.bottom = 'auto';
+      chatp.style.left = r.left + 'px'; chatp.style.top = r.top + 'px';
+      try { head.setPointerCapture(ev.pointerId); } catch (e) { /* 老内核 */ }
+    });
+    head.addEventListener('pointermove', ev => {
+      if (!dragging) return;
+      const w = chatp.offsetWidth, h = chatp.offsetHeight;
+      const x = clamp(ev.clientX - dragDx, 4, Math.max(4, window.innerWidth - w - 4));
+      const y = clamp(ev.clientY - dragDy, 4, Math.max(4, window.innerHeight - h - 4));
+      chatp.style.left = x + 'px'; chatp.style.top = y + 'px';
+    });
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      settings.chatpPos = { left: Math.round(parseFloat(chatp.style.left) || 0), top: Math.round(parseFloat(chatp.style.top) || 0) };
+      saveSettings(); sfx('tap');
+    };
+    head.addEventListener('pointerup', endDrag);
+    head.addEventListener('pointercancel', endDrag);
     document.body.appendChild(chatp);
     chatpAdd('sys', '（试试问我余额还剩多少～）');
     setTimeout(() => { try { chatpInput.focus(); } catch (e) { /* 同上 */ } }, 60);
@@ -3565,7 +3712,7 @@ const CHAT_MODELS = [
       setSkin: (id) => { settings.skin = id; saveSettings(); applySkin(); refreshLayout(); },
       settingsRef: settings,
       openChatPanel, cycleSfxVolume, speechMode,
-      cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel,
+      cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel, cyclePetSize, petSizeLabel, jellyPulse, toggleJelly,
       synthPaced, speechSegments, pauseOf, fetchTtsVoices, ttsVoiceLabel, cycleTtsVoice, ttsVoiceList,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,

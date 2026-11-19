@@ -80,9 +80,18 @@
   }
 
   function extractNickname(text) {
-    const m = text.match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/);
-    if (m && m[1] && !/谁|什么|干嘛|哦|吗|吧|了|的/.test(m[1])) { settings.nickname = m[1]; saveSettings(); return m[1]; }
-    return null;
+    // v3.9：① 用户在设置里手动设过称呼 → 锁定，不再被聊天内容改掉
+    //         ② 只认「我叫/我是/叫我/喊我」+ 2~6 字，且名字里不能有虚词/代词/动词
+    //         （之前的 1~12 字太宽，"我是我们建个营销群嘛"这种会被截成一句垃圾当名字）
+    if (settings.nicknameLock) return null;
+    const m = String(text == null ? '' : text).match(/(?:我叫|我是|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{2,6})/);
+    if (!m || !m[1]) return null;
+    const name = m[1];
+    if (/[谁什么干嘛哦吗吧呢嘛啊呀了吧的了着过我们你们他们它们这那哪个说想要把让给和跟在有没不就都也还又很太你我他建群聊]/.test(name)) return null;
+    if (/^[们的个建是说想]/.test(name)) return null;
+    const old = settings.nickname;
+    settings.nickname = name; saveSettings();
+    return old === name ? null : name;
   }
   const BAL_RE = /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|账单|今日花费/;
 

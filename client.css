@@ -241,3 +241,30 @@
   background: linear-gradient(180deg,#5b8cff,#4a7bf0); transition: transform .1s ease, opacity .15s; }
 .pb2-chatp-foot button:hover { transform: translateY(-1px); }
 .pb2-chatp-foot button:disabled { opacity: .6; cursor: default; transform: none; }
+
+/* ===== v3.9 气泡聊天：可拖动 + 表情图不再撑爆 ===== */
+.pb2-chatp-head { cursor: move; user-select: none; touch-action: none; }
+.pb2-chatp-close { cursor: pointer; }
+/* 贴纸/图片统一限尺寸（480px 的贴纸原图会把气泡撑爆，之前就是这样显示不出来） */
+.pb2-chatp-msg img { max-width: 118px; max-height: 118px; width: auto; height: auto; object-fit: contain;
+  border-radius: 8px; vertical-align: middle; }
+.pb2-chatp-msg .pb2-sticker, .pb2-chatp-msg .pb2-fish { display: inline-block; max-width: 118px; max-height: 118px; }
+.pb2-chatp-msgs { overflow-x: hidden; }
+
+/* ===== v3.9 互动形变（果冻挤压）：点桌宠时像弹簧那样压一下 ===== */
+@keyframes pb2-jelly {
+  0%   { transform: scale(1, 1); }
+  18%  { transform: scale(1.06, .93); }
+  38%  { transform: scale(.96, 1.05); }
+  58%  { transform: scale(1.03, .975); }
+  78%  { transform: scale(.99, 1.012); }
+  100% { transform: scale(1, 1); }
+}
+.pb2-pet-wrap.pb2-jelly .pb2-viewport,
+.pb2-pet-wrap.pb2-jelly .pb2-img-skin { animation: pb2-jelly .42s cubic-bezier(.34, 1.4, .64, 1) both; transform-origin: bottom center; }
+
+/* 气泡里的贴纸尺寸（桌宠侧原本只有窗口页有这套规则，所以气泡里会被撑到 300px+） */
+.pb2-chatp-msg .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; flex: 0 0 auto; }
+.pb2-chatp-msg .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.png") no-repeat; background-size: 800% 1100%; }
+.pb2-chatp-msg .sticker.bean-st svg { width: 46px; height: 46px; display: block; }
+.pb2-chatp-msg .sticker.stick-st img { max-width: 112px; max-height: 112px; width: auto; height: auto; object-fit: contain; display: block; border-radius: 8px; }

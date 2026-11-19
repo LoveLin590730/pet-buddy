@@ -252,7 +252,32 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[开场白 + 余额三格式 · v3.8]');
+console.log('\n[气泡拖拽 + 贴纸限尺寸 + 大小 + 彻底删除 + 果冻 + 称呼 · v3.9]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const css5 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  ok('气泡面板标题栏可拖动并记住位置', /dragDx/.test(t) && /settings\.chatpPos/.test(t) && /pb2-chatp-head \{ cursor: move/.test(css5));
+  ok('贴纸/图片在气泡里限尺寸（不再撑爆）', /\.pb2-chatp-msg img \{[^}]*max-width: 118px/.test(css5));
+  ok('桌宠大小可调（菜单档位 + 设置滑块）', /function cyclePetSize/.test(t) && /sizeRange/.test(t) && /settings\.size = clamp/.test(t));
+  ok('大小档位含 小/中/大/特大', /label: '小', size: 72/.test(t) && /label: '特大', size: 168/.test(t));
+  ok('彻底删除（deletedSkins，永久）', /deletedSkins/.test(t) && /彻底删除/.test(t));
+  ok('已彻底删除的不再出现在列表', /deleted\.indexOf\(m\.id\) < 0/.test(t));
+  ok('互动形变（果冻）与开关', /function jellyPulse/.test(t) && /@keyframes pb2-jelly/.test(css5) && /function toggleJelly/.test(t));
+  ok('果冻形变幅度较小（0.93~1.06 区间）', /scale\(1\.06, \.93\)/.test(css5) && !/scale\(1\.[2-9]/.test(css5));
+  // 称呼
+  ok('称呼提取收紧到 2~6 字且排除虚词', /\[\\u4e00-\\u9fa5A-Za-z0-9_·\]\{2,6\}/.test(readFileSync(path.join(ROOT, 'src/core/chat.js'), 'utf8')));
+  ok('手动设过称呼后锁定，不再被聊天改掉', /nicknameLock/.test(t));
+  const before = P.settings.nickname;
+  P.settings.nicknameLock = false;
+  eq('“我是阳哥”能认出来', P.extractNickname('我是阳哥'), '阳哥');
+  eq('“我们建个营销群嘛”不会被当成名字', P.extractNickname('我是我们建个营销群嘛'), null);
+  eq('“我是谁”不会被当成名字', P.extractNickname('我是谁'), null);
+  P.settings.nickname = '阳哥'; P.settings.nicknameLock = true;
+  eq('锁定后聊天里改不动', P.extractNickname('我是小明'), null);
+  eq('锁定期间称呼保持不变', P.settings.nickname, '阳哥');
+  P.settings.nickname = before; P.settings.nicknameLock = false;
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   ok('余额格式三种（简洁/详细/傲娇）', /id: 'short'/.test(t) && /id: 'detail'/.test(t) && /id: 'playful'/.test(t));
