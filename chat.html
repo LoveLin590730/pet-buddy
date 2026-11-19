@@ -202,7 +202,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.4.0';
+const PB_VERSION = '3.4.1';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -244,9 +244,10 @@ const CHAT_MODELS = [
     speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
     speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
     speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
-    /* v3.4 韵律跟读：宿主后端 TTS（/api/voice/tts）先读一遍，量出语调/轻重/口型再"重唱"——
-       比经典合成（一个字一声）更像真人说话；TTS 不可用时自动回退经典合成 */
-    speechFollow: true,      // true=韵律跟读；false=经典合成
+    /* v3.4 语调引导：宿主后端 TTS（/api/voice/tts）先把句子真读一遍，
+       量出**每一句/每个字的真人音高**，再到声线音阶里挑最接近的那个音——结构与音色仍是经典合成。
+       比"完全按字哈希定音高"更贴语调；TTS 不可用时自动回退经典合成 */
+    speechFollow: true,      // true=语调引导；false=经典合成
     ttsVoice: '',            // TTS 音色（空=宿主默认，例如 zh-CN-XiaoxiaoNeural）
     ttsRate: 1,              // TTS 语速 0.5..2
     /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */
@@ -1112,7 +1113,118 @@ const CHAT_MODELS = [
     return { f0: f0, rms: rms, vowel: vowel, zcr: zcr };
   }
 
-  /** 按韵律轨"重唱"：锯齿波 + 两个带通（bibibobo 同款内核），逐帧跟随音高 / 口型 / 音量 */
+  /* ---- v3.4.1：把 TTS 用在"选音"上，而不是逐帧重唱 ----
+   * v3.4.0 试过"逐帧照抄 F0 连续重唱"（见文件末尾已弃用的 synthFollow）——听感像跑调，不好听。
+   * 现在改成：**结构、音色、口型全部照经典合成**（一个字一声、声线音阶、按字选口型），
+   * 只把"这个字唱哪个音"从 `hash(字)` 换成"**在声线音阶里挑最接近真人这一声的那个音**"。
+   * 于是还是那个哔哔啵啵的小人声，但抑扬顿挫跟着真人语调走（疑问上扬、重音突出都能听出来）。 */
+
+  /** 在声线音阶里挑一个最接近目标频率的音；shift = 整体平移的半音数（不传则自动试一个八度内） */
+  function pickScaleMidi(f0, scale, shift) {
+    const sc = (scale && scale.length) ? scale : VOICES.fish.scale;
+    if (!(f0 > 0)) return sc[0];
+    const target = 69 + 12 * Math.log2(f0 / 440);   // Hz → MIDI
+    const shifts = (shift === undefined || shift === null) ? [-12, 0, 12] : [shift];
+    let best = sc[0], bestD = Infinity;
+    for (const s of sc) {
+      for (const sh of shifts) {
+        const d = Math.abs(s + sh - target);
+        if (d < bestD) { bestD = d; best = s + sh; }
+      }
+    }
+    return best;
+  }
+
+  /** 整句统一的八度平移量：真人音域（~100–350Hz）比这些"小人声线"（~660–1050Hz）低得多，
+   *  必须整句一起挪，才能在保留**相对**音高走向的同时让每个音都落在音阶上（否则全被吸到同一个音）。 */
+  function guidedShift(f0list, scale) {
+    const sc = (scale && scale.length) ? scale : VOICES.fish.scale;
+    const targets = (f0list || []).filter(v => v > 0).map(v => 69 + 12 * Math.log2(v / 440));
+    if (!targets.length) return -12;
+    let bestShift = -12, bestErr = Infinity;
+    for (const sh of [-24, -12, 0, 12, 24]) {
+      let err = 0;
+      for (const t of targets) {
+        let near = Infinity;
+        for (const s of sc) near = Math.min(near, Math.abs(s + sh - t));
+        err += near;
+      }
+      err /= targets.length;
+      if (err < bestErr) { bestErr = err; bestShift = sh; }
+    }
+    return bestShift;
+  }
+
+  /** 把一串目标音高"放进音阶"：按**相对句中位**的高低去选档。
+   *  真人音域（一两百 Hz 到三百多 Hz，跨度常在 15 个半音以上）比这些小人声线（5 档、跨度 8 个半音）宽得多，
+   *  直接按绝对值挑最近音，会把大半的字都挤到同一个音上（起伏全丢）——
+   *  所以这里只映射**相对走向**：比句中位高就往上选，低就往下选，形状留住、幅度略微夸张一点更可爱。 */
+  function guidedPickList(f0list, scale) {
+    const sc = (scale && scale.length) ? scale : VOICES.fish.scale;
+    const mid = (sc.length - 1) / 2;
+    const vals = (f0list || []).map(v => (v > 0 ? 69 + 12 * Math.log2(v / 440) : NaN));
+    const ok = vals.filter(v => !isNaN(v));
+    if (!ok.length) return vals.map(() => sc[Math.round(mid)]);
+    const sorted = ok.slice().sort((a, b) => a - b);
+    const pct = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * p)))];
+    const med = pct(0.5);
+    const span = Math.max(5, (pct(0.9) - pct(0.1)) / 2);   // 自适应幅度
+    return vals.map(v => {
+      if (isNaN(v)) return sc[Math.round(mid)];
+      const d = clamp(((v - med) / span) * 1.25, -1, 1);
+      return sc[clamp(Math.round(mid + d * mid), 0, sc.length - 1)];
+    });
+  }
+
+  /** 每个字的"目标音高"：把 TTS 判为浊音的帧按字数等分，每段取中位基频 */
+  function guidedTargets(track, count) {
+    const res = new Array(Math.max(0, count)).fill(0);
+    const frames = (track && track.frames) || [];
+    const voiced = [];
+    for (const f of frames) if (f.f0 > 0) voiced.push(f.f0);
+    if (!voiced.length || count <= 0) return res;
+    const per = Math.max(1, Math.floor(voiced.length / count));
+    for (let i = 0; i < count; i++) {
+      const seg = voiced.slice(i * per, i === count - 1 ? voiced.length : (i + 1) * per);
+      if (!seg.length) continue;
+      const sorted = seg.slice().sort((a, b) => a - b);
+      res[i] = sorted[Math.floor(sorted.length / 2)];
+    }
+    return res;
+  }
+
+  /** 语调引导合成：结构/音色/口型全照经典，只有音高按上面的"选音"来 */
+  function synthGuided(text, track, opts) {
+    const o = opts || {};
+    const v = typeof o.voice === 'object' ? Object.assign({}, VOICES.fish, o.voice) : (VOICES[o.voice || 'fish'] || VOICES.fish);
+    const sampleRate = o.sampleRate || SPEECH_SR;
+    const step = o.step || v.step;
+    const gap = o.gap === undefined ? 0.22 : o.gap;
+    const sentences = (String(text).match(/[^？?！!。.，,、；;…\n]+[？?！!。.，,、；;…]*/g) || [])
+      .map(s => ({ text: s, tk: syllables(s) })).filter(s => s.tk.length);
+    const totalTk = sentences.reduce((n, s) => n + s.tk.length, 0) || 1;
+    const targets = guidedTargets(track, totalTk);
+    const mids = guidedPickList(targets, v.scale);          // 按相对走向选档（不是绝对值）
+    const total = sentences.reduce((n, s) => n + s.tk.length * step + gap, 0) + 0.4;
+    const out = new Float32Array(Math.ceil(total * sampleRate));
+    let t = 0.02, k = 0;
+    for (const { text: s, tk } of sentences) {
+      const ask = /[？?]$/.test(s), shout = /[！!]/.test(s), sad = /(……|\.\.\.|…)$/.test(s);
+      tk.forEach((w, i) => {
+        const last = i === tk.length - 1;
+        const m = (mids[k++] !== undefined ? mids[k - 1] : v.scale[0]) + (shout ? 3 : 0) - (sad ? 3 : 0);
+        const dur = Math.min(step * v.hold, v.maxDur) + (last && (ask || shout || sad) ? 0.1 : 0);
+        voice(out, sampleRate, t + i * step, m, dur, v,
+          last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0,
+          hash(w));   // 口型仍按字来，保持经典听感
+      });
+      t += tk.length * step + gap;
+    }
+    for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * 2.4);
+    return out;
+  }
+
+  /* 已弃用（v3.4.1）：逐帧照抄 F0 的连续重唱，听感像跑调——保留代码只作对照，默认路径不再用它。 */
   function synthFollow(track, opts) {
     const o = opts || {};
     const v = VOICES[o.voice || 'fish'] || VOICES.fish;
@@ -1186,7 +1298,15 @@ const CHAT_MODELS = [
           if (trackCache.size >= TTS_CACHE_MAX) trackCache.delete(trackCache.keys().next().value);
           trackCache.set(text, track);
         }
-        if (track.frames.length > 2) { samples = synthFollow(track, { voice: settings.speechVoice || 'fish' }); via = 'follow'; }
+        if (track.frames.length > 2) {
+          // v3.4.1：用"语调引导"（经典音色 + 按真人语调选音），不再用连续重唱
+          samples = synthGuided(text, track, {
+            voice: settings.speechVoice || 'fish',
+            step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4),
+            sampleRate: SPEECH_SR,
+          });
+          via = 'guided';
+        }
       } catch (e) {
         log('info', '韵律跟读不可用，改用经典合成：' + (e && e.message ? e.message : e));
       }

@@ -961,9 +961,9 @@
       const spMax = $new('input'); spMax.type = 'number'; spMax.min = '4'; spMax.max = '400'; spMax.step = '1';
       spMax.value = String(clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400));
       body.appendChild(spMax);
-      body.appendChild($new('label', null, '声音 · 风格（跟读＝照 TTS 的真人语调唱；经典＝一个字一声）'));
+      body.appendChild($new('label', null, '声音 · 风格（引导＝经典音色 + 按真人语调选音；经典＝完全按字）'));
       const spFollow = $new('select');
-      [['1', '韵律跟读（更像真人说话，用宿主「语音」组件的 TTS）'], ['0', '经典合成（一个字一声，纯离线）']].forEach(([v, l]) => {
+      [['1', '语调引导（还是哔哔啵啵的音色，音高贴真人语调）'], ['0', '经典合成（完全按字，音高固定几档）']].forEach(([v, l]) => {
         const op = $new('option', null, l); op.value = v;
         if ((settings.speechFollow !== false ? '1' : '0') === v) op.selected = true;
         spFollow.appendChild(op);
@@ -1113,7 +1113,7 @@
       sfxApplyVolume, isSpriteSkin, toggleSfx, buildMenu, MENU_ITEMS,
       verifySkinImage, spriteSkinClass,
       mixToMono, resampleLinear, prosodyTrack, analyzeFrame, synthFollow, ttsPcm, trackCache, ttsCache,
-      synth, toWav,
+      synth, toWav, synthGuided, guidedTargets, guidedPickList, pickScaleMidi, VOICES,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

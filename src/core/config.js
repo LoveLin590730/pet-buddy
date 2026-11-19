@@ -9,7 +9,7 @@
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.4.0';
+const PB_VERSION = '3.4.1';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -51,9 +51,10 @@ const CHAT_MODELS = [
     speechStep: 0.13,        // 语速（每个字的间隔秒数，0.13 = 默认）
     speechVoice: 'fish',     // 声线：fish（大肥鱼·高）| lumo（路墨·低）
     speechMaxChars: 60,      // 单次朗读上限字数（超出截断加省略号）
-    /* v3.4 韵律跟读：宿主后端 TTS（/api/voice/tts）先读一遍，量出语调/轻重/口型再"重唱"——
-       比经典合成（一个字一声）更像真人说话；TTS 不可用时自动回退经典合成 */
-    speechFollow: true,      // true=韵律跟读；false=经典合成
+    /* v3.4 语调引导：宿主后端 TTS（/api/voice/tts）先把句子真读一遍，
+       量出**每一句/每个字的真人音高**，再到声线音阶里挑最接近的那个音——结构与音色仍是经典合成。
+       比"完全按字哈希定音高"更贴语调；TTS 不可用时自动回退经典合成 */
+    speechFollow: true,      // true=语调引导；false=经典合成
     ttsVoice: '',            // TTS 音色（空=宿主默认，例如 zh-CN-XiaoxiaoNeural）
     ttsRate: 1,              // TTS 语速 0.5..2
     /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */

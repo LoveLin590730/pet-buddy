@@ -67,7 +67,8 @@ const probe = `
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
-  analyzeFrame, prosodyTrack, synthFollow, resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
+  analyzeFrame, prosodyTrack, synthFollow, synthGuided, guidedTargets, guidedPickList, pickScaleMidi,
+  resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
   SPRITE_SKINS, isSpriteSkin, spriteSkinClass, spriteSkinUrl, ASSET_SPRITE_CODEX, IMAGE_SKINS, isImageSkin,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
@@ -206,10 +207,43 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('口型档有区分（过零率映射）', vowels.size >= 1);
 
   const out = P.synthFollow(track, { voice: 'fish' });
-  ok('重唱长度跟随输入时长（±10%）', Math.abs(out.length - 44100) / 44100 < 0.12, out.length + ' 采样');
-  let peak = 0, bad = 0;
-  for (let i = 0; i < out.length; i++) { const a = Math.abs(out[i]); if (a > peak) peak = a; if (!(a <= 1)) bad++; }
-  ok('重唱输出峰值归一、不越界', peak > 0.5 && peak <= 1.001 && bad === 0, 'peak=' + peak.toFixed(3));
+  ok('（已弃用的连续重唱仍在库里，仅作对照）', out.length > 0);
+  // v3.4.1 默认路径：语调引导（在声线音阶里按相似度选音）
+  eq('选音：659Hz 落在声线音阶的 E5(76)', P.pickScaleMidi(659.3, P.VOICES.fish.scale), 76);
+  eq('选音：最接近的音高被选中（800Hz → G5=79）', P.pickScaleMidi(800, P.VOICES.fish.scale), 79);
+  ok('选音：没有可用音高时回落到音阶首音', P.pickScaleMidi(0, P.VOICES.fish.scale) === P.VOICES.fish.scale[0]);
+  ok('选音：允许整体平移一个八度贴合低音色', P.pickScaleMidi(330, P.VOICES.fish.scale) < P.VOICES.fish.scale[0], String(P.pickScaleMidi(330, P.VOICES.fish.scale)));
+  {
+    // 相对走向映射：高低起伏要留得住（真实语音常跨 15+ 半音，音阶只有 8 个半音）
+    const list = P.guidedPickList([310, 320, 210, 130, 110, 175, 115, 145, 175, 138, 100], P.VOICES.fish.scale);
+    eq('选音按字数逐个给出', list.length, 11);
+    ok('高音字落在音阶高处、低音字落在低处（形状留住了）', list[0] > list[4] && list[1] >= list[4], JSON.stringify(list));
+    ok('用到了多档音高（不是全挤在一个音上）', new Set(list).size >= 3, '档数=' + new Set(list).size);
+    ok('全部落在声线音阶内', list.every((m) => P.VOICES.fish.scale.indexOf(m) >= 0));
+    const flat = P.guidedPickList([200, 200, 200], P.VOICES.fish.scale);
+    ok('没有起伏时落在中间档', new Set(flat).size === 1 && flat[0] === P.VOICES.fish.scale[Math.round((P.VOICES.fish.scale.length - 1) / 2)], JSON.stringify(flat));
+  }
+  const tg = P.guidedTargets(track, 4);
+  ok('按字数把 TTS 的浊音段分成目标音高（取中位）', tg.length === 4 && tg.every((v) => v > 100 && v < 400), JSON.stringify(tg.map((v) => Math.round(v))));
+  const g = P.synthGuided('今天吃白饭？没饭了！', track, { voice: 'fish' });
+  ok('引导合成产出与经典同规格的音频', g.length > 44100 * 0.5 && g.length < 44100 * 6, g.length + ' 采样');
+  {
+    let pk = 0, bad = 0;
+    for (let i = 0; i < g.length; i++) { const a = Math.abs(g[i]); if (a > pk) pk = a; if (!(a <= 1)) bad++; }
+    ok('引导合成值域正常（软限幅内）', pk > 0.05 && bad === 0, 'peak=' + pk.toFixed(3));
+  }
+  {
+    // 有起伏的语调应当产出有起伏的音高；平坦的语调则落在同一个音（这正是"选音"的语义）
+    const mk = (f0s) => ({ hopSec: 0.02, durSec: 1, frames: f0s.map((f) => ({ f0: f, rms: 0.2, vowel: 0 })) });
+    const rising = mk([120, 140, 170, 210, 250, 300, 330, 330]);
+    const flatLine = mk([200, 200, 200, 200, 200, 200, 200, 200]);
+    const a1 = P.synthGuided('白饭', rising, { voice: 'fish' });
+    const a2 = P.synthGuided('白饭', flatLine, { voice: 'fish' });
+    ok('有起伏的语调 → 与平坦语调不同的音高走向', a1.some((v, i) => Math.abs(v - (a2[i] || 0)) > 0.01));
+    ok('平坦语调 → 两字同音（不硬造起伏）', P.guidedPickList([200, 200], P.VOICES.fish.scale).every((m, _, arr) => m === arr[0]));
+  }
+  ok('默认路径走的是引导合成（不再是连续重唱）',
+    /synthGuided\(text, track/.test(readFileSync(path.join(ROOT, 'src/core/speech.js'), 'utf8')));
 
   ok('跟读默认开启，且可配置音色/语速', P.DEFAULTS.speechFollow === true && P.DEFAULTS.ttsVoice === '' && P.DEFAULTS.ttsRate === 1);
   const st = P.speechState();
@@ -228,7 +262,7 @@ console.log('\n[增删改查 · v3.4]');
     /function openPhraseBook/.test(t) && /'添加'/.test(t) && /'说'/.test(t) && /'改'/.test(t) && /'删'/.test(t));
   ok('常用语上限 30 条且去重', /最多 30 条/.test(t) && /arr\.some\(x => x\.text === t\)/.test(t));
   ok('菜单里有「常用语…」入口', /常用语…/.test(t));
-  ok('设置面板有「风格」下拉（跟读 / 经典）', /韵律跟读（更像真人说话/.test(t) && /经典合成（一个字一声/.test(t));
+  ok('设置面板有「风格」下拉（语调引导 / 经典）', /语调引导（还是哔哔啵啵的音色/.test(t) && /经典合成（完全按字/.test(t));
 }
 console.log('\n[皮肤：BongoCat 与浮空爪图层 · v3.3.3]');
 {
