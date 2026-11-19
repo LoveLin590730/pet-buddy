@@ -605,10 +605,12 @@
         if (!text) return;
         speechUnlock(); // 用户手势里解锁音频：之后桌宠的自动播报才出得了声
         bubbleSay('……让本小姐想想', 20000);
+        chatpEcho('me', text);   // v4.5：同步进气泡聊天（面板开着就立刻出现；没开则之后打开时补上）
         chatSend(text).then(r => {
           bubbleSay(r.text, Math.max(6000, Math.min(20000, r.text.length * 260)));
           speakReply(r.text); // v3.2：问答闲聊互动 → 桌宠开口说话
-        }).catch(err => { sfx('err'); bubbleSay('出错了：' + err.message, 5000); });
+          chatpSync();        // 把这一问一答补进面板（与面板内发送共用同一份会话记录）
+        }).catch(err => { sfx('err'); bubbleSay('出错了：' + err.message, 5000); chatpSync(); });
       };
       send.addEventListener('click', doSend);
       cancel.addEventListener('click', () => { bubble.hidden = true; });
@@ -1923,29 +1925,83 @@
     return row;
   }
 
+  /* ---- v4.5 双击闲聊 ↔ 气泡聊天联动 ----
+   * 两条入口（双击气泡、面板输入框）发的是**同一个助手子对话**，所以面板的历史直接取会话记录：
+   *   openChatPanel / 每次问答结束 → chatpSync()：拉 GET /api/sessions/{id}/messages，
+   *   把 seq 大于「已渲染游标」的增量补进来（user 侧取【用户说】之后的原话，跳过人设/余额块）。
+   * 发送瞬间先乐观显示（.pb2-temp），正式记录到位再替换——拉不到（离线/模拟模式）就把乐观条目转正，
+   * 保证「消息不会凭空消失」。双击仍是单次气泡（不改交互），内容与面板共用一份记录。 */
+  let chatpLastSeq = 0;       // 已渲染到的最新消息 seq
+  let chatpSyncing = false;   // 防并发
+  let chatpTemps = [];        // 乐观条目（正式记录到位后清掉）
+
+  function chatpTemp(kind, text) {
+    const el = chatpAdd(kind, text);
+    el.classList.add('pb2-temp');
+    chatpTemps.push(el);
+    return el;
+  }
+  function chatpClearTemps() { for (const el of chatpTemps) { try { el.remove(); } catch (e) { /* 已移除 */ } } chatpTemps = []; }
+  function chatpPromoteTemps() { for (const el of chatpTemps) el.classList.remove('pb2-temp'); chatpTemps = []; }
+
+  /** 面板在眼前时才乐观显示（面板没开就什么都不做，之后 sync 会从会话记录补上） */
+  function chatpEcho(kind, text) {
+    if (!chatp || chatp.hidden || !chatpMsgs) return null;
+    return chatpTemp(kind, text);
+  }
+
+  /** 从会话记录拉增量补进面板；返回是否成功（false → 调用方保留乐观条目） */
+  async function chatpSync() {
+    if (!chatp || !chatpMsgs || chatpSyncing) return false;
+    const sid = deliverSid();
+    if (!sid) return false;
+    chatpSyncing = true;
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/messages?limit=40');
+      if (!r.ok) return false;
+      const j = await r.json();
+      const all = (j.messages || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      const fresh = all.filter(m => (m.seq || 0) > chatpLastSeq);
+      if (!fresh.length) return true;                    // 没有新的，也算成功（乐观条目留着）
+      chatpClearTemps();                                 // 正式记录到位 → 临时条目退场
+      for (const m of fresh) {
+        chatpLastSeq = Math.max(chatpLastSeq, m.seq || 0);
+        const mine = m.role === 'user';
+        let text = mine ? sessionUserText(m.text) : String(m.text || '').trim();
+        if (!text) continue;                             // 人设块/注入块不进面板
+        chatpAdd(mine ? 'me' : 'pet', text);
+      }
+      return true;
+    } catch (e) { return false; }
+    finally { chatpSyncing = false; }
+  }
+
   async function chatpSend() {
     const text = (chatpInput.value || '').trim();
     if (!text || chatpBusy) return;
     chatpInput.value = '';
     chatpBusy = true; chatpBtn.disabled = true;
-    chatpAdd('me', text);
-    const typing = chatpAdd('sys', '大肥鱼思考中…');
+    chatpTemp('me', text);
+    chatpTemp('sys', '大肥鱼思考中…');
     try {
       speechUnlock();
       const r = await chatSend(text);
-      typing.remove();
-      chatpAdd('pet', r.text);
       speak(r.text);
+      if (!(await chatpSync())) { chatpPromoteTemps(); chatpAdd('pet', r.text); }
     } catch (e) {
-      typing.remove();
       sfx('err');
-      chatpAdd('pet', '出错了：' + e.message);
+      if (!(await chatpSync())) { chatpPromoteTemps(); chatpAdd('pet', '出错了：' + e.message); }
     } finally { chatpBusy = false; chatpBtn.disabled = false; chatpInput.focus(); }
   }
 
   function openChatPanel() {
     speechUnlock(); sfx('pop');
-    if (chatp) { chatp.hidden = false; try { chatpInput.focus(); } catch (e) { /* 焦点无所谓 */ } return; }
+    if (chatp) {
+      chatp.hidden = false;
+      try { chatpInput.focus(); } catch (e) { /* 焦点无所谓 */ }
+      chatpSync();   // v4.5：每次打开都补上双击闲聊等入口产生的新消息（同一会话记录）
+      return;
+    }
     chatp = $new('div', 'pb2-chatp');
     const head = $new('div', 'pb2-chatp-head');
     const ttl = $new('span', null, '和大肥鱼聊天');
@@ -2010,6 +2066,7 @@
     head.addEventListener('pointercancel', endDrag);
     document.body.appendChild(chatp);
     chatpAdd('sys', '（试试问我余额还剩多少～）');
+    chatpSync();   // v4.5：把会话记录里的历史（含双击闲聊过的）补进面板
     setTimeout(() => { try { chatpInput.focus(); } catch (e) { /* 同上 */ } }, 60);
   }
   function openChatWindow() {

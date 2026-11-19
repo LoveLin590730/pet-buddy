@@ -65,7 +65,7 @@ const probe = `
   FISH_STICKERS, BEAN, ARCHIVE_ALIAS, normSticker, archiveResolve, stickerEl, renderRich, $new, clamp, nowStr, fmtTok,
   isValley, fmtCredits, fmtMoney, perYuanCredits, priceTier, localDateStr,
   parseGatewayToken, tokenHint, fetchCompanyQuota, quotaLine, fetchCredits, todaySpend,
-  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname, nicknameLooksWrong,
+  buildPrompt, periodGreet, hashStr, personaFingerprint, needPersonaFull, markPersonaSent, extractNickname, nicknameLooksWrong, sessionUserText,
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
@@ -140,6 +140,13 @@ ok('buildPrompt 非首轮只带用户消息', !P.buildPrompt('你好', null, fal
 ok('交付文件约定只在首轮人设里（不再每轮重发）',
   P.buildPrompt('你好', null, true).includes('【交付文件】') && !P.buildPrompt('你好', null, false).includes('交付文件'));
 ok('每轮都带用户消息本体', P.buildPrompt('你好', null, false).includes('【用户说】你好'));
+// v4.5：面板拉历史时还原用户原话（兼容新老两种记录格式）
+eq('新版记录：【用户说】之后就是原话', P.sessionUserText('【用户说】下午好啊'), '下午好啊');
+eq('老版记录（v3.x 无前缀）：原样使用', P.sessionUserText('okok'), 'okok');
+eq('首轮人设块不进面板', P.sessionUserText('【桌宠设定·系统级，始终遵守】\n你是…'), '');
+eq('余额块不进面板', P.sessionUserText('【余额】还剩…\n\n【用户说】嗯'), '嗯');
+eq('JSON 注入不进面板', P.sessionUserText('{"env":"# 运行环境快照…"}'), '');
+eq('空串安全', P.sessionUserText(''), '');
 ok('人设指纹首轮需要全量', typeof P.needPersonaFull('smoke-test') === 'string');
 ok('chatSend / 三通道函数就绪', ['chatSend', 'sendViaMock', 'ensureAssistantSession', 'lastAssistantText', 'apiOK'].every(k => typeof P[k] === 'function'));
 ok('离线时 apiOK 返回 false（不抛错）', (await P.apiOK()) === false);
@@ -850,6 +857,15 @@ console.log('\n[v4.3 交付成果卡片]');
     /copyPlainText\(f\.path/.test(delivSrc) && /fallback\(/.test(delivSrc));
   ok('桌宠侧接上宿主交付接口', /delivery\/' \+ action/.test(jsD) && /DELIV_ACT/.test(jsD));
   ok('独立聊天窗口也接上（chat.html）', /delivery\/' \+ action/.test(htmlD) && /__delivAct/.test(htmlD));
+  // v4.5：双击闲聊 ↔ 气泡聊天联动（同一份会话记录）
+  ok('面板从会话记录拉增量（messages 接口 + seq 游标）',
+    /\/messages\?limit=/.test(jsD) && /chatpLastSeq/.test(jsD) && /m\.seq \|\| 0\) > chatpLastSeq/.test(jsD));
+  ok('只取用户原话（跳过首轮人设/余额块）', /sessionUserText/.test(jsD) &&
+    /【用户说】\(\[\\s\\S\]\*\)\$/.test(readFileSync(path.join(ROOT, 'src/core/chat.js'), 'utf8')));
+  ok('双击闲聊把这一问一答同步进面板', /chatpEcho\('me', text\)/.test(jsD) && /chatpSync\(\);\s*\/\/ 把这一问一答补进面板/.test(jsD));
+  ok('打开面板时先补历史', /chatpSync\(\);\s*\/\/ v4\.5：每次打开/.test(jsD) && /\/\/ v4\.5：把会话记录里的历史/.test(jsD));
+  ok('乐观条目：拉不到就把临时的转正（消息不会丢）', /chatpPromoteTemps\(\)/.test(jsD) && /pb2-temp/.test(jsD));
+  ok('临时候态有样式', /\.pb2-chatp-msg\.pb2-temp/.test(readFileSync(path.join(ROOT, 'client.css'), 'utf8')));
 }
 
 console.log('\n[v4.3 动作包（petpack）]');

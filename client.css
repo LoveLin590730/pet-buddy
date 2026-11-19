@@ -342,3 +342,5 @@
 .pb2-bubble .pb2-deliv-path { display: none; }
 .pb2-bubble .pb2-deliv-btn { font-size: 11px; padding: 3px 6px; }
 .pb2-chatp-msg .pb2-deliv-box { margin-top: 6px; }
+/* v4.5：乐观条目（还没落到会话记录里的那一瞬）淡一点，正式记录到位即恢复 */
+.pb2-chatp-msg.pb2-temp { opacity: .72; }

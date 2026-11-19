@@ -111,6 +111,20 @@
   }
   const BAL_RE = /花(了|费|掉|钱)|用了多(少|少钱)|余额|还剩|额度|多少钱|花费|账单|今日花费/;
 
+  /** 从会话记录里还原「用户原话」——气泡聊天面板拉历史时用（v4.5）。
+   *  三种情况都要吃下：① 新版拼了【用户说】前缀 → 取其后的原话；
+   *  ② 老对话（v3.x）没前缀、就是一句原话 → 原样用；
+   *  ③ 人设块 / 余额块 / JSON 注入（env 快照等）→ 返回空串（面板里不该出现这些）。 */
+  function sessionUserText(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (!t) return '';
+    const m = /【用户说】([\s\S]*)$/.exec(t);
+    if (m) return m[1].trim();
+    if (/【(?:桌宠设定|用户资料|表情包标记|交付文件|余额|数字助理派发)/.test(t)) return '';
+    if (/^\{[\s\S]*\}$/.test(t)) return '';                 // JSON 注入（环境快照/模型参数等）
+    return t;
+  }
+
   async function apiOK() {
     try { const r = await fetch('/api/models', { headers: { 'Accept': 'application/json' } }); return r.ok; }
     catch (e) { return false; }
