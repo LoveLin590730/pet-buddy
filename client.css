@@ -252,6 +252,9 @@
   border-color: #8aa8f0; box-shadow: 0 0 0 3px rgba(122,152,240,.16); }
 .pb2-dfoot { padding: 10px 16px 12px; border-top: 1px solid #eef2fb; }
 .pb2-dfoot button { min-width: 76px; padding: 7px 14px; font-size: 13px; }
+/* v4.15：二级弹窗的「← 返回」固定在左下角（右侧按钮照旧右对齐） */
+.pb2-dfoot .pb2-dback { min-width: 0; padding: 6px 12px; font-size: 12.5px; margin-right: 0; }
+.pb2-dfoot-sp { flex: 1 1 auto; }
 /* 内容里成排的小按钮（chip）统一到一行并对齐 */
 .pb2-chiprow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 /* 窄屏（宿主窗口被拉窄时）：铺满、字号略收、卡片转竖向 */
@@ -325,6 +328,8 @@
   transition: background .12s ease, border-color .12s ease, color .12s ease, transform .1s ease; }
 .pb2-mini:hover { background: #eef2fd; border-color: #9db4e8; }
 .pb2-mini:active { transform: translateY(1px); }
+.pb2-mini.pb2-mini-primary { background: #4a68d8; border-color: #4a68d8; color: #fff; }
+.pb2-mini.pb2-mini-primary:hover { background: #3c56c2; border-color: #3c56c2; }
 .pb2-mini.pb2-mini-danger { color: #c0415a; border-color: #edc4cf; background: #fff; }
 .pb2-mini.pb2-mini-danger:hover { background: #fdf1f4; border-color: #e39caf; }
 /* 模型卡：缩略图 + 右侧信息列（名称 / 描述 / 按钮行），按钮一行右对齐不再竖排 */

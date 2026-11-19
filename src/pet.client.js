@@ -713,8 +713,8 @@
       input.type = 'text'; input.maxLength = 500;
       input.placeholder = '跟大肥鱼说点什么…';
       const row = $new('div', 'pb2-bubble-send');
-      const send = $new('button', null, '发送');
-      const cancel = $new('button', null, '取消');
+      const send = $new('button', 'pb2-mini pb2-mini-primary', '发送');
+      const cancel = $new('button', 'pb2-mini', '取消');
       row.appendChild(cancel); row.appendChild(send);
       b.appendChild(input); b.appendChild(row);
       setTimeout(() => input.focus(), 30);
@@ -1141,8 +1141,15 @@
 
   /* ================= 弹窗基建 ================= */
   let dialogMask = null;
+  /* ---- v4.15 弹窗栈：二级弹窗能回退上一级 ----
+   * 之前点「角色设定…」这种入口进二级弹窗后，只能一路关掉再重开（用户反馈）。
+   * 现在 openDialog 打开前会把"当前弹窗的标题/构建函数/按钮"压栈，新弹窗左下角出现「← 返回」，
+   * 点它就把当前弹窗换回上一级（栈内信息重建，状态照旧）。整条链关掉时清空栈。 */
+  const dialogStack = [];
+  let dialogTop = null;      // 当前弹窗的构建信息 {title, bodyBuilder, footButtons}
   function openDialog(title, bodyBuilder, footButtons) {
-    closeDialog();
+    if (dialogMask && dialogTop) dialogStack.push(dialogTop);   // 有上一级 → 记住它
+    closeTopOnly();
     sfx('pop'); // v3.3：面板弹出给一声轻响
     dialogMask = $new('div', 'pb2-mask');
     const dlg = $new('div', 'pb2-dialog');
@@ -1154,16 +1161,44 @@
     const body = $new('div', 'pb2-dbody');
     bodyBuilder(body);
     const foot = $new('div', 'pb2-dfoot');
+    if (dialogStack.length) {                     // 有上一级 → 左下角给「← 返回」
+      const back = $new('button', 'pb2-mini pb2-dback', '← 返回');
+      back.type = 'button';
+      back.title = '回到上一级设置';
+      back.addEventListener('click', () => {
+        const prev = dialogStack.pop();
+        if (!prev) return;
+        closeTopOnly();
+        openDialogNoPush(prev.title, prev.bodyBuilder, prev.footButtons);
+      });
+      foot.appendChild(back);
+      foot.appendChild($new('span', 'pb2-dfoot-sp'));
+    }
     (footButtons || [{ label: '关闭' }]).forEach(cfg => {
-      const btn = $new('button', cfg.primary ? 'pb2-primary' : null, cfg.label);
+      const btn = $new('button', cfg.primary ? 'pb2-primary' : 'pb2-mini', cfg.label);
       btn.addEventListener('click', () => { if (cfg.onClick) { if (cfg.onClick() === false) return; } closeDialog(); });
       foot.appendChild(btn);
     });
     dlg.appendChild(tt); dlg.appendChild(body); dlg.appendChild(foot);
     dialogMask.appendChild(dlg);
     root.appendChild(dialogMask);
+    dialogTop = { title: title, bodyBuilder: bodyBuilder, footButtons: footButtons };
   }
-  function closeDialog() { if (dialogMask) { dialogMask.remove(); dialogMask = null; } }
+  /** 只移除当前弹窗 DOM（栈保留，供返回时重建上一级） */
+  function closeTopOnly() {
+    if (dialogMask) { dialogMask.remove(); dialogMask = null; }
+    dialogTop = null;
+  }
+  /** 重建某个弹窗但不影响既有栈（返回上一级时用；调用前当前弹窗已被移除，
+   *  openDialog 里"有 dialogMask 才压栈"的条件自然不成立） */
+  function openDialogNoPush(title, bodyBuilder, footButtons) {
+    openDialog(title, bodyBuilder, footButtons);
+  }
+  /** 全部关掉（✕ / 遮罩 / 底部按钮）→ 栈清空 */
+  function closeDialog() {
+    closeTopOnly();
+    dialogStack.length = 0;
+  }
 
   /* ---- v4.8 试听文本（试听语音说什么，自己写） ---- */
   const PROBE_DEFAULT = '你好，我是坚祥数字助理！哼哼，记住了吗？';
@@ -1663,7 +1698,7 @@
       body.appendChild($new('div', 'pb2-hint', '存在本机（localStorage），最多 30 条；语音闲聊、试听都用得上。'));
       const inp = $new('input');
       inp.type = 'text'; inp.placeholder = '加一条，例如：今天吃白饭？'; inp.style.flex = '1 1 auto';
-      const bAdd = $new('button', null, '添加'); bAdd.type = 'button';
+      const bAdd = $new('button', 'pb2-mini pb2-mini-primary', '添加'); bAdd.type = 'button';
       const addRow = $new('div', 'pb2-row');
       addRow.appendChild(inp); addRow.appendChild(bAdd);
       const listBox = $new('div');
@@ -1674,11 +1709,11 @@
         for (const p of arr) {
           const row = $new('div', 'pb2-row');
           row.appendChild($new('span', 'pb2-rowtext', p.text));
-          const bSay = $new('button', null, '说'); bSay.type = 'button';
+          const bSay = $new('button', 'pb2-mini', '说'); bSay.type = 'button';
           bSay.addEventListener('click', () => { speechUnlock(); speak(p.text, { force: true }); });
-          const bEdit = $new('button', null, '改'); bEdit.type = 'button';
+          const bEdit = $new('button', 'pb2-mini', '改'); bEdit.type = 'button';
           bEdit.addEventListener('click', () => askText('改成什么？', p.text, (v) => { p.text = v.slice(0, 60); saveSettings(); openPhraseBook(); }));
-          const bDel = $new('button', null, '删'); bDel.type = 'button';
+          const bDel = $new('button', 'pb2-mini pb2-mini-danger', '删'); bDel.type = 'button';
           bDel.addEventListener('click', () => { settings.phrases = getArr().filter(x => x.id !== p.id); saveSettings(); render(); });
           row.appendChild(bSay); row.appendChild(bEdit); row.appendChild(bDel);
           listBox.appendChild(row);
@@ -1699,7 +1734,7 @@
       body.appendChild(addRow);
       body.appendChild($new('h4', null, '已保存的常用语'));
       body.appendChild(listBox);
-      const bPreset = $new('button', null, '加几条示例'); bPreset.type = 'button';
+      const bPreset = $new('button', 'pb2-mini', '加几条示例'); bPreset.type = 'button';
       bPreset.addEventListener('click', () => {
         ['今天吃白饭？没饭了！', '余额还剩多少呀？', '哼，才不是在等你呢……'].forEach(t => add(t));
         render();
@@ -1722,9 +1757,9 @@
       ta.value = String(settings.greeting || '');
       body.appendChild(ta);
       const row = $new('div', 'pb2-row');
-      const preset = $new('button', null, '用回默认'); preset.type = 'button';
+      const preset = $new('button', 'pb2-mini', '用回默认'); preset.type = 'button';
       preset.addEventListener('click', () => { ta.value = ''; });
-      const preview = $new('button', null, '试听这句'); preview.type = 'button';
+      const preview = $new('button', 'pb2-mini pb2-mini-primary', '试听这句'); preview.type = 'button';
       preview.addEventListener('click', () => {
         const save0 = settings.greeting;
         settings.greeting = ta.value;
@@ -1782,7 +1817,7 @@
       gInp.value = String(settings.greeting || '');
       body.appendChild(gInp);
       const gRow = $new('div', 'pb2-row');
-      const gGen = $new('button', null, 'AI 生成开场白'); gGen.type = 'button';
+      const gGen = $new('button', 'pb2-mini', 'AI 生成开场白'); gGen.type = 'button';
       gGen.addEventListener('click', async () => {
         gGen.disabled = true; const old = gGen.textContent; gGen.textContent = '生成中…';
         try {
@@ -1794,7 +1829,7 @@
         } catch (e) { bubbleSay('生成失败：' + e.message, 5000); }
         finally { gGen.disabled = false; gGen.textContent = old; }
       });
-      const gTry = $new('button', null, '试听'); gTry.type = 'button';
+      const gTry = $new('button', 'pb2-mini', '试听'); gTry.type = 'button';
       gTry.addEventListener('click', () => {
         const save0 = settings.greeting; settings.greeting = gInp.value;
         speechUnlock(); bubbleSay(openLine(), 5000); speak(openLine());
@@ -1813,7 +1848,7 @@
           const row = $new('div', 'pb2-row');
           const inp = $new('input'); inp.type = 'text'; inp.value = line;
           inp.style.flex = '1 1 auto';
-          const del = $new('button', null, '删'); del.type = 'button';
+          const del = $new('button', 'pb2-mini pb2-mini-danger', '删'); del.type = 'button';
           del.addEventListener('click', () => {
             const arr = pokeLines().slice(); arr.splice(i, 1);
             settings.pokeLines = arr; saveSettings(); sfx('tap'); renderList();
@@ -1826,18 +1861,18 @@
           listBox.appendChild(row);
         });
         const addRow = $new('div', 'pb2-row');
-        const add = $new('button', null, '+ 加一条'); add.type = 'button';
+        const add = $new('button', 'pb2-mini pb2-mini-primary', '+ 加一条'); add.type = 'button';
         add.addEventListener('click', () => {
           const arr = pokeLines().slice(); arr.push('哼哼～'); settings.pokeLines = arr; saveSettings(); renderList();
         });
-        const reset = $new('button', null, '恢复内置默认'); reset.type = 'button';
+        const reset = $new('button', 'pb2-mini', '恢复内置默认'); reset.type = 'button';
         reset.addEventListener('click', () => { settings.pokeLines = []; saveSettings(); renderList(); bubbleSay('已恢复内置台词', 2200); });
         addRow.appendChild(add); addRow.appendChild(reset);
         listBox.appendChild(addRow);
       };
       renderList();
       const pRow = $new('div', 'pb2-row');
-      const pGen = $new('button', null, 'AI 按人设+聊天记录生成'); pGen.type = 'button';
+      const pGen = $new('button', 'pb2-mini', 'AI 按人设+聊天记录生成'); pGen.type = 'button';
       pGen.addEventListener('click', async () => {
         pGen.disabled = true; const old = pGen.textContent; pGen.textContent = '生成中…';
         try {
@@ -2791,7 +2826,7 @@
     chatpInput = $new('input');
     chatpInput.type = 'text';
     chatpInput.placeholder = '说点什么…（回车发送）';
-    chatpBtn = $new('button', null, '发送');
+    chatpBtn = $new('button', 'pb2-mini pb2-mini-primary', '发送');
     chatpBtn.type = 'button';
     chatpBtn.addEventListener('click', chatpSend);
     chatpInput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); chatpSend(); } });

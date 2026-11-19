@@ -1,4 +1,4 @@
-# 余额宠物·大肥鱼（pet-buddy）v5.4.0
+# 余额宠物·大肥鱼（pet-buddy）v4.15.0
 
 > 坚祥数字助理的桌宠插件：**桌宠常驻 + 傲娇聊天 + 余额显示 + 语音/音效 + 模型管理**五合一。
 > 全程离线可用（合成与识别都在本机），零第三方依赖，装完刷新即用。
@@ -77,7 +77,7 @@ pet-buddy/
 ### 常用命令
 
 ```powershell
-node tools/smoke.mjs                             # 离线自检（567 项断言）
+node tools/smoke.mjs                             # 离线自检（583 项断言）
 node build.mjs                                   # 从源码重建产物
 node build.mjs --check                           # 产物与源码是否一致（不一致退出码 1）
 powershell -File tools\install.ps1 -WithAssets   # 同步到宿主插件目录
@@ -106,7 +106,7 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
 | `st-wx-*.webp`（24 张） | 微信表情包解码裁切 | 二创，非商用 |
 | `st-dsh-*.webp`（27 张） | 大肥鱼模型包 `assets/memes`（384×384 PNG → 256px WebP q86，4.6MB→0.42MB） | MIT（`LICENSE-dspet.txt`） |
 | `ic-*.png`（14 个菜单图标） | 豆包生图（Seedream）生成后本地裁切去背 | 本项目自用 |
-| `dp-001..114.webm` + `dp-thumb.png`（动作包） | PC2005-cloud/dsh-pet 官方模型包（`dsh-pet-source.zip`，MIT）经 `tools/import-petpack.mjs` 整合：VP9-alpha 640×360 → 裁 62%×92% → 160px/12fps/crf45（55.2MB → 6.5MB） | MIT（`LICENSE-dspet.txt`） |
+| `dp-001..114.webm` + `dp-thumb.png`（动作包） | PC2005-cloud/dsh-pet 官方模型包（`dsh-pet-source.zip`，MIT）经 `tools/import-petpack.mjs` 整合：VP9-alpha 640×360 → 裁 62%×92% → 160px/12fps/crf45（54.12MB → 6.5MB） | MIT（`LICENSE-dspet.txt`） |
 | `vendor/bibibobo.js` | hakihakii/bibibobo | MIT（原样引入） |
 | 本仓库代码 | 坚祥（yzc） | MIT（`LICENSE`） |
 
@@ -114,7 +114,7 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
 
 离线：
 
-- `node tools/smoke.mjs` → **567 项全绿**
+- `node tools/smoke.mjs` → **583 项全绿**
 - `node --check client.js`、`node build.mjs --check`
 
 宿主里（F5 之后）：
@@ -132,6 +132,7 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
 9b. **表情包**：设置 → **表情包管理** → 内置应有 **67 张**（往下翻能看到「大肥鱼模型包」那批：Ciallo / 可爱 / 深度睡眠…）；点一张应提示"标记已复制"；**批量导入**选几张图 → 自定义区应出现；**导出全部（zip）** → 应下载一个 zip
 9c. **试听文本**：bibo语音 → **试听文本…** → 改成「今天还剩 67834 分，贵不贵？」→ 点「试听这句」应念出这段（数字念成中文）
 9e. **设置分类**：右键 → 设置 → 应有**通用设置 / 聊天设置 / 声音设置**三项：通用里能改通道·模型·额度·网关·身份牌·桌宠（大小/称呼/监控…）；声音里**只有声音**（语音播报 + 音效 + 语音闲聊）；聊天里是人设·常用语·表情包入口 + 聊天行为与会话。顺手试一下聊天里的「双击桌宠：就地输入框」关掉 → 双击应不再弹输入框
+9g. **弹窗回退**：右键 → 聊天设置 → 点「角色设定…」进二级 → 左下角应出现「← 返回」；连点可逐级退回（栈深多级都行）；点 ✕ 全关后再开，应没有残留的上一级
 9f. **弹窗风格**：随便开几个弹窗（通用设置 / 声音设置 / 常用语）→ 应有统一的分组小标题（左侧蓝条）与间距；把助手窗口拉窄到 500px 左右 → 弹窗应铺满且内容不出格
 9e. **按语境挑表情**：跟它聊点带情绪的（夸它 / 吐槽它 / 问傻问题 / 说加班累）→ 它应该**情绪对得上时才插表情**（道谢配害羞捂脸、被吐槽配无语斜眼、加班配打工搬砖…）；也可以直接发 `[stick:害羞捂脸]` 看能不能出图
 9d. **弹窗控件**：打开「修改桌宠模型」→ 每张卡片的「移除 / 彻底删除」应**在同一行、靠右**（不再竖排错位），描述最多两行；「导入模型包」那一行应是**按钮 + 文件名**（不再是原生灰色「选择文件」）；设置里的**大小滑块**应是有轨道与圆钮的样式；拖气泡面板标题栏时面板应"提起来"（半透明 + 大阴影）

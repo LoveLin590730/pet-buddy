@@ -1216,10 +1216,10 @@ console.log('\n[v5.2 表情格布局 + 行走前摇]');
     /#stgrid \.cell > \.sticker\.fish-st \{[\s\S]{0,160}width: 86px; height: 93px; background: url\("feiyu-spritesheet\.webp"\)/.test(html2));
   ok('窗口里那条 scale(0.82) 已去掉（撑破格子的元凶）', !/\.cell \.sticker \{ transform: scale\(0\.82\)/.test(html2));
   // —— 行走前摇
-  eq('前摇常量 500ms（至少 0.5s）', P.WALK_WARMUP_MS, 500);
+  eq('普通前摇常量 1000ms（v4.15：原 0.5s，+0.5s）', P.WALK_WARMUP_MS, 1000);
   ok('前摇期间原地踏步不位移（时钟推后 warmupMs）',
     /const t0 = performance\.now\(\) \+ warmupMs/.test(js2) && /if \(t <= 0\) \{ walkRaf = requestAnimationFrame\(tick\); return; \}/.test(js2));
-  ok('前摇常量在 core 里（可自检）', /const WALK_WARMUP_MS = 500;/.test(readFileSync(path.join(ROOT, 'src/core/petwalk.js'), 'utf8')));
+  ok('前摇常量在 core 里（可自检）', /const WALK_WARMUP_MS = 1000;/.test(readFileSync(path.join(ROOT, 'src/core/petwalk.js'), 'utf8')));
 }
 
 console.log('\n[v5.3 设置拆分为 通用/聊天/声音]');
@@ -1271,15 +1271,15 @@ console.log('\n[v5.4 散步起步节奏（前摇 + 加速）]');
   const js4 = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   // —— 前摇分档
   eq('加速时长 1 秒（速度 0→正常）', P.WALK_ACCEL_MS, 1000);
-  eq('普通行走前摇 0.5 秒', P.WALK_WARMUP_MS, 500);
-  eq('"左转/奔跑"类前摇 1 秒', P.WALK_WARMUP_SLOW, 1000);
-  eq('名字带"左转" → 1 秒前摇', P.walkWarmupFor('原地左转奔跑', 0, 3), 1000);
-  eq('名字带"奔跑" → 1 秒前摇', P.walkWarmupFor('简直在奔跑', 1, 3), 1000);
-  eq('名字带"漂浮" → 0.5 秒前摇', P.walkWarmupFor('原地漂浮踏步', 1, 3), 500);
-  eq('名字带"蟹走路" → 0.5 秒前摇', P.walkWarmupFor('螃蟹走路', 0, 3), 500);
-  eq('名字认不出但排在池子最后 → 按左转类 1 秒', P.walkWarmupFor('动作A', 2, 3), 1000);
-  eq('名字认不出排在中间 → 默认 0.5 秒', P.walkWarmupFor('动作A', 1, 3), 500);
-  eq('只有一个动作且认不出 → 默认 0.5 秒（不会把唯一的动作当左转）', P.walkWarmupFor('动作A', 0, 1), 500);
+  eq('普通行走前摇 1 秒', P.WALK_WARMUP_MS, 1000);
+  eq('"左转/奔跑"类前摇 1.5 秒', P.WALK_WARMUP_SLOW, 1500);
+  eq('名字带"左转" → 1.5 秒前摇', P.walkWarmupFor('原地左转奔跑', 0, 3), 1500);
+  eq('名字带"奔跑" → 1.5 秒前摇', P.walkWarmupFor('简直在奔跑', 1, 3), 1500);
+  eq('名字带"漂浮" → 1 秒前摇', P.walkWarmupFor('原地漂浮踏步', 1, 3), 1000);
+  eq('名字带"蟹走路" → 1 秒前摇', P.walkWarmupFor('螃蟹走路', 0, 3), 1000);
+  eq('名字认不出但排在池子最后 → 按左转类 1.5 秒', P.walkWarmupFor('动作A', 2, 3), 1500);
+  eq('名字认不出排在中间 → 默认 1 秒', P.walkWarmupFor('动作A', 1, 3), 1000);
+  eq('只有一个动作且认不出 → 默认 1 秒（不会把唯一的动作当左转）', P.walkWarmupFor('动作A', 0, 1), 1000);
   // —— 梯形速度曲线：端点正确、单调、前段慢后段快、中段匀速
   {
     const a = 0.25, b = 0.1;                      // 加速占 1/4、减速占 1/10
@@ -1314,12 +1314,50 @@ console.log('\n[v5.4 散步起步节奏（前摇 + 加速）]');
       Math.abs(P.walkPosAt(from, to, 0.5).left - 300) < 1);
   }
   // —— 产物接线
-  ok('前摇按时长取（至少 0.5s，左转类 1s）',
+  ok('前摇按时长取（普通 1s、左转类 1.5s）',
     /const warmupMs = Math\.max\(WALK_WARMUP_MS, Number\(walkAnimStart\(\)\) \|\| WALK_WARMUP_MS\)/.test(js4));
   ok('位移传入加速/减速占比', /const a = \(WALK_ACCEL_MS \/ Math\.max\(1, plan\.durMs\)\)/.test(js4) &&
     /walkPosAt\(plan\.from, plan\.to, t, a, b\)/.test(js4));
   ok('行走动作轮着用（三个动作都有上场机会）', /walkMoveIdx = \(walkMoveIdx \+ 1\) % pool\.length/.test(js4));
   ok('起步节奏写进日志（可查）', /散步起步：动作=/.test(js4));
+}
+
+console.log('\n[v4.15 版本一致性 + 弹窗回退 + 控件收尾]');
+{
+  const jsd = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cssd = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  const mfd = JSON.parse(readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+  const cfg = readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8');
+  const ver = (cfg.match(/PB_VERSION\s*=\s*'([^']+)'/) || [])[1];
+  // —— 版本号：小版本递增（4.x），且三处一致
+  ok('版本号是 4.x 小版本递增（不跳大版本）', /^4\.\d+\.\d+$/.test(ver), ver);
+  eq('manifest.version = PB_VERSION', mfd.version, ver);
+  ok('manifest 描述里的版本标签也同步（这是"还是 4.x"的根因）',
+    mfd.description.indexOf('（v' + ver + '）') >= 0, mfd.description.slice(0, 60));
+  ok('构建脚本负责同步描述里的版本标签（以后不会再忘）',
+    /mf\.description \|\| ''\)\.replace\(\/（v\[0-9\]/.test(readFileSync(path.join(ROOT, 'build.mjs'), 'utf8')));
+  // —— 弹窗栈：二级能回退
+  ok('弹窗栈实现（打开前压栈 + 只移除当前层）',
+    /const dialogStack = \[\]/.test(jsd) && /if \(dialogMask && dialogTop\) dialogStack\.push\(dialogTop\)/.test(jsd) &&
+    /function closeTopOnly\(\)/.test(jsd));
+  ok('有上一级时底部出现「← 返回」', /'← 返回'/.test(jsd) && /openDialogNoPush\(prev\.title/.test(jsd));
+  ok('返回按钮靠左、右侧按钮照旧右对齐（样式）',
+    /\.pb2-dfoot \.pb2-dback \{/.test(cssd) && /\.pb2-dfoot-sp \{ flex: 1 1 auto; \}/.test(cssd));
+  ok('整体关闭时清空栈（不留残状态）', /function closeDialog\(\) \{\s*closeTopOnly\(\);\s*dialogStack\.length = 0;/.test(jsd));
+  // —— 控件统一收尾：弹窗内不再有裸按钮
+  const bare = (jsd.match(/\$new\('button', null, /g) || []).length;
+  eq('弹窗/气泡里不再有裸样式按钮', bare, 0);
+  ok('小按钮三态齐备（默认/主色/危险）',
+    /\.pb2-mini \{/.test(cssd) && /\.pb2-mini\.pb2-mini-primary \{/.test(cssd) && /\.pb2-mini\.pb2-mini-danger \{/.test(cssd));
+  ok('常用语/台词/开场白等弹窗的小按钮都用统一类',
+    /'pb2-mini pb2-mini-danger', '删'/.test(jsd) && /'pb2-mini pb2-mini-primary', '添加'/.test(jsd) &&
+    /'pb2-mini', '说'/.test(jsd) && /'pb2-mini', 'AI 按人设\+聊天记录生成'/.test(jsd));
+  // —— 前摇 +0.5s
+  eq('普通行走前摇 1.0s（原 0.5s，+0.5s）', P.WALK_WARMUP_MS, 1000);
+  eq('"左转/奔跑"前摇 1.5s（原 1.0s，+0.5s）', P.WALK_WARMUP_SLOW, 1500);
+  eq('名字带"左转"仍是 1.5s', P.walkWarmupFor('原地左转奔跑', 0, 3), 1500);
+  eq('名字认不出但在池子最后 → 1.5s', P.walkWarmupFor('动作A', 2, 3), 1500);
+  eq('普通动作 → 1.0s', P.walkWarmupFor('螃蟹走路', 0, 3), 1000);
 }
 
 console.log('\n[语音听写 · v3.2]');

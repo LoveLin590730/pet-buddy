@@ -76,7 +76,12 @@ const results = [
 
 /* ---------- 3. 版本号写回 manifest.json ---------- */
 const mf = JSON.parse(read('manifest.json'));
-const mfChanged = mf.version !== version;
+/* v4.15：description 里的版本标签（形如「（v4.15.0）」）也一并同步——
+ * 之前只写了 version 字段，描述里那句一直停在旧版本，用户看到的"还是 4.x"就是这个。 */
+const mfDescNew = String(mf.description || '').replace(/（v[0-9]+\.[0-9]+(\.[0-9]+)?）/, `（v${version}）`);
+const mfDescChanged = mfDescNew !== mf.description;
+const mfChanged = mf.version !== version || mfDescChanged;
+if (mfDescChanged) mf.description = mfDescNew;
 if (mfChanged) {
   mf.version = version;
   if (!CHECK) writeFileSync(path.join(ROOT, 'manifest.json'), JSON.stringify(mf, null, 2) + '\n', 'utf8');

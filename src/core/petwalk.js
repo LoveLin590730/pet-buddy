@@ -28,7 +28,7 @@
   const WALK_MAX_DIST = 280;   // 单段最长位移
   const WALK_MIN_MS = 420;     // 单段最短时长
   const WALK_MAX_MS = 14000;   // 单段最长时长（防极慢速度走太久）
-  const WALK_WARMUP_MS = 500;  // v5.2：行走动作有前摇——先原地踏步这么久再开始位移（至少 0.5s）
+  const WALK_WARMUP_MS = 1000;  // v4.15：普通行走动作的原地前摇（原 0.5s，按用户要求 +0.5s）
 
   function walkModeOf(id) {
     const s = String(id == null ? '' : id);
@@ -77,7 +77,7 @@
    * 传入的是归一化时长（a = 加速段占比、b = 减速段占比），自动夹到 a+b ≤ 0.9 并归一化总位移为 1。 */
   const WALK_ACCEL_MS = 1000;      // 起步加速：速度从 0 → 正常，用 1 秒（用户要求）
   const WALK_DECEL_MS = 450;       // 收尾减速（停下不突兀）
-  const WALK_WARMUP_SLOW = 1000;   // "左转 / 奔跑"类动作：先原地 1 秒再起（前摇更长）
+  const WALK_WARMUP_SLOW = 1500;   // "左转 / 奔跑"类动作：先原地 1.5 秒再起（v4.15：原 1s，+0.5s）
 
   /** 原地前摇时长（毫秒）：动作越"重"起手越慢。
    *  ① 名字里带关键词优先（奔跑/左转 → 1s；走路/漂浮/蟹步 → 0.5s）；
