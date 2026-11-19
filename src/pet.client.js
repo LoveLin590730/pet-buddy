@@ -103,11 +103,139 @@
     im.src = assetUrl(item.file);
   }
 
+  /* ================= v4.3 动作包（petpack）：一整套动作视频 =================
+   * 素材与语义清单来自模型包整合（src/core/petpack.js，由 tools/import-petpack.mjs 生成）。
+   * 渲染：两个 <video> 双缓冲——换动作时等新视频就绪才切前景，避免闪一下白；
+   *       idle 循环播放，一次性动作（点击/随机表演/余额）播完自动回到 idle。
+   * 触发：点击（clicks）、拖动（drag）、余额（balance 分档）、空闲（random 随机表演）。
+   * 视频为 VP9-alpha webm（Chromium 内核原生支持，透明通道保留）。 */
+  let packCur = '';        // 当前动作包 id
+  let packGen = 0;         // 换源世代号（丢弃迟到的加载结果）
+  let packVideos = null;   // [A, B] 两个 video
+  let packFront = 0;       // 当前前景槽位
+  let packCurrent = '';    // 当前动作名（避免连着重复）
+  let packErrWarned = false;
+
+  function packOf(id) { return petpackById(String(id == null ? '' : id).replace(/^pack:/, '')); }
+
+  function ensurePackVideos() {
+    if (packVideos && packVideos[0] && packVideos[0].isConnected) return packVideos;
+    packVideos = [0, 1].map(() => {
+      const v = document.createElement('video');
+      v.className = 'pb2-vid';
+      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+      petWrap.appendChild(v);
+      return v;
+    });
+    packFront = 0;
+    return packVideos;
+  }
+
+  /** 播一个动作：once=true 播完回 idle（默认），false = 循环 */
+  function packPlay(name, once) {
+    const pack = packOf(settings.skin) || packOf(packCur);
+    if (!pack || !name) return false;
+    const act = petpackActionOf(pack, name);
+    if (!act) return false;
+    const vs = ensurePackVideos();
+    const gen = ++packGen;
+    const back = vs[1 - packFront];
+    const prevFront = vs[packFront];
+    packCurrent = name;
+    const fin = () => {
+      if (gen !== packGen) return;                 // 已被更新的换源取代
+      const p = back.play();
+      if (p && p.catch) p.catch(() => { /* 未解锁自动播放时静默：用户一点就会出声/动 */ });
+      back.classList.add('pb2-vid-front');
+      if (prevFront !== back) prevFront.classList.remove('pb2-vid-front');
+      packFront = 1 - packFront;
+      if (once) {
+        const onEnd = () => { back.removeEventListener('ended', onEnd); if (gen === packGen) packPlayIdle(); };
+        back.addEventListener('ended', onEnd);
+      }
+    };
+    if (back.dataset.act === name && back.readyState >= 2) { back.currentTime = 0; fin(); return true; }
+    back.dataset.act = name;
+    back.loop = !once;
+    back.oncanplay = fin;
+    back.onerror = () => {
+      if (packErrWarned) return;
+      packErrWarned = true;
+      log('error', '动作素材加载失败：' + act.file);
+      bubbleSay('动作视频没读出来（' + act.file + '）——素材可能没同步全，先临时穿回官方形象', 5600);
+      settings.skin = 'fish'; saveSettings();
+      setTimeout(() => applySkin(), 60);
+    };
+    back.src = petpackFileUrl(act.file);
+    back.load();
+    return true;
+  }
+
+  function packPlayIdle() {
+    const pack = packOf(settings.skin) || packOf(packCur);
+    if (!pack) return;
+    const name = petpackPick(pack, 'idle', packCurrent) || (pack.actions[0] && pack.actions[0].name);
+    if (name) packPlay(name, false);
+  }
+
+  /** 按角色播一个动作（once 默认 true）；角色池空则返回 false 不做任何事 */
+  function packRole(role, opts) {
+    if (skinMode !== 'pack') return false;
+    const pack = packOf(settings.skin);
+    if (!pack) return false;
+    const name = petpackPick(pack, role, packCurrent);
+    if (!name) return false;
+    return packPlay(name, !(opts && opts.loop));
+  }
+
+  /** 余额档位动作（balance 池按「已用档位」索引；池空则退回任意一次点击动作） */
+  function packBalanceTier(tier) {
+    if (skinMode !== 'pack') return false;
+    const pack = packOf(settings.skin);
+    if (!pack) return false;
+    const name = petpackPickTier(pack, 'balance', tier, packCurrent);
+    if (!name) return false;
+    return packPlay(name, true);
+  }
+
+  /** 空闲随机表演（categories 池；比 CSS 小动作丰富得多） */
+  function packRandomShow() {
+    if (skinMode !== 'pack') return false;
+    const pack = packOf(settings.skin);
+    if (!pack) return false;
+    const name = petpackPickRandom(pack, '', packCurrent);
+    if (!name) return false;
+    return packPlay(name, true);
+  }
+
+  /** 拖动中/松手：拖动池循环播，松手回 idle */
+  function packDrag(on) {
+    if (skinMode !== 'pack') return;
+    if (on) { if (!packRole('drag', { loop: true })) packPlayIdle(); }
+    else {
+      // 拖动池里能循环的就一直循环，松手回 idle
+      packPlayIdle();
+    }
+  }
+
   function applySkin() {
     const s = settings.skin || 'fish';
     const sp = SPRITE_SKINS[s];   // v3.3：精灵图皮肤（内置官方 / 社区桌宠包，同一套网格规格）
-    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex', 'pb2-skin-anim');
-    if (sp) {
+    const pk = packOf(s);         // v4.3：动作包皮肤（id 形如 pack:dshpack）
+    petWrap.classList.remove('pb2-skin-fish', 'pb2-skin-img', 'pb2-skin-codex', 'pb2-skin-anim', 'pb2-skin-pack');
+    if (pk) {
+      skinMode = 'pack';
+      packCur = pk.id;
+      packCurrent = '';
+      packErrWarned = false;
+      packGen++;                       // 丢弃在途的旧素材加载
+      petWrap.classList.add('pb2-skin-pack');
+      ensurePackVideos();
+      packPlayIdle();
+      const iv = packVideos && packVideos.find(v => v.videoWidth);   // 尺寸就绪后重算 wrap 比例
+      if (!iv) setTimeout(() => { if (skinMode === 'pack') refreshLayout(); }, 400);
+    } else if (sp) {
       skinMode = 'fish';
       petWrap.classList.add(sp.cls);        // CSS 类仍然保留（宿主重写过的官方路径靠它兜底）
       // 网格变量交给 CSS（同规格图集值相同；将来支持不同 cell 的图集只改这里）
@@ -177,11 +305,13 @@
   }
   (function loop() { paintFrame(); requestAnimationFrame(loop); })();
 
-  // 偶尔挥手/跳跃；v4.1 图片皮肤（含上传的动图）也有份：改用 CSS 整体小动作（没有帧序列可用）
+  // 偶尔挥手/跳跃；v4.1 图片皮肤（含上传的动图）改用 CSS 整体小动作；
+  // v4.3 动作包皮肤直接用包里的「随机表演」池（80 个动作，比 CSS 小动作丰富得多）
   function scheduleIdleFun() {
     setTimeout(() => {
       if (!settings.hidden && !drag && (!transient || performance.now() >= transientUntil)) {
-        if (skinMode === 'img') petIdleFun();
+        if (skinMode === 'pack') packRandomShow();
+        else if (skinMode === 'img') petIdleFun();
         else { transient = Math.random() < 0.5 ? 'waving' : 'jumping'; transientUntil = performance.now() + 1500; }
       }
       scheduleIdleFun();
@@ -203,8 +333,14 @@
   }
 
   /* ---- 位置：默认右下角，吸附 + 记忆 ---- */
-  /** v3.6.1：静态图皮肤按图片自身比例定 wrap 尺寸（否则横图/竖图与交互区对不上，看着"位置偏了"） */
+  /** v3.6.1：静态图皮肤按图片自身比例定 wrap 尺寸（否则横图/竖图与交互区对不上，看着"位置偏了"）
+   *  v4.3：动作包按视频实际比例（首帧就绪后即可拿到，之前用实测兜底比例） */
   function petAspect() {
+    if (skinMode === 'pack') {
+      const v = packVideos && packVideos.find(x => x && x.videoWidth);
+      if (v) return clamp(v.videoHeight / v.videoWidth, 0.45, 2.2);
+      return 0.835;   // 160px 宽 × (0.92×360)/(0.62×640) 的实测比例
+    }
     if (skinMode === 'img') {
       const nw = imgSkin && imgSkin.naturalWidth ? imgSkin.naturalWidth : 0;
       const nh = imgSkin && imgSkin.naturalHeight ? imgSkin.naturalHeight : 0;
@@ -252,7 +388,15 @@
     if (ms) bubbleTimer = setTimeout(() => { bubble.hidden = true; }, ms);
   }
   let bubbleTimer = null;
-  function bubbleSay(text, ms) { showBubble(b => { const t = $new('span', 'pb2-bubble-text'); renderRich(t, text); b.appendChild(t); }, ms || 4200); }
+  /* v4.3：气泡里也挂成果卡片（对话产出的文件路径 → 紧凑卡片，气泡小、以复制路径为主） */
+  function bubbleSay(text, ms, noDeliv) {
+    showBubble(b => {
+      const t = $new('span', 'pb2-bubble-text');
+      renderRich(t, text);
+      b.appendChild(t);
+      if (!noDeliv) { try { renderDeliverables(b, text, delivFailHint); } catch (e) { /* 卡片失败不影响气泡 */ } }
+    }, ms || 4200);
+  }
 
   /* ---- 单击 / 双击（260ms 区分） / 拖动 / 长按 / 连戳 ---- */
   let clickTimer = null, pendingSingle = null;
@@ -288,6 +432,7 @@
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
     drag.moved = true;
     petWrap.classList.add('pb2-dragging');
+    if (skinMode === 'pack' && !drag.packDragging) { drag.packDragging = true; packDrag(true); }   // v4.3：拖动动作
     transient = e.movementX < 0 ? 'running-left' : 'running-right';
     transientUntil = performance.now() + 300;
     applyPos({ left: drag.startL + dx, bottom: drag.startB - dy });
@@ -310,6 +455,7 @@
       applyPos(settings.pos);
       if (left === 8 || left === vw - petSize().w - 8) sfx('drop'); // v3.3：吸附到边缘给一声「唰」
       transient = 'waving'; transientUntil = performance.now() + 1200;
+      if (skinMode === 'pack') packPlayIdle();   // v4.3：放下后回到待机动作
     }
     suppressClickUntil = wasMoved ? Date.now() + 200 : 0;
     const d = drag; drag = null;
@@ -321,8 +467,9 @@
   petWrap.addEventListener('pointerup', endDrag);
   petWrap.addEventListener('pointercancel', endDrag);
 
-  /** 戳一下的即时动作反馈（不等待 260ms 判定，手感即时） */
+  /** 戳一下的即时动作反馈（不等待 260ms 判定，手感即时）；动作包皮肤走包里的「点击回应」池 */
   function pokeReaction() {
+    if (skinMode === 'pack') { packRole('clicks'); return; }
     const pool = ['waving', 'jumping', 'waving', 'jumping', 'waiting'];
     transient = pool[Math.floor(Math.random() * pool.length)];
     transientUntil = performance.now() + 1400;
@@ -431,6 +578,14 @@
         cost.textContent = '（' + balanceLine(d) + '）';
       });
     }, 8000);
+    // v4.3：动作包皮肤按「已用档位」表演对应余额动作（0~5 档，与包内 events.balance 一一对应）
+    if (skinMode === 'pack') {
+      fetchCompanyQuota(false).then(q => {
+        if (!q.ok || !q.points) { packRole('clicks'); return; }
+        const p = clamp((q.usedPoints / q.points) * 100, 0, 100);
+        packBalanceTier(p >= 100 ? 5 : Math.floor(p / 20));
+      }).catch(() => { packRole('clicks'); });
+    }
   }
 
   /* ---- 双击：就地输入框 ---- */
@@ -1264,6 +1419,13 @@
         desc: IMAGE_SKINS[id].desc + (IMAGE_SKINS[id].credit ? ' · ' + IMAGE_SKINS[id].credit : ''),
         thumb: assetUrl(IMAGE_SKINS[id].file),
         contain: true,
+      }))).concat(petpackList().map(pk => ({   // v4.3：动作包（整套动作视频）
+        id: 'pack:' + pk.id,
+        name: pk.name,
+        desc: '动作包 · ' + pk.actions.length + ' 个动作：点击/拖动/余额/随机表演都会动' +
+          '（来自 ' + pk.source + '，' + Math.round(pk.outTotalKB / 1024 * 10) / 10 + 'MB）',
+        thumb: assetUrl(pk.thumb || 'pet-bongo.png'),
+        contain: true,
       })));
       const builtin = allBuiltin.filter(m => hidden.indexOf(m.id) < 0 && deleted.indexOf(m.id) < 0);
       for (const m of builtin) {
@@ -1732,10 +1894,17 @@
    * 老做法（独立窗口 chat.html）保留在「设置 → 打开独立聊天窗口」里。 */
   let chatp = null, chatpMsgs = null, chatpInput = null, chatpBtn = null, chatpBusy = false;
 
+  /* v4.3 成果卡片：识别与渲染都在 core/deliver.js（独立聊天窗口共用同一份）；
+   * 这里只提供桌宠侧的失败提示（打不开本地文件时弹个气泡说明怎么用）。 */
+  function delivFailHint() {
+    bubbleSay('这一页不允许直接打开本地文件——路径已复制，粘到资源管理器地址栏就能找到它', 3800);
+  }
+
   function chatpAdd(kind, text) {
     const row = $new('div', 'pb2-chatp-msg pb2-' + kind);
     if (kind === 'pet' || kind === 'me') { try { renderRich(row, text); } catch (e) { row.textContent = text; } }
     else row.textContent = text;
+    if (kind === 'pet') renderDeliverables(row, text, delivFailHint);   // v4.3：产出文件 → 成果卡片（可复制路径）
     chatpMsgs.appendChild(row);
     chatpMsgs.scrollTop = chatpMsgs.scrollHeight;
     return row;

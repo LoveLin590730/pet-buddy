@@ -8,13 +8,13 @@
  * 用法：node tools/smoke.mjs        （退出码 0 = 全通过）
  * ==========================================================================*/
 
-import {readFileSync, readdirSync, existsSync} from 'node:fs';
+import {readFileSync, readdirSync, existsSync, statSync} from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'deliver.js', 'petpack.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -77,6 +77,8 @@ const probe = `
   imgAnimKind, customSkinAnim, customSkinStoreFits, CUSTOM_STATIC_MAX, CUSTOM_ANIM_MAX, CUSTOM_STORE_BUDGET,
   IMG_IDLE_FUNS, pickIdleFunClass, numToZh, numZhValue,
   zipEntries, zipImageEntries, zipExtract, zipBytesToDataUrl,
+  extractFilePaths, fileKindOf, pathToFileUrl, renderDeliverables, DELIVER_EXTS,
+  petpackById, petpackList, petpackActionOf, petpackRolePool, petpackPick, petpackPickTier, petpackPickRandom, petpackRandomPool,
   cssAssetBase, resolveAssetUrls, applyAssetBase, probeAssetBase, assetBaseCandidates, assetDir, assetUrl, SPRITE_GRID,
   viPhase, viStart, viStop, viCancel, viOn, viOnResult, viTranscribe, viWavB64, viResample, VI_HOTKEY_LABEL, VI_ASR_URL,
 };`;
@@ -495,7 +497,7 @@ console.log('\n[素材清单 · v3.1.0]');
 {
   const mf = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
   const listed = mf.groups.flatMap((g) => g.files);
-  const onDisk = readdirSync(ROOT).filter((f) => /\.(webp|png)$/i.test(f));
+  const onDisk = readdirSync(ROOT).filter((f) => /\.(webp|png|webm)$/i.test(f));
   ok('清单声明平铺布局（宿主不支持子目录）', mf.layout === 'flat', mf.layout);
   eq('清单条数 = 磁盘素材条数', listed.length, onDisk.length);
   ok('清单里的文件都在，磁盘上的素材也都登记了',
@@ -773,6 +775,117 @@ console.log('\n[v4.2 zip 模型包上传]');
   ok('挑图列表样式就位', /\.pb2-zip-item/.test(cssV42));
   ok('zip 上限 200MB 写死在产物里', /200 \* 1024 \* 1024/.test(jsV42));
   ok('zip 条目解压上限 8MB（core 里）', /8 \* 1024 \* 1024/.test(readFileSync(path.join(ROOT, 'src/core/zipread.js'), 'utf8')));
+}
+
+console.log('\n[v4.3 交付成果卡片]');
+{
+  const P1 = 'C:\\Users\\JXKJ1\\Documents\\坚祥数字助理\\我的花费折线图_20261106-1119.png';
+  const r1 = P.extractFilePaths('给你做好了：' + P1 + ' 拿去用');
+  eq('认出中文路径（回复里一行）', r1.length, 1);
+  eq('文件名解析正确', r1[0].name, '我的花费折线图_20261106-1119.png');
+  eq('路径原样保留（给复制用）', r1[0].path, P1);
+  eq('按扩展名归到图片大类', r1[0].kind, 'image');
+
+  eq('表格归 sheet', P.extractFilePaths('📎 C:\\Users\\JXKJ1\\Documents\\坚祥数字助理\\生产订单透视表.xlsx')[0].kind, 'sheet');
+  eq('文档归 doc', P.extractFilePaths('D:/x/y/z.pdf')[0].kind, 'doc');
+  eq('网页归 web', P.extractFilePaths('file:///D:/a/b/report.html')[0].path, 'D:/a/b/report.html');
+  eq('网页 kind 也对', P.extractFilePaths('file:///D:/a/b/report.html')[0].kind, 'web');
+  eq('多个路径都认出去重', P.extractFilePaths('C:\\a\\b.png 和 D:\\c\\d.png 还有 C:\\a\\b.png').length, 2);
+  eq('中文标点不粘进路径', P.extractFilePaths('做好了：C:\\a\\b.png，你看看')[0].path, 'C:\\a\\b.png');
+  eq('含空格的文件名能吃下', P.extractFilePaths('C:\\Users\\a b\\我的 图.png')[0].name, '我的 图.png');
+  eq('正文里的版本号/模块名不误判', P.extractFilePaths('v4.2 与 node.js 都不是文件').length, 0);
+  eq('相对路径不认（只认绝对路径）', P.extractFilePaths('相对路径 docs/a.png 不算').length, 0);
+  eq('未知扩展名回落 other', P.fileKindOf('xyz'), 'other');
+  eq('八大类都在（图标表覆盖）', Object.keys(P.DELIVER_EXTS).length, 8);
+  eq('路径→file URL（反斜杠转正）', P.pathToFileUrl('C:\\Users\\a b\\图.png'), 'file:///C:/Users/a b/图.png');
+
+  // 渲染：用最小 DOM 桩验证卡片 DOM 结构（图标/文件名/路径/两个按钮）
+  const mkEl = (tag) => ({
+    tag: tag, className: '', textContent: '', title: '', type: '', innerHTML: '', children: [], hidden: false,
+    style: { cssText: '' }, appendChild(c) { this.children.push(c); return c; },
+    addEventListener() {}, remove() {}, select() {},
+  });
+  const docStub = { createElement: mkEl, body: { appendChild() {} }, execCommand() { return true; } };
+  const saveDoc = sandbox.document;
+  sandbox.document = docStub;
+  const host = mkEl('div');
+  const n = P.renderDeliverables(host, '成果：' + P1, () => {});
+  eq('识别到 1 个成果并挂了卡片盒', n, 1);
+  const box = host.children[0];
+  eq('卡片盒 class', box.className, 'pb2-deliv-box');
+  const card = box.children[0];
+  eq('卡片 class', card.className, 'pb2-deliv');
+  const names = card.children.map(c => c.className);
+  ok('卡片有 图标/中段/复制/打开 四件套', names.join(',').indexOf('pb2-deliv-ico') === 0 && names.indexOf('pb2-deliv-btn') >= 0, names.join(','));
+  const midEl = card.children[1];
+  eq('文件名在卡片上', midEl.children[0].textContent, '我的花费折线图_20261106-1119.png');
+  eq('路径在卡片上（title 也是全路径）', midEl.children[1].textContent, P1);
+  eq('无成果时不碰 DOM', P.renderDeliverables(mkEl('div'), '这条回复没有文件', () => {}), 0);
+  sandbox.document = saveDoc;
+
+  // 产物侧
+  const jsD = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const cssD = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
+  const htmlD = readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
+  ok('气泡聊天回复挂成果卡片（桌宠侧）', /renderDeliverables\(row, text, delivFailHint\)/.test(jsD));
+  ok('单击/双击气泡也挂卡片', /renderDeliverables\(b, text, delivFailHint\)/.test(jsD));
+  ok('独立聊天窗口同款（chat.html）', /renderDeliverables\(b, text,/.test(htmlD));
+  ok('卡片样式在 client.css 与 chat.html 都在', /\.pb2-deliv-btn/.test(cssD) && /\.pb2-deliv-btn/.test(htmlD));
+  ok('人设里带上「交付文件」写法约定（助手会输出路径）', /交付文件 · 重要/.test(jsD) && /📎/.test(jsD));
+}
+
+console.log('\n[v4.3 动作包（petpack）]');
+{
+  const packs = P.petpackList();
+  ok('至少一个动作包已导入（dsh-pet 整包）', packs.length >= 1, '包数 ' + packs.length);
+  const pk = P.petpackById('dshpack');
+  ok('按 id 取包', !!pk && pk.id === 'dshpack');
+  if (pk) {
+    ok('动作数 ≥ 100（整套搬入，不是挑一张）', pk.actions.length >= 100, pk.actions.length);
+    eq('语义角色齐全（idle/click/drag/balance/random）',
+      ['idle', 'clicks', 'drag', 'balance', 'random'].every(r => (pk.roles[r] || []).length > 0), true);
+    ok('随机表演池 ≥ 50（分类动作）', P.petpackRandomPool(pk).length >= 50, P.petpackRandomPool(pk).length);
+    ok('每个动作都有素材文件字段', pk.actions.every(a => /^[a-z]+-\d+\.webm$/.test(a.file)), pk.actions[0] && pk.actions[0].file);
+    ok('动作都能查到角色（除少数未登记）', pk.actions.filter(a => a.role).length >= pk.actions.length * 0.9,
+      pk.actions.filter(a => a.role).length + '/' + pk.actions.length);
+    eq('按名取动作记录', P.petpackActionOf(pk, pk.actions[0].name).file, pk.actions[0].file);
+    ok('未知动作名返回 null', P.petpackActionOf(pk, '不存在的动作') === null);
+    // 挑动作：rnd=0 取第一个、rnd≈1 取最后一个、avoid 不连抽
+    const idlePool = P.petpackRolePool(pk, 'idle');
+    eq('角色池取值', P.petpackPick(pk, 'idle', '', 0), idlePool[0]);
+    const clicks = P.petpackRolePool(pk, 'clicks');
+    ok('avoid 生效（不连着播同一个）', clicks.length > 1 ? P.petpackPick(pk, 'clicks', clicks[0], 0) !== clicks[0] : true);
+    const balPool = P.petpackRolePool(pk, 'balance');
+    eq('余额分档取档位', P.petpackPickTier(pk, 'balance', 0, '', 0), balPool[0][0] ? balPool[0][0] : balPool[0]);
+    eq('余额档位越界夹到最后一档', P.petpackPickTier(pk, 'balance', 99, '', 0), balPool[balPool.length - 1][0] || balPool[balPool.length - 1]);
+    eq('空角色池返回空串', P.petpackPick(pk, '不存在的角色', '', 0), '');
+    const rnd = P.petpackPickRandom(pk, '', '', 0);
+    ok('随机表演可挑出动作名', typeof rnd === 'string' && rnd.length > 0, rnd);
+    ok('按分类过滤（时节）', P.petpackPickRandom(pk, '时节', '', 0) !== '');
+  }
+  // 素材对账：清单里登记的每个文件都要真的在仓库根目录（宿主只服务根级文件）
+  const manP = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+  const g = (manP.groups || []).find(x => x.id === 'petpack-dshpack');
+  ok('素材清单里有动作包组', !!g, g ? 'count=' + g.count : '缺');
+  if (g) {
+    const missing = g.files.filter(f => !existsSync(path.join(ROOT, f)));
+    eq('登记的动作素材一个不少', missing.length, 0);
+    ok('素材全部平铺在插件根目录（无子目录）', g.files.every(f => f.indexOf('/') < 0), true);
+    const total = g.files.filter(f => f.endsWith('.webm')).reduce((s, f) => s + statSync(path.join(ROOT, f)).size, 0);
+    ok('素材总体积 ≤ 7MB（整合后 -88% 以上）', total <= 7 * 1024 * 1024, (total / 1024 / 1024).toFixed(2) + 'MB');
+    // alpha 通道是关键：VP9-alpha 带不动就会出现黑底（转码必须 libvpx-vp9 解码 + auto-alt-ref 0）
+    const firstAct = readFileSync(path.join(ROOT, g.files.find(f => f.endsWith('.webm'))));
+    ok('动作素材保留透明通道（ALPHA_MODE 标记在）', firstAct.indexOf('ALPHA_MODE') >= 0);
+  }
+  // 产物侧：运行时接线
+  const jsP = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  ok('运行时：双缓冲视频皮肤', /pb2-skin-pack/.test(jsP) && /pb2-vid-front/.test(jsP));
+  ok('运行时：点击/拖动/余额/随机 四类触发都在', /packRole\('clicks'\)/.test(jsP) && /packDrag\(true\)/.test(jsP) &&
+    /packBalanceTier\(/.test(jsP) && /packRandomShow\(\)/.test(jsP));
+  ok('样式：动作包视频层就位', /pb2-skin-pack \.pb2-vid/.test(readFileSync(path.join(ROOT, 'client.css'), 'utf8')));
+  ok('模型面板列出动作包', /pack:' \+ pk\.id/.test(jsP) || /动作包 · /.test(jsP));
+  ok('可复用的导入器在仓库里（记录安装过程）', existsSync(path.join(ROOT, 'tools/import-petpack.mjs')));
+  ok('导入记录已写出', existsSync(path.join(ROOT, 'docs/petpack-dshpack-导入记录.md')));
 }
 
 console.log('\n[语音听写 · v3.2]');

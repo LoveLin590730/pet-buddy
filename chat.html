@@ -28,6 +28,17 @@
   .bubble2 .via { display: block; margin-top: 4px; font-size: 10.5px; opacity: .65; }
   .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
   .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat; background-size: 800% 1100%; }
+ /* v4.3 成果卡片（与 client.css 同款，独立窗口独立声明） */ .pb2-deliv-box { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+ .pb2-deliv { display: flex; align-items: center; gap: 9px; border: 1.5px solid #cfdcf7; border-radius: 10px;
+   padding: 8px 10px; background: linear-gradient(180deg, #fbfdff, #eef4ff); }
+ .pb2-deliv-ico { flex: none; width: 26px; height: 26px; color: #4a6fd4; display: flex; }
+ .pb2-deliv-ico svg { width: 100%; height: 100%; }
+ .pb2-deliv-mid { flex: 1 1 auto; min-width: 0; }
+ .pb2-deliv-name { font-size: 12.5px; font-weight: 600; color: #24365f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .pb2-deliv-path { font-size: 11px; color: #7b87ab; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
+   border: 1px solid #b9cdf5; background: #fff; color: #3a5bb8; cursor: pointer; }
+ .pb2-deliv-btn:hover { background: #eaf1ff; border-color: #8aa8f0; }
   .sticker.bean-st svg { width: 56px; height: 56px; display: block; }
   .sticker.maid-st img { max-width: 96px; max-height: 96px; border-radius: 9px; display: block; }
   .sticker.stick-st img { width: 96px; max-height: 96px; object-fit: contain; display: block; border-radius: 9px; }
@@ -202,7 +213,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.2.0';
+const PB_VERSION = '4.3.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -874,6 +885,1437 @@ const CHAT_MODELS = [
     const CH = 32768;
     for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
     return 'data:' + mime + ';base64,' + btoa(s);
+  }
+
+  /* ======== src/core/deliver.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 交付成果（对话产出的文件）
+ * ----------------------------------------------------------------------------
+ * 场景：助手在对话里产出文件（图片、折线图、表格、文档、网页…），回复中会带上本地绝对路径
+ *      （如 C:\Users\JXKJ1\Documents\坚祥数字助理\我的花费折线图_20261106-1119.png）。
+ *      本模块把这类路径认出来，渲染成「成果卡片」——文件名 + 完整路径 + 复制路径 / 打开，
+ *      让用户能立刻拿到文件位置（气泡聊天面板与独立聊天窗口共用这一份）。
+ * 只认常见成果扩展名：正文里的「v4.2」「node.js」之类不会被误判。
+ * 约束：只写顶层 const / function；不 import / 不 export；只用 DOM 与标准 Web API。
+ * ==========================================================================*/
+
+  /* ---- 识别 ---- */
+  const DELIVER_EXTS = {
+    image: 'png jpg jpeg gif webp bmp svg ico',
+    sheet: 'xlsx xls csv',
+    doc:   'docx doc pdf md txt',
+    slide: 'pptx ppt',
+    web:   'html htm mhtml',
+    archive: 'zip 7z rar',
+    media: 'mp4 mov mkv wav mp3 m4a',
+    code:  'py js mjs ts json yml yaml',
+  };
+  const DELIVER_EXT_LIST = Object.keys(DELIVER_EXTS)
+    .reduce((acc, k) => acc.concat(DELIVER_EXTS[k].split(' ')), []);
+  /* 路径体：不以换行/制表/引号/尖括号/竖线/问号/星号/冒号中断，非贪婪到扩展名收尾（支持中文与空格） */
+  const DELIVER_RE = new RegExp(
+    '(?:file:\\/\\/\\/)?([A-Za-z]:[\\\\/][^\\r\\n\\t"\'<>|?*:]*?\\.(?:' + DELIVER_EXT_LIST.join('|') + '))(?![\\w])', 'gi');
+
+  /** 按扩展名归大类（决定卡片图标）：image/sheet/doc/slide/web/archive/media/code/other */
+  function fileKindOf(ext) {
+    const e = String(ext || '').toLowerCase();
+    for (const k of Object.keys(DELIVER_EXTS)) if (DELIVER_EXTS[k].split(' ').indexOf(e) >= 0) return k;
+    return 'other';
+  }
+
+  /** 从一段文本里抽出本地成果文件：[{path, name, ext, kind}]（去重，保持出现顺序） */
+  function extractFilePaths(text) {
+    const s = String(text == null ? '' : text);
+    const out = [], seen = {};
+    DELIVER_RE.lastIndex = 0;
+    let m;
+    while ((m = DELIVER_RE.exec(s))) {
+      const p = String(m[1]).replace(/[，。；：、）》】」]+$/, '');
+      const key = p.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = 1;
+      const name = p.split(/[\\/]/).pop() || p;
+      const dot = name.lastIndexOf('.');
+      const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+      out.push({ path: p, name: name, ext: ext, kind: fileKindOf(ext) });
+    }
+    return out;
+  }
+
+  /** Windows 路径 → file:// URL（「打开」按钮尝试用；打不开时上层提示复制路径） */
+  function pathToFileUrl(p) {
+    const s = String(p || '').replace(/\\/g, '/');
+    return 'file:///' + s.replace(/^\/+/, '');
+  }
+
+  /* ---- 渲染（自绘图标，零素材依赖） ---- */
+  const DELIVER_SVG = {
+    image: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2"/><circle cx="5.7" cy="6.3" r="1.1" fill="currentColor" stroke="none"/><path d="M2.6 12.6l3.4-3.6 2.4 2.4 2.3-2.3 2.7 2.7"/></svg>',
+    sheet: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="2.6" width="12" height="10.8" rx="1.6"/><path d="M2 6.2h12M6.2 6.2v7.2M10.1 6.2v7.2"/></svg>',
+    doc:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4.2 1.9h4.9L12.9 5.6v8.5H4.2z"/><path d="M9 1.9v3.8h3.8M6.1 8.6h3.8M6.1 11h3.8"/></svg>',
+    slide: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.4"/><path d="M8 11.2v2.4M5.4 13.6h5.2"/></svg>',
+    web:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2.3 2.6 2.3 9.4 0 12M8 2c-2.3 2.6-2.3 9.4 0 12"/></svg>',
+    archive: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.2" y="2.6" width="11.6" height="10.8" rx="1.6"/><path d="M8 2.6v2.6M8 6.4v1.8M8 9.4v1.8"/></svg>',
+    media: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="1.6"/><path d="M6.6 6.1l3.8 1.9-3.8 1.9z" fill="currentColor" stroke="none"/></svg>',
+    code:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M5.6 5.1L2.7 8l2.9 2.9M10.4 5.1L13.3 8l-2.9 2.9"/></svg>',
+    other: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4.2 1.9h4.9L12.9 5.6v8.5H4.2z"/><path d="M9 1.9v3.8h3.8"/></svg>',
+  };
+
+  /** 复制文本：优先 clipboard API，失败回落 textarea + execCommand（老内核/非安全上下文） */
+  function copyPlainText(s, btn, onFail) {
+    const done = () => { if (btn) { btn.textContent = '已复制'; setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制路径'; }, 1500); } };
+    try {
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(done, () => legacyCopyText(s, done, onFail));
+        return;
+      }
+    } catch (e) { /* 继续回落 */ }
+    legacyCopyText(s, done, onFail);
+  }
+  function legacyCopyText(s, done, onFail) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = s;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done();
+    } catch (e) { if (onFail) onFail(); }
+  }
+
+  /** 尝试打开本地文件：先把路径复制好，再试 file://（多数宿主页不允许，失败由 onFail 提示） */
+  function openLocalPath(p, onFail) {
+    copyPlainText(p, null, null);
+    let opened = false;
+    try { opened = !!window.open(pathToFileUrl(p), '_blank'); } catch (e) { opened = false; }
+    if (!opened && onFail) onFail();
+  }
+
+  /** 单张成果卡片（DOM）：图标 + 文件名 + 路径 + 复制/打开 */
+  function makeDeliverCard(f, onFail) {
+    const card = document.createElement('div');
+    card.className = 'pb2-deliv';
+    const ico = document.createElement('span');
+    ico.className = 'pb2-deliv-ico';
+    ico.innerHTML = DELIVER_SVG[f.kind] || DELIVER_SVG.other;   // 自家常量 SVG，不含用户数据
+    card.appendChild(ico);
+    const mid = document.createElement('div');
+    mid.className = 'pb2-deliv-mid';
+    const nm = document.createElement('div');
+    nm.className = 'pb2-deliv-name'; nm.textContent = f.name; nm.title = f.path;
+    const pt = document.createElement('div');
+    pt.className = 'pb2-deliv-path'; pt.textContent = f.path; pt.title = f.path;
+    mid.appendChild(nm); mid.appendChild(pt);
+    card.appendChild(mid);
+    const copy = document.createElement('button');
+    copy.type = 'button'; copy.className = 'pb2-deliv-btn'; copy.textContent = '复制路径'; copy.title = '复制完整路径';
+    copy.addEventListener('click', (ev) => { ev.stopPropagation(); copyPlainText(f.path, copy, onFail); });
+    card.appendChild(copy);
+    const open = document.createElement('button');
+    open.type = 'button'; open.className = 'pb2-deliv-btn'; open.textContent = '打开';
+    open.title = '尝试用默认程序打开（本页可能不允许；失败时路径已复制）';
+    open.addEventListener('click', (ev) => { ev.stopPropagation(); openLocalPath(f.path, onFail); });
+    card.appendChild(open);
+    return card;
+  }
+
+  /** 把文本里的成果文件渲染成卡片追加到 host；返回识别到的文件数（0 = 没动 DOM）。
+   *  onFail = 打不开本地文件时的提示回调（各端文案不同：桌宠弹气泡，网页窗口用页内提示）。 */
+  function renderDeliverables(host, text, onFail) {
+    const files = extractFilePaths(text);
+    if (!files.length || !host) return 0;
+    const box = document.createElement('div');
+    box.className = 'pb2-deliv-box';
+    for (const f of files) box.appendChild(makeDeliverCard(f, onFail));
+    host.appendChild(box);
+    return files.length;
+  }
+
+  /* ======== src/core/petpack.js ======== */
+/* ============================================================================
+ * pet-buddy · 共享核心（core）· 宠物动作包（petpack）
+ * ----------------------------------------------------------------------------
+ * 「动作包」= 一整套动作视频（VP9-alpha webm，平铺在插件根目录，宿主只服务根级文件）
+ *            + 语义角色映射（每个动作属于 idle / 点击 / 拖拽 / 余额档位 / 随机表演 / 睡觉…）。
+ * 数据从模型包（dsh-pet 格式 zip：assets/webm + assets/config.jsonc）整合而来，
+ * 由 tools/import-petpack.mjs 生成（含转码参数、体积、来源记录）——数据段勿手改，重跑脚本即可。
+ * 本文件只放「取值与挑选」（DOM 无关，两端可用）；视频播放与调度在 pet.client.js 的 petpack 段。
+ * 约束：只写顶层 const / function；不 import / 不 export。
+ * ==========================================================================*/
+
+  /* @@PETPACK-DATA-START@@（由 tools/import-petpack.mjs 生成，勿手改） */
+  const PETPACKS = {
+   "dshpack": {
+    "id": "dshpack",
+    "name": "大肥鱼·鲸鲸娘（完整动作包）",
+    "source": "dsh-pet-source.zip",
+    "importedAt": "2026-11-19 15:26:06",
+    "params": {
+     "width": 160,
+     "fps": 12,
+     "crf": 45,
+     "crop": [
+      0.62,
+      0.92
+     ],
+     "codec": "vp9-alpha"
+    },
+    "thumb": "dp-thumb.png",
+    "srcTotalKB": 56479,
+    "outTotalKB": 6639,
+    "actions": [
+     {
+      "file": "dp-001.webm",
+      "name": "三球抛接",
+      "role": "random",
+      "srcKB": 536,
+      "outKB": 65
+     },
+     {
+      "file": "dp-002.webm",
+      "name": "下五子棋",
+      "role": "random",
+      "srcKB": 503,
+      "outKB": 55
+     },
+     {
+      "file": "dp-003.webm",
+      "name": "东张西望",
+      "role": "turn",
+      "srcKB": 417,
+      "outKB": 51
+     },
+     {
+      "file": "dp-004.webm",
+      "name": "中秋赏月吃月饼",
+      "role": "random",
+      "srcKB": 500,
+      "outKB": 55
+     },
+     {
+      "file": "dp-005.webm",
+      "name": "优雅女仆舞",
+      "role": "random",
+      "srcKB": 565,
+      "outKB": 68
+     },
+     {
+      "file": "dp-006.webm",
+      "name": "余额-分文不剩",
+      "role": "balance",
+      "srcKB": 479,
+      "outKB": 57
+     },
+     {
+      "file": "dp-007.webm",
+      "name": "余额-数金皱眉",
+      "role": "balance",
+      "srcKB": 312,
+      "outKB": 31
+     },
+     {
+      "file": "dp-008.webm",
+      "name": "余额-袋空如洗",
+      "role": "balance",
+      "srcKB": 374,
+      "outKB": 42
+     },
+     {
+      "file": "dp-009.webm",
+      "name": "余额-金袋叮当",
+      "role": "balance",
+      "srcKB": 519,
+      "outKB": 68
+     },
+     {
+      "file": "dp-010.webm",
+      "name": "余额-钱袋如常",
+      "role": "balance",
+      "srcKB": 378,
+      "outKB": 46
+     },
+     {
+      "file": "dp-011.webm",
+      "name": "余额-钱袋满溢",
+      "role": "balance",
+      "srcKB": 608,
+      "outKB": 87
+     },
+     {
+      "file": "dp-012.webm",
+      "name": "侧身急躁跑",
+      "role": "baifan",
+      "srcKB": 718,
+      "outKB": 94
+     },
+     {
+      "file": "dp-013.webm",
+      "name": "偷吃零食被抓住",
+      "role": "random",
+      "srcKB": 422,
+      "outKB": 47
+     },
+     {
+      "file": "dp-014.webm",
+      "name": "写代码",
+      "role": "random",
+      "srcKB": 375,
+      "outKB": 41
+     },
+     {
+      "file": "dp-015.webm",
+      "name": "写福字",
+      "role": "random",
+      "srcKB": 489,
+      "outKB": 56
+     },
+     {
+      "file": "dp-016.webm",
+      "name": "凭空生花",
+      "role": "random",
+      "srcKB": 606,
+      "outKB": 81
+     },
+     {
+      "file": "dp-017.webm",
+      "name": "动物环绕",
+      "role": "random",
+      "srcKB": 958,
+      "outKB": 140
+     },
+     {
+      "file": "dp-018.webm",
+      "name": "原地专心玩魔方",
+      "role": "random",
+      "srcKB": 433,
+      "outKB": 47
+     },
+     {
+      "file": "dp-019.webm",
+      "name": "原地小憩沉眠",
+      "role": "random",
+      "srcKB": 424,
+      "outKB": 48
+     },
+     {
+      "file": "dp-020.webm",
+      "name": "原地左转奔跑",
+      "role": "moves",
+      "srcKB": 600,
+      "outKB": 76
+     },
+     {
+      "file": "dp-021.webm",
+      "name": "原地敲击桌面互动",
+      "role": "random",
+      "srcKB": 394,
+      "outKB": 42
+     },
+     {
+      "file": "dp-022.webm",
+      "name": "原地漂浮踏步",
+      "role": "moves",
+      "srcKB": 578,
+      "outKB": 63
+     },
+     {
+      "file": "dp-023.webm",
+      "name": "原地跳跃抓碎头顶物品",
+      "role": "random",
+      "srcKB": 605,
+      "outKB": 76
+     },
+     {
+      "file": "dp-024.webm",
+      "name": "原地蹲下玩玩具汽车",
+      "role": "random",
+      "srcKB": 493,
+      "outKB": 63
+     },
+     {
+      "file": "dp-025.webm",
+      "name": "原地重力下蹲压缩",
+      "role": "random",
+      "srcKB": 210,
+      "outKB": 26
+     },
+     {
+      "file": "dp-026.webm",
+      "name": "变鸽子",
+      "role": "random",
+      "srcKB": 498,
+      "outKB": 63
+     },
+     {
+      "file": "dp-027.webm",
+      "name": "可爱宅舞",
+      "role": "random",
+      "srcKB": 563,
+      "outKB": 59
+     },
+     {
+      "file": "dp-028.webm",
+      "name": "吃Token",
+      "role": "random",
+      "srcKB": 561,
+      "outKB": 63
+     },
+     {
+      "file": "dp-029.webm",
+      "name": "吃冰淇淋融化",
+      "role": "random",
+      "srcKB": 498,
+      "outKB": 57
+     },
+     {
+      "file": "dp-030.webm",
+      "name": "吃午餐",
+      "role": "random",
+      "srcKB": 484,
+      "outKB": 54
+     },
+     {
+      "file": "dp-031.webm",
+      "name": "吃大闸蟹",
+      "role": "random",
+      "srcKB": 533,
+      "outKB": 60
+     },
+     {
+      "file": "dp-032.webm",
+      "name": "吃年糕",
+      "role": "random",
+      "srcKB": 441,
+      "outKB": 50
+     },
+     {
+      "file": "dp-033.webm",
+      "name": "吃早餐",
+      "role": "random",
+      "srcKB": 431,
+      "outKB": 50
+     },
+     {
+      "file": "dp-034.webm",
+      "name": "吃晚餐",
+      "role": "random",
+      "srcKB": 725,
+      "outKB": 100
+     },
+     {
+      "file": "dp-035.webm",
+      "name": "吃汤圆",
+      "role": "random",
+      "srcKB": 427,
+      "outKB": 47
+     },
+     {
+      "file": "dp-036.webm",
+      "name": "吃白饭",
+      "role": "random",
+      "srcKB": 449,
+      "outKB": 47
+     },
+     {
+      "file": "dp-037.webm",
+      "name": "吃粽子",
+      "role": "random",
+      "srcKB": 436,
+      "outKB": 47
+     },
+     {
+      "file": "dp-038.webm",
+      "name": "吃糖葫芦",
+      "role": "random",
+      "srcKB": 459,
+      "outKB": 51
+     },
+     {
+      "file": "dp-039.webm",
+      "name": "吃腊八粥",
+      "role": "random",
+      "srcKB": 450,
+      "outKB": 51
+     },
+     {
+      "file": "dp-040.webm",
+      "name": "吃西瓜",
+      "role": "random",
+      "srcKB": 472,
+      "outKB": 54
+     },
+     {
+      "file": "dp-041.webm",
+      "name": "吃重阳糕",
+      "role": "random",
+      "srcKB": 458,
+      "outKB": 50
+     },
+     {
+      "file": "dp-042.webm",
+      "name": "吃长寿面",
+      "role": "random",
+      "srcKB": 478,
+      "outKB": 56
+     },
+     {
+      "file": "dp-043.webm",
+      "name": "吃青团",
+      "role": "random",
+      "srcKB": 369,
+      "outKB": 38
+     },
+     {
+      "file": "dp-044.webm",
+      "name": "吃饭·碗饭",
+      "role": "baifan",
+      "srcKB": 426,
+      "outKB": 24
+     },
+     {
+      "file": "dp-045.webm",
+      "name": "吃饭团",
+      "role": "baifan",
+      "srcKB": 410,
+      "outKB": 28
+     },
+     {
+      "file": "dp-046.webm",
+      "name": "吃饺子",
+      "role": "random",
+      "srcKB": 542,
+      "outKB": 65
+     },
+     {
+      "file": "dp-047.webm",
+      "name": "吹气球",
+      "role": "random",
+      "srcKB": 733,
+      "outKB": 88
+     },
+     {
+      "file": "dp-048.webm",
+      "name": "吹笛子",
+      "role": "random",
+      "srcKB": 750,
+      "outKB": 98
+     },
+     {
+      "file": "dp-049.webm",
+      "name": "哈欠连天",
+      "role": "random",
+      "srcKB": 414,
+      "outKB": 49
+     },
+     {
+      "file": "dp-050.webm",
+      "name": "堆雪人",
+      "role": "random",
+      "srcKB": 507,
+      "outKB": 63
+     },
+     {
+      "file": "dp-051.webm",
+      "name": "大口吃零食",
+      "role": "random",
+      "srcKB": 788,
+      "outKB": 108
+     },
+     {
+      "file": "dp-052.webm",
+      "name": "女仆屈膝礼仪",
+      "role": "random",
+      "srcKB": 357,
+      "outKB": 38
+     },
+     {
+      "file": "dp-053.webm",
+      "name": "小幅度原地360度旋转展示",
+      "role": "random",
+      "srcKB": 572,
+      "outKB": 75
+     },
+     {
+      "file": "dp-054.webm",
+      "name": "小提琴演奏",
+      "role": "random",
+      "srcKB": 591,
+      "outKB": 71
+     },
+     {
+      "file": "dp-055.webm",
+      "name": "工作状态-原地踱步张望",
+      "role": "workStatus",
+      "srcKB": 461,
+      "outKB": 50
+     },
+     {
+      "file": "dp-056.webm",
+      "name": "工作状态-垂头叹气冒汗",
+      "role": "workStatus",
+      "srcKB": 194,
+      "outKB": 25
+     },
+     {
+      "file": "dp-057.webm",
+      "name": "工作状态-忙碌点按",
+      "role": "workStatus",
+      "srcKB": 464,
+      "outKB": 48
+     },
+     {
+      "file": "dp-058.webm",
+      "name": "工作状态-思考冒泡",
+      "role": "workStatus",
+      "srcKB": 399,
+      "outKB": 52
+     },
+     {
+      "file": "dp-059.webm",
+      "name": "工作状态-清点归档",
+      "role": "workStatus",
+      "srcKB": 354,
+      "outKB": 37
+     },
+     {
+      "file": "dp-060.webm",
+      "name": "工作状态-雀跃庆祝",
+      "role": "workStatus",
+      "srcKB": 477,
+      "outKB": 58
+     },
+     {
+      "file": "dp-061.webm",
+      "name": "开心小跑",
+      "role": "baifan",
+      "srcKB": 521,
+      "outKB": 55
+     },
+     {
+      "file": "dp-062.webm",
+      "name": "待机呼吸休闲",
+      "role": "idle",
+      "srcKB": 431,
+      "outKB": 49
+     },
+     {
+      "file": "dp-063.webm",
+      "name": "悠闲哼歌",
+      "role": "random",
+      "srcKB": 570,
+      "outKB": 68
+     },
+     {
+      "file": "dp-064.webm",
+      "name": "扑克魔术",
+      "role": "random",
+      "srcKB": 451,
+      "outKB": 52
+     },
+     {
+      "file": "dp-065.webm",
+      "name": "打瞌睡被惊醒",
+      "role": "random",
+      "srcKB": 443,
+      "outKB": 50
+     },
+     {
+      "file": "dp-066.webm",
+      "name": "抽陀螺",
+      "role": "random",
+      "srcKB": 509,
+      "outKB": 60
+     },
+     {
+      "file": "dp-067.webm",
+      "name": "拆礼物",
+      "role": "random",
+      "srcKB": 506,
+      "outKB": 63
+     },
+     {
+      "file": "dp-068.webm",
+      "name": "插茱萸赏菊",
+      "role": "random",
+      "srcKB": 475,
+      "outKB": 55
+     },
+     {
+      "file": "dp-069.webm",
+      "name": "摇扇纳凉",
+      "role": "random",
+      "srcKB": 498,
+      "outKB": 60
+     },
+     {
+      "file": "dp-070.webm",
+      "name": "撸猫",
+      "role": "random",
+      "srcKB": 340,
+      "outKB": 36
+     },
+     {
+      "file": "dp-071.webm",
+      "name": "收红包",
+      "role": "random",
+      "srcKB": 461,
+      "outKB": 49
+     },
+     {
+      "file": "dp-072.webm",
+      "name": "放孔明灯",
+      "role": "random",
+      "srcKB": 580,
+      "outKB": 70
+     },
+     {
+      "file": "dp-073.webm",
+      "name": "放河灯",
+      "role": "random",
+      "srcKB": 370,
+      "outKB": 38
+     },
+     {
+      "file": "dp-074.webm",
+      "name": "放烟花",
+      "role": "random",
+      "srcKB": 1299,
+      "outKB": 165
+     },
+     {
+      "file": "dp-075.webm",
+      "name": "放风筝",
+      "role": "random",
+      "srcKB": 752,
+      "outKB": 99
+     },
+     {
+      "file": "dp-076.webm",
+      "name": "整体换装试色",
+      "role": "random",
+      "srcKB": 512,
+      "outKB": 70
+     },
+     {
+      "file": "dp-077.webm",
+      "name": "是啊，吃什么",
+      "role": "random",
+      "srcKB": 574,
+      "outKB": 62
+     },
+     {
+      "file": "dp-078.webm",
+      "name": "晨间刷牙",
+      "role": "random",
+      "srcKB": 415,
+      "outKB": 42
+     },
+     {
+      "file": "dp-079.webm",
+      "name": "期待开饭",
+      "role": "baifan",
+      "srcKB": 399,
+      "outKB": 27
+     },
+     {
+      "file": "dp-080.webm",
+      "name": "涮火锅",
+      "role": "random",
+      "srcKB": 456,
+      "outKB": 53
+     },
+     {
+      "file": "dp-081.webm",
+      "name": "深度思考碎碎念",
+      "role": "random",
+      "srcKB": 423,
+      "outKB": 50
+     },
+     {
+      "file": "dp-082.webm",
+      "name": "点击回应-傲娇生气",
+      "role": "clicks",
+      "srcKB": 383,
+      "outKB": 50
+     },
+     {
+      "file": "dp-083.webm",
+      "name": "点击回应-元气挥手",
+      "role": "clicks",
+      "srcKB": 412,
+      "outKB": 46
+     },
+     {
+      "file": "dp-084.webm",
+      "name": "点击回应-害羞惊讶",
+      "role": "clicks",
+      "srcKB": 526,
+      "outKB": 66
+     },
+     {
+      "file": "dp-085.webm",
+      "name": "点击回应-开心跃动",
+      "role": "clicks",
+      "srcKB": 525,
+      "outKB": 62
+     },
+     {
+      "file": "dp-086.webm",
+      "name": "点击回应-挠痒咯咯笑",
+      "role": "clicks",
+      "srcKB": 415,
+      "outKB": 43
+     },
+     {
+      "file": "dp-087.webm",
+      "name": "照镜子",
+      "role": "random",
+      "srcKB": 492,
+      "outKB": 56
+     },
+     {
+      "file": "dp-088.webm",
+      "name": "玩水枪",
+      "role": "random",
+      "srcKB": 511,
+      "outKB": 61
+     },
+     {
+      "file": "dp-089.webm",
+      "name": "玩游戏气急败坏",
+      "role": "random",
+      "srcKB": 513,
+      "outKB": 56
+     },
+     {
+      "file": "dp-090.webm",
+      "name": "用鲸鱼尾巴拍打地面",
+      "role": "random",
+      "srcKB": 344,
+      "outKB": 35
+     },
+     {
+      "file": "dp-091.webm",
+      "name": "睡觉-开始",
+      "role": "sleep.start",
+      "srcKB": 324,
+      "outKB": 39
+     },
+     {
+      "file": "dp-092.webm",
+      "name": "睡觉-循环",
+      "role": "sleep.loop",
+      "srcKB": 231,
+      "outKB": 27
+     },
+     {
+      "file": "dp-093.webm",
+      "name": "睡觉-起来",
+      "role": "sleep.end",
+      "srcKB": 371,
+      "outKB": 44
+     },
+     {
+      "file": "dp-094.webm",
+      "name": "碎碎念-发呆碎碎念",
+      "role": "whisper",
+      "srcKB": 319,
+      "outKB": 31
+     },
+     {
+      "file": "dp-095.webm",
+      "name": "碎碎念-对屏碎碎念",
+      "role": "whisper",
+      "srcKB": 356,
+      "outKB": 30
+     },
+     {
+      "file": "dp-096.webm",
+      "name": "碎碎念-擦桌碎碎念",
+      "role": "whisper",
+      "srcKB": 342,
+      "outKB": 36
+     },
+     {
+      "file": "dp-097.webm",
+      "name": "穿针乞巧",
+      "role": "random",
+      "srcKB": 470,
+      "outKB": 57
+     },
+     {
+      "file": "dp-098.webm",
+      "name": "舞狮头",
+      "role": "random",
+      "srcKB": 617,
+      "outKB": 80
+     },
+     {
+      "file": "dp-099.webm",
+      "name": "荡秋千",
+      "role": "random",
+      "srcKB": 629,
+      "outKB": 74
+     },
+     {
+      "file": "dp-100.webm",
+      "name": "萌化小幽灵",
+      "role": "random",
+      "srcKB": 412,
+      "outKB": 49
+     },
+     {
+      "file": "dp-101.webm",
+      "name": "蓝鲸现世",
+      "role": "random",
+      "srcKB": 472,
+      "outKB": 64
+     },
+     {
+      "file": "dp-102.webm",
+      "name": "蝴蝶蜜蜂环绕头顶开花",
+      "role": "random",
+      "srcKB": 833,
+      "outKB": 110
+     },
+     {
+      "file": "dp-103.webm",
+      "name": "螃蟹走路",
+      "role": "moves",
+      "srcKB": 583,
+      "outKB": 73
+     },
+     {
+      "file": "dp-104.webm",
+      "name": "被吓一跳",
+      "role": "random",
+      "srcKB": 276,
+      "outKB": 23
+     },
+     {
+      "file": "dp-105.webm",
+      "name": "被落叶淹没",
+      "role": "random",
+      "srcKB": 749,
+      "outKB": 98
+     },
+     {
+      "file": "dp-106.webm",
+      "name": "被鼠标拖拽悬空反馈",
+      "role": "drag",
+      "srcKB": 454,
+      "outKB": 50
+     },
+     {
+      "file": "dp-107.webm",
+      "name": "装点圣诞树",
+      "role": "random",
+      "srcKB": 799,
+      "outKB": 108
+     },
+     {
+      "file": "dp-108.webm",
+      "name": "讨糖南瓜灯",
+      "role": "random",
+      "srcKB": 472,
+      "outKB": 57
+     },
+     {
+      "file": "dp-109.webm",
+      "name": "超大伸懒腰",
+      "role": "random",
+      "srcKB": 388,
+      "outKB": 43
+     },
+     {
+      "file": "dp-110.webm",
+      "name": "踢毽子",
+      "role": "random",
+      "srcKB": 519,
+      "outKB": 60
+     },
+     {
+      "file": "dp-111.webm",
+      "name": "轻快摇摆舞",
+      "role": "random",
+      "srcKB": 530,
+      "outKB": 55
+     },
+     {
+      "file": "dp-112.webm",
+      "name": "轻快记录",
+      "role": "random",
+      "srcKB": 437,
+      "outKB": 49
+     },
+     {
+      "file": "dp-113.webm",
+      "name": "骑木马",
+      "role": "random",
+      "srcKB": 681,
+      "outKB": 84
+     },
+     {
+      "file": "dp-114.webm",
+      "name": "鲸鱼吐泡泡特效",
+      "role": "random",
+      "srcKB": 442,
+      "outKB": 51
+     }
+    ],
+    "roles": {
+     "idle": [
+      "待机呼吸休闲"
+     ],
+     "turn": [
+      "东张西望"
+     ],
+     "drag": [
+      "被鼠标拖拽悬空反馈"
+     ],
+     "clicks": [
+      "点击回应-开心跃动",
+      "点击回应-害羞惊讶",
+      "点击回应-傲娇生气",
+      "点击回应-挠痒咯咯笑",
+      "点击回应-元气挥手"
+     ],
+     "moves": [
+      "螃蟹走路",
+      "原地漂浮踏步",
+      "原地左转奔跑"
+     ],
+     "balance": [
+      "余额-钱袋满溢",
+      "余额-金袋叮当",
+      "余额-钱袋如常",
+      "余额-数金皱眉",
+      "余额-袋空如洗",
+      "余额-分文不剩"
+     ],
+     "whisper": [
+      "碎碎念-擦桌碎碎念",
+      "碎碎念-发呆碎碎念",
+      "碎碎念-对屏碎碎念"
+     ],
+     "workStatus": [
+      "工作状态-思考冒泡",
+      "工作状态-忙碌点按",
+      "工作状态-清点归档",
+      "工作状态-原地踱步张望",
+      "工作状态-雀跃庆祝",
+      "工作状态-垂头叹气冒汗"
+     ],
+     "sleep": {
+      "start": [
+       "睡觉-开始"
+      ],
+      "loop": [
+       "睡觉-循环"
+      ],
+      "end": [
+       "睡觉-起来"
+      ]
+     },
+     "baifan": [
+      "开心小跑",
+      "侧身急躁跑",
+      "期待开饭",
+      "吃饭·碗饭",
+      "吃饭团"
+     ],
+     "random": [
+      {
+       "name": "悠闲哼歌",
+       "category": "小动作"
+      },
+      {
+       "name": "超大伸懒腰",
+       "category": "小动作"
+      },
+      {
+       "name": "原地敲击桌面互动",
+       "category": "小动作"
+      },
+      {
+       "name": "原地重力下蹲压缩",
+       "category": "小动作"
+      },
+      {
+       "name": "哈欠连天",
+       "category": "小动作"
+      },
+      {
+       "name": "原地小憩沉眠",
+       "category": "小动作"
+      },
+      {
+       "name": "女仆屈膝礼仪",
+       "category": "小动作"
+      },
+      {
+       "name": "被吓一跳",
+       "category": "小动作"
+      },
+      {
+       "name": "小幅度原地360度旋转展示",
+       "category": "小动作"
+      },
+      {
+       "name": "偷吃零食被抓住",
+       "category": "小动作"
+      },
+      {
+       "name": "用鲸鱼尾巴拍打地面",
+       "category": "小动作"
+      },
+      {
+       "name": "打瞌睡被惊醒",
+       "category": "小动作"
+      },
+      {
+       "name": "照镜子",
+       "category": "小动作"
+      },
+      {
+       "name": "整体换装试色",
+       "category": "小动作"
+      },
+      {
+       "name": "轻快记录",
+       "category": "小动作"
+      },
+      {
+       "name": "写代码",
+       "category": "小动作"
+      },
+      {
+       "name": "摇扇纳凉",
+       "category": "小动作"
+      },
+      {
+       "name": "晨间刷牙",
+       "category": "小动作"
+      },
+      {
+       "name": "原地专心玩魔方",
+       "category": "玩耍"
+      },
+      {
+       "name": "原地蹲下玩玩具汽车",
+       "category": "玩耍"
+      },
+      {
+       "name": "鲸鱼吐泡泡特效",
+       "category": "玩耍"
+      },
+      {
+       "name": "原地跳跃抓碎头顶物品",
+       "category": "玩耍"
+      },
+      {
+       "name": "玩游戏气急败坏",
+       "category": "玩耍"
+      },
+      {
+       "name": "玩水枪",
+       "category": "玩耍"
+      },
+      {
+       "name": "小提琴演奏",
+       "category": "玩耍"
+      },
+      {
+       "name": "蓝鲸现世",
+       "category": "玩耍"
+      },
+      {
+       "name": "优雅女仆舞",
+       "category": "玩耍"
+      },
+      {
+       "name": "轻快摇摆舞",
+       "category": "玩耍"
+      },
+      {
+       "name": "可爱宅舞",
+       "category": "玩耍"
+      },
+      {
+       "name": "吹气球",
+       "category": "玩耍"
+      },
+      {
+       "name": "动物环绕",
+       "category": "玩耍"
+      },
+      {
+       "name": "放风筝",
+       "category": "玩耍"
+      },
+      {
+       "name": "拆礼物",
+       "category": "玩耍"
+      },
+      {
+       "name": "变鸽子",
+       "category": "玩耍"
+      },
+      {
+       "name": "扑克魔术",
+       "category": "玩耍"
+      },
+      {
+       "name": "抽陀螺",
+       "category": "玩耍"
+      },
+      {
+       "name": "吹笛子",
+       "category": "玩耍"
+      },
+      {
+       "name": "蝴蝶蜜蜂环绕头顶开花",
+       "category": "玩耍"
+      },
+      {
+       "name": "撸猫",
+       "category": "玩耍"
+      },
+      {
+       "name": "凭空生花",
+       "category": "玩耍"
+      },
+      {
+       "name": "骑木马",
+       "category": "玩耍"
+      },
+      {
+       "name": "三球抛接",
+       "category": "玩耍"
+      },
+      {
+       "name": "踢毽子",
+       "category": "玩耍"
+      },
+      {
+       "name": "下五子棋",
+       "category": "玩耍"
+      },
+      {
+       "name": "荡秋千",
+       "category": "玩耍"
+      },
+      {
+       "name": "吃白饭",
+       "category": "吃什么"
+      },
+      {
+       "name": "大口吃零食",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃Token",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃早餐",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃午餐",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃晚餐",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃冰淇淋融化",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃大闸蟹",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃糖葫芦",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃长寿面",
+       "category": "吃什么"
+      },
+      {
+       "name": "吃西瓜",
+       "category": "吃什么"
+      },
+      {
+       "name": "涮火锅",
+       "category": "吃什么"
+      },
+      {
+       "name": "被落叶淹没",
+       "category": "时节"
+      },
+      {
+       "name": "中秋赏月吃月饼",
+       "category": "时节"
+      },
+      {
+       "name": "堆雪人",
+       "category": "时节"
+      },
+      {
+       "name": "放烟花",
+       "category": "时节"
+      },
+      {
+       "name": "吃粽子",
+       "category": "时节"
+      },
+      {
+       "name": "吃年糕",
+       "category": "时节"
+      },
+      {
+       "name": "吃青团",
+       "category": "时节"
+      },
+      {
+       "name": "吃腊八粥",
+       "category": "时节"
+      },
+      {
+       "name": "吃重阳糕",
+       "category": "时节"
+      },
+      {
+       "name": "收红包",
+       "category": "时节"
+      },
+      {
+       "name": "写福字",
+       "category": "时节"
+      },
+      {
+       "name": "穿针乞巧",
+       "category": "时节"
+      },
+      {
+       "name": "舞狮头",
+       "category": "时节"
+      },
+      {
+       "name": "讨糖南瓜灯",
+       "category": "时节"
+      },
+      {
+       "name": "插茱萸赏菊",
+       "category": "时节"
+      },
+      {
+       "name": "放河灯",
+       "category": "时节"
+      },
+      {
+       "name": "萌化小幽灵",
+       "category": "时节"
+      },
+      {
+       "name": "装点圣诞树",
+       "category": "时节"
+      },
+      {
+       "name": "放孔明灯",
+       "category": "时节"
+      },
+      {
+       "name": "吃汤圆",
+       "category": "时节"
+      },
+      {
+       "name": "吃饺子",
+       "category": "时节"
+      },
+      {
+       "name": "是啊，吃什么",
+       "category": "文字"
+      },
+      {
+       "name": "深度思考碎碎念",
+       "category": "文字"
+      }
+     ]
+    }
+   }
+  };
+  /* @@PETPACK-DATA-END@@ */
+
+  /** 按 id 取动作包；没有返回 null */
+  function petpackById(id) {
+    return PETPACKS[id] || null;
+  }
+
+  /** 全部动作包（数组） */
+  function petpackList() {
+    return Object.keys(PETPACKS).map(function (k) { return PETPACKS[k]; });
+  }
+
+  /** 动作名 → 动作记录（含 file / role） */
+  function petpackActionOf(pack, name) {
+    if (!pack || !name) return null;
+    for (let i = 0; i < pack.actions.length; i++) if (pack.actions[i].name === name) return pack.actions[i];
+    return null;
+  }
+
+  /** 某角色的动作名池（数组）；balance / workStatus 这类分档池返回「数组的数组」 */
+  function petpackRolePool(pack, role) {
+    if (!pack || !pack.roles) return [];
+    return pack.roles[role] || [];
+  }
+
+  /** 从角色池随机挑一个动作名（avoid = 刚播过的，尽量不连着重复）；池空返回 '' */
+  function petpackPick(pack, role, avoid, rnd) {
+    const pool = petpackRolePool(pack, role);
+    if (!pool.length) return '';
+    const r = (typeof rnd === 'number' && isFinite(rnd)) ? rnd : Math.random();
+    if (pool.length === 1) return pool[0];
+    let idx = Math.floor(Math.max(0, Math.min(0.999999, r)) * pool.length);
+    if (pool[idx] === avoid) idx = (idx + 1) % pool.length;
+    return pool[idx];
+  }
+
+  /** 分档池（如余额 6 档）按档位挑：pool 是数组的数组，index 越界则夹到最后一档 */
+  function petpackPickTier(pack, role, tier, avoid, rnd) {
+    const pool = petpackRolePool(pack, role);
+    if (!pool.length) return '';
+    const i = Math.max(0, Math.min(pool.length - 1, Math.round(Number(tier) || 0)));
+    const seg = pool[i];
+    if (!seg || !seg.length) return '';
+    return petpackPick({ roles: { _t: seg }, pick: null }, '_t', avoid, rnd);
+  }
+
+  /** 随机表演池：{name, category} 数组（自带分类，供界面与权重用） */
+  function petpackRandomPool(pack) {
+    return (pack && pack.roles && pack.roles.random) || [];
+  }
+
+  /** 从随机表演池挑一个动作名（可按分类过滤；pool 过滤后为空则退回全量） */
+  function petpackPickRandom(pack, category, avoid, rnd) {
+    let pool = petpackRandomPool(pack);
+    if (category) {
+      const f = pool.filter(function (x) { return x.category === category; });
+      if (f.length) pool = f;
+    }
+    if (!pool.length) return '';
+    const r = (typeof rnd === 'number' && isFinite(rnd)) ? rnd : Math.random();
+    const names = pool.map(function (x) { return x.name; });
+    let idx = Math.floor(Math.max(0, Math.min(0.999999, r)) * names.length);
+    if (names[idx] === avoid) idx = (idx + 1) % names.length;
+    return names[idx];
+  }
+
+  /** 动作包素材文件 → 插件内可用 URL（走 assetUrl：宿主只服务根级文件，故平铺） */
+  function petpackFileUrl(file) {
+    return assetUrl(file);
   }
 
   /* ======== src/core/balance.js ======== */
@@ -2137,6 +3579,10 @@ const CHAT_MODELS = [
         '格式必须严格用半角方括号加英文冒号（如 [stick:archive:比心] 或 [bean:smile]），不要写成中文括号或加多余空格；' +
         '适度使用，一条回复最多 1-2 个。');
     }
+    parts.push('【交付文件 · 重要】你这次如果产出了文件（图片、折线图、表格、文档、网页等），' +
+      '请在回复的最后单独一行只写这一行：📎 加完整绝对路径（例：📎 C:\\Users\\JXKJ1\\Documents\\坚祥数字助理\\我的花费折线图_20261106-1119.png）。' +
+      '桌宠会把这一行渲染成可复制的成果卡片，用户点一下就能拿到路径找到文件；一行一个文件，最多 3 个。' +
+      '没有产出文件时不要写这一行。');
     if (balanceBlock) parts.push(balanceBlock);
     parts.push('【用户说】' + userText);
     return parts.join('\n\n');
@@ -2147,7 +3593,7 @@ const CHAT_MODELS = [
    * 编辑人设/昵称变化 → 指纹变 → 下一条自动全量重发；换模型=新子对话=天然首条。 */
   // v2.2.2：人设指纹加入 PROMPT_VER——首轮人设段落（贴纸教学等）改版后，
   // 老子对话也会自动全量重发一次新说明，无需用户手动操作
-  const PROMPT_VER = '20261026-stick-archive';
+  const PROMPT_VER = '20261119-deliv';
   function hashStr(s) {
     let h = 5381;
     for (let i = 0; i < s.length; i++) { h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0; }
@@ -2490,6 +3936,7 @@ const CHAT_MODELS = [
     const av = document.createElement('div'); av.className = 'avatar' + (who === 'me' ? '' : ' fish');
     const b = document.createElement('div'); b.className = 'bubble2';
     renderRich(b, text);
+    if (who !== 'me') { try { renderDeliverables(b, text, () => sys('本地文件不能直接打开——路径已复制，粘到资源管理器地址栏即可')); } catch (e) { /* 卡片失败不影响消息 */ } }
     if (via && who !== 'me') { const v = document.createElement('span'); v.className = 'via'; v.textContent = 'via ' + via; b.appendChild(v); }
     row.appendChild(av); row.appendChild(b);
     msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;

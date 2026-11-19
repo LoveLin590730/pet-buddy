@@ -45,6 +45,10 @@
         '格式必须严格用半角方括号加英文冒号（如 [stick:archive:比心] 或 [bean:smile]），不要写成中文括号或加多余空格；' +
         '适度使用，一条回复最多 1-2 个。');
     }
+    parts.push('【交付文件 · 重要】你这次如果产出了文件（图片、折线图、表格、文档、网页等），' +
+      '请在回复的最后单独一行只写这一行：📎 加完整绝对路径（例：📎 C:\\Users\\JXKJ1\\Documents\\坚祥数字助理\\我的花费折线图_20261106-1119.png）。' +
+      '桌宠会把这一行渲染成可复制的成果卡片，用户点一下就能拿到路径找到文件；一行一个文件，最多 3 个。' +
+      '没有产出文件时不要写这一行。');
     if (balanceBlock) parts.push(balanceBlock);
     parts.push('【用户说】' + userText);
     return parts.join('\n\n');
@@ -55,7 +59,7 @@
    * 编辑人设/昵称变化 → 指纹变 → 下一条自动全量重发；换模型=新子对话=天然首条。 */
   // v2.2.2：人设指纹加入 PROMPT_VER——首轮人设段落（贴纸教学等）改版后，
   // 老子对话也会自动全量重发一次新说明，无需用户手动操作
-  const PROMPT_VER = '20261026-stick-archive';
+  const PROMPT_VER = '20261119-deliv';
   function hashStr(s) {
     let h = 5381;
     for (let i = 0; i < s.length; i++) { h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0; }

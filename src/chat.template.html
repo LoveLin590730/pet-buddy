@@ -28,6 +28,17 @@
   .bubble2 .via { display: block; margin-top: 4px; font-size: 10.5px; opacity: .65; }
   .sticker { display: inline-block; vertical-align: middle; margin: 2px 3px; }
   .sticker.fish-st { width: 86px; height: 93px; background: url("feiyu-spritesheet.webp") no-repeat; background-size: 800% 1100%; }
+ /* v4.3 成果卡片（与 client.css 同款，独立窗口独立声明） */ .pb2-deliv-box { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+ .pb2-deliv { display: flex; align-items: center; gap: 9px; border: 1.5px solid #cfdcf7; border-radius: 10px;
+   padding: 8px 10px; background: linear-gradient(180deg, #fbfdff, #eef4ff); }
+ .pb2-deliv-ico { flex: none; width: 26px; height: 26px; color: #4a6fd4; display: flex; }
+ .pb2-deliv-ico svg { width: 100%; height: 100%; }
+ .pb2-deliv-mid { flex: 1 1 auto; min-width: 0; }
+ .pb2-deliv-name { font-size: 12.5px; font-weight: 600; color: #24365f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .pb2-deliv-path { font-size: 11px; color: #7b87ab; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
+   border: 1px solid #b9cdf5; background: #fff; color: #3a5bb8; cursor: pointer; }
+ .pb2-deliv-btn:hover { background: #eaf1ff; border-color: #8aa8f0; }
   .sticker.bean-st svg { width: 56px; height: 56px; display: block; }
   .sticker.maid-st img { max-width: 96px; max-height: 96px; border-radius: 9px; display: block; }
   .sticker.stick-st img { width: 96px; max-height: 96px; object-fit: contain; display: block; border-radius: 9px; }
@@ -130,6 +141,7 @@
     const av = document.createElement('div'); av.className = 'avatar' + (who === 'me' ? '' : ' fish');
     const b = document.createElement('div'); b.className = 'bubble2';
     renderRich(b, text);
+    if (who !== 'me') { try { renderDeliverables(b, text, () => sys('本地文件不能直接打开——路径已复制，粘到资源管理器地址栏即可')); } catch (e) { /* 卡片失败不影响消息 */ } }
     if (via && who !== 'me') { const v = document.createElement('span'); v.className = 'via'; v.textContent = 'via ' + via; b.appendChild(v); }
     row.appendChild(av); row.appendChild(b);
     msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;

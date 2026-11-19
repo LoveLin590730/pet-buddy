@@ -269,6 +269,17 @@
 .pb2-chatp-msg .sticker.bean-st svg { width: 46px; height: 46px; display: block; }
 .pb2-chatp-msg .sticker.stick-st img { max-width: 112px; max-height: 112px; width: auto; height: auto; object-fit: contain; display: block; border-radius: 8px; }
 
+/* ===== v4.3 动作包（petpack）：整套动作视频做皮肤 ===== */
+/* 两个 <video> 双缓冲叠放：换动作时新视频就绪才切前景（避免闪白）；非动作包皮肤一律隐藏 */
+.pb2-pet-wrap .pb2-vid { display: none; }
+.pb2-pet-wrap.pb2-skin-pack .pb2-vid {
+  display: block; position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  object-fit: contain; opacity: 0; transition: opacity .08s linear; pointer-events: none;
+}
+.pb2-pet-wrap.pb2-skin-pack .pb2-vid.pb2-vid-front { opacity: 1; }
+.pb2-pet-wrap.pb2-skin-pack .pb2-sprite,
+.pb2-pet-wrap.pb2-skin-pack .pb2-img-skin { display: none; }   /* 动作包模式下藏起精灵图/图片层 */
+
 /* ===== v4.1 自定义动图皮肤 + 图片皮肤空闲小动作 ===== */
 /* 动图（GIF/动画 WebP）由 <img> 自行逐帧播放，与和大人同款：不叠呼吸缩放（见上方 .pb2-skin-anim）。
    空闲小动作挂在 petWrap 整体上（呼吸/果冻在 viewport/imgSkin 层，互不打架）：
@@ -303,3 +314,23 @@
 .pb2-zip-item:hover { border-color: #8aa8f0; background: #eff4ff; }
 .pb2-zip-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #2c3c66; }
 .pb2-zip-meta { flex: none; font-size: 11.5px; color: #7c88ad; }
+
+/* ===== v4.3 成果卡片：对话产出的文件（图片/表格/文档/网页…） ===== */
+.pb2-deliv-box { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; width: 100%; }
+.pb2-deliv { display: flex; align-items: center; gap: 9px; border: 1.5px solid #cfdcf7; border-radius: 10px;
+  padding: 8px 10px; background: linear-gradient(180deg, #fbfdff, #eef4ff); }
+.pb2-deliv-ico { flex: none; width: 26px; height: 26px; color: #4a6fd4; display: flex; }
+.pb2-deliv-ico svg { width: 100%; height: 100%; }
+.pb2-deliv-mid { flex: 1 1 auto; min-width: 0; }
+.pb2-deliv-name { font-size: 12.5px; font-weight: 600; color: #24365f;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb2-deliv-path { font-size: 11px; color: #7b87ab; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb2-deliv-btn { flex: none; font-size: 11.5px; padding: 4px 8px; border-radius: 7px;
+  border: 1px solid #b9cdf5; background: #fff; color: #3a5bb8; cursor: pointer; transition: background .12s ease; }
+.pb2-deliv-btn:hover { background: #eaf1ff; border-color: #8aa8f0; }
+/* 气泡里空间小：只留文件名 + 复制（路径隐藏，按钮文案缩短靠 :hover title 提示） */
+.pb2-bubble .pb2-deliv { padding: 6px 8px; gap: 7px; }
+.pb2-bubble .pb2-deliv-ico { width: 22px; height: 22px; }
+.pb2-bubble .pb2-deliv-path { display: none; }
+.pb2-chatp-msg .pb2-deliv-box { margin-top: 6px; }
