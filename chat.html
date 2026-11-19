@@ -202,7 +202,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.6.1';
+const PB_VERSION = '3.7.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -254,6 +254,7 @@ const CHAT_MODELS = [
     /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */
     sfxOn: true,             // 交互音效开关
     sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
+    hiddenSkins: [],         // v3.7 被移除的内置皮肤 id（可从模型面板恢复）
     /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
     phrases: [],
   };
@@ -1223,15 +1224,17 @@ const CHAT_MODELS = [
     const sampleRate = o.sampleRate || SPEECH_SR;
     const step = o.step || v.step;
     const gap = o.gap === undefined ? 0.22 : o.gap;
-    const sentences = (String(text).match(/[^？?！!。.，,、；;…\n]+[？?！!。.，,、；;…]*/g) || [])
-      .map(s => ({ text: s, tk: syllables(s) })).filter(s => s.tk.length);
+    // v3.7：按标点/表情标记切段，段间停顿时长由标点决定（明显断句）
+    const sentences = speechSegments(text)
+      .map(s => ({ text: s.text, tk: syllables(s.text), pause: Math.max(s.pauseSec, gap * 0.6) }))
+      .filter(s => s.tk.length);
     const totalTk = sentences.reduce((n, s) => n + s.tk.length, 0) || 1;
     const targets = guidedTargets(track, totalTk);
     const mids = guidedPickList(targets, v.scale);          // 按相对走向选档（不是绝对值）
-    const total = sentences.reduce((n, s) => n + s.tk.length * step + gap, 0) + 0.4;
+    const total = sentences.reduce((n, s) => n + s.tk.length * step + s.pause, 0) + 0.4;
     const out = new Float32Array(Math.ceil(total * sampleRate));
     let t = 0.02, k = 0;
-    for (const { text: s, tk } of sentences) {
+    for (const { text: s, tk, pause } of sentences) {
       const ask = /[？?]$/.test(s), shout = /[！!]/.test(s), sad = /(……|\.\.\.|…)$/.test(s);
       tk.forEach((w, i) => {
         const last = i === tk.length - 1;
@@ -1241,7 +1244,7 @@ const CHAT_MODELS = [
           last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0,
           hash(w));   // 口型仍按字来，保持经典听感
       });
-      t += tk.length * step + gap;
+      t += tk.length * step + pause;
     }
     for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * 2.4);
     return out;
@@ -1282,16 +1285,68 @@ const CHAT_MODELS = [
   /** 清洗成「能念的文本」：剥掉贴纸标记/代码/链接/markdown 记号，压平空白，按上限截断 */
   function speechClean(raw) {
     let t = String(raw == null ? '' : raw);
-    t = t.replace(/\[(?:stick|fish|bean)\s*:[^\]]*\]/gi, ' '); // 表情/贴纸标记不念出来
+    // v3.7：表情/贴纸标记不念，但**当作一次停顿**（用户要求：[stick:…] 也算断句）
+    t = t.replace(/\[(?:stick|fish|bean)\s*:[^\]]*\]/gi, '｜');
     t = t.replace(/```[\s\S]*?```/g, ' ');                      // 代码块
     t = t.replace(/`[^`]*`/g, ' ');
     t = t.replace(/https?:\/\/\S+/g, ' ');                      // 链接
-    t = t.replace(/[*_#>|~]/g, ' ');                            // markdown 记号
+    t = t.replace(/[*_#>~]/g, ' ');                             // markdown 记号（保留 ｜ 停顿标记）
     t = t.replace(/[（(]\s*[)）]/g, ' ');
     t = t.replace(/[ \t\r\n]+/g, ' ').trim();
+    t = t.replace(/\s*｜\s*/g, '｜');                            // 停顿标记两侧不留空格
     const max = clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400);
-    if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？\s]+$/, '') + '……';
+    if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？｜\s]+$/, '') + '……';
     return t;
+  }
+
+  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
+  function pauseOf(p) {
+    if (!p) return 0.10;                       // 段与段之间的小气口
+    if (p.indexOf('｜') >= 0) return 0.34;      // 表情/贴纸标记 = 明显停顿
+    if (/…/.test(p)) return 0.36;               // 省略号拉长
+    if (/[。！？!?]/.test(p)) return 0.30;      // 句末
+    return 0.16;                                // 逗号/顿号/分号/冒号
+  }
+
+  /** 切段：每段带上"说完该停多久"（v3.7 断句的核心） */
+  function speechSegments(text) {
+    const s = String(text || '');
+    const out = [];
+    const re = /([^。！？!?…，,、；;：:｜\n]+)([。！？!?…]+|[，,、；;：:]+|｜)?/g;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      const body = (m[1] || '').trim();
+      const punct = m[2] || '';
+      if (!body) { if (punct) out.push({ text: '', pauseSec: pauseOf(punct) }); continue; }
+      out.push({ text: body + punct, pauseSec: pauseOf(punct) });
+    }
+    return out;
+  }
+
+  /** 经典合成 + 断句：逐段调用 vendor 的 synth，段间按标点插静音 */
+  function synthPaced(text, opts) {
+    const o = opts || {};
+    const sr = o.sampleRate || SPEECH_SR;
+    const segs = speechSegments(text).filter(x => syllables(x.text).length > 0);
+    if (!segs.length) return new Float32Array(0);
+    const parts = [];
+    let total = 0.02;
+    for (const seg of segs) {
+      let a;
+      try { a = synth(seg.text, { voice: o.voice, step: o.step, sampleRate: sr }); }
+      catch (e) { continue; }
+      if (!a || !a.length) continue;
+      parts.push({ a: a, pause: seg.pauseSec });
+      total += a.length / sr + seg.pauseSec;
+    }
+    if (!parts.length) return new Float32Array(0);
+    const out = new Float32Array(Math.ceil(total * sr));
+    let pos = Math.round(0.02 * sr);
+    for (const p of parts) {
+      if (pos + p.a.length <= out.length) out.set(p.a, pos);
+      pos += p.a.length + Math.round(p.pause * sr);
+    }
+    return out;
   }
 
   /**
@@ -1306,7 +1361,7 @@ const CHAT_MODELS = [
     const o = opts || {};
     if (!speechEnabled() && !o.force) return { ok: false, skipped: 'off' };
     const text = speechClean(raw);
-    if (!text) return { ok: false, skipped: 'empty' };
+    if (!text || !text.replace(/[｜\s]+/g, '')) return { ok: false, skipped: 'empty' };
     const ctx = speechCtx();
     if (!ctx) return { ok: false, reason: 'no-ctx' };
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 等手势 */ } }
@@ -1349,7 +1404,7 @@ const CHAT_MODELS = [
     // ② 经典合成（回退，也是"跟读关闭"时的正路）：一个字一声
     if (!samples) {
       try {
-        samples = synth(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
       } catch (e) {
         log('error', '语音合成失败: ' + e.message);
         return { ok: false, reason: 'synth' };

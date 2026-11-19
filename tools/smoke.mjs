@@ -67,6 +67,7 @@ const probe = `
   ensureAssistantSession, lastAssistantText, sendViaMock, chatSend, apiOK,
   synth, toWav, VOICES, VOWELS, hash, syllables,
   speak, speechClean, speechState, speechStop, speechUnlock, speechApplyVolume, SPEECH_VOICE_NAMES,
+  speechSegments, pauseOf, synthPaced,
   analyzeFrame, prosodyTrack, synthFollow, synthGuided, guidedTargets, guidedPickList, pickScaleMidi,
   resampleLinear, mixToMono, ttsPcm, ttsCache, trackCache, speechFollowEnabled,
   SFX_SPEC, sfx, sfxState, sfxApplyVolume,
@@ -251,7 +252,35 @@ console.log('\n[韵律跟读（TTS → 音高/口型 → 重唱）· v3.4]');
   ok('常用语库默认是空数组（存在本机）', Array.isArray(P.DEFAULTS.phrases) && P.DEFAULTS.phrases.length === 0);
 }
 
-console.log('\n[定位修复 + 气泡聊天 + 三档朗读 + 菜单分栏 · v3.6.1]');
+console.log('\n[断句 + 模型移除 + 两重音色 · v3.7]');
+{
+  const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
+  const sp = readFileSync(path.join(ROOT, 'src/core/speech.js'), 'utf8');
+  // 断句
+  ok('表情/贴纸标记转成停顿标记（不念但有气口）', /replace\(\/\\\[\(\?:stick\|fish\|bean\)[^;]*'｜'/.test(sp) || /'｜'\)/.test(sp));
+  eq('剥标记后保留停顿点', P.speechClean('好看吗 [stick:archive:比心] 真的'), '好看吗｜真的');
+  const segs = P.speechSegments('今天吃白饭？没饭了！还有，别催。');
+  ok('按标点切段', segs.length >= 3, JSON.stringify(segs.map(s => s.text)));
+  ok('句末停顿 > 逗号停顿', P.pauseOf('。') > P.pauseOf('，'), P.pauseOf('。') + ' vs ' + P.pauseOf('，'));
+  ok('表情标记停顿最明显', P.pauseOf('｜') > P.pauseOf('。'), P.pauseOf('｜') + ' vs ' + P.pauseOf('。'));
+  {
+    const a = P.synthPaced('白饭。没饭了！', { voice: 'fish' });
+    const b = P.synthPaced('白饭没饭了', { voice: 'fish' });
+    ok('经典合成带断句后更长（插入了静音）', a.length > b.length, a.length + ' vs ' + b.length);
+    const g = P.synthGuided('白饭。没饭了！', { hopSec: 0.02, durSec: 1, frames: Array.from({ length: 60 }, () => ({ f0: 220, rms: 0.2, vowel: 0 })) }, { voice: 'fish' });
+    ok('语调引导同样带断句（产出正常）', g.length > 44100 * 0.3, g.length + ' 采样');
+  }
+  // 两重音色
+  ok('bibo音色与朗读音色分成两项（菜单里）', /bibo音色：/.test(t) && /朗读音色：/.test(t));
+  ok('朗读音色从宿主接口取（GET /api/voice/voices）', /\/api\/voice\/voices/.test(t) && /function fetchTtsVoices/.test(t));
+  ok('朗读音色有兜底清单', /zh-CN-XiaoxiaoNeural/.test(t) && /TTS_FALLBACK_VOICES/.test(t));
+  ok('可以循环切换朗读音色', /function cycleTtsVoice/.test(t));
+  // 模型移除
+  ok('内置模型可移除（hiddenSkins）', /hiddenSkins/.test(t) && /'移除'/.test(t));
+  ok('移除后可一键恢复', /恢复已移除的模型/.test(t));
+  ok('移除当前皮肤会自动换回官方形象', /settings\.skin === m\.id\) \{ settings\.skin = 'fish'/.test(t));
+}
+
 {
   const t = readFileSync(path.join(ROOT, 'client.js'), 'utf8');
   const css4 = readFileSync(path.join(ROOT, 'client.css'), 'utf8');
@@ -478,7 +507,8 @@ console.log('\n[语音合成与播报 · v3.2]');
   ok('两个声线（大肥鱼高 / 路墨低）', P.VOICES.fish.scale[0] > P.VOICES.lumo.scale[0] && P.SPEECH_VOICE_NAMES.fish.indexOf('大肥鱼') >= 0);
   eq('分句按标点（问号句尾音处理的前提）', P.syllables('今天吃白饭？没饭了！').join(''), '今天吃白饭没饭了');
 
-  eq('朗读前剥掉贴纸标记', P.speechClean('好看吗 [stick:archive:比心] 真的'), '好看吗 真的');
+  eq('朗读前把贴纸标记换成停顿点（v3.7：表情也算断句）', P.speechClean('好看吗 [stick:archive:比心] 真的'), '好看吗｜真的');
+  eq('只有贴纸标记时视为没内容', P.speechClean('[stick:archive:比心]').replace(/[｜\s]+/g, ''), '');
   eq('朗读前剥掉链接与 markdown', P.speechClean('看 **这里** https://a.b/c 吧'), '看 这里 吧');
   eq('代码块不念出来', P.speechClean('看代码 ```js\nconst a=1;\n``` 好了'), '看代码 好了');
   ok('超长按上限截断并加省略号', /……$/.test(P.speechClean('一'.repeat(200))), P.speechClean('一'.repeat(200)).slice(-6));

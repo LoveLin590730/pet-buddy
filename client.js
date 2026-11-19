@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '3.6.1';
+const PB_VERSION = '3.7.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -194,6 +194,7 @@ const CHAT_MODELS = [
     /* v3.3 音效：点桌宠/弹面板/拖拽吸附/识别成功失败各一声（同一套合成器造的短音） */
     sfxOn: true,             // 交互音效开关
     sfxVolume: 0.6,          // 音效音量 0..1（与语音音量独立）
+    hiddenSkins: [],         // v3.7 被移除的内置皮肤 id（可从模型面板恢复）
     /* v3.4 常用语库（右键 → bibo语音 → 常用语…，增删改查；只存本机） */
     phrases: [],
   };
@@ -1163,15 +1164,17 @@ const CHAT_MODELS = [
     const sampleRate = o.sampleRate || SPEECH_SR;
     const step = o.step || v.step;
     const gap = o.gap === undefined ? 0.22 : o.gap;
-    const sentences = (String(text).match(/[^？?！!。.，,、；;…\n]+[？?！!。.，,、；;…]*/g) || [])
-      .map(s => ({ text: s, tk: syllables(s) })).filter(s => s.tk.length);
+    // v3.7：按标点/表情标记切段，段间停顿时长由标点决定（明显断句）
+    const sentences = speechSegments(text)
+      .map(s => ({ text: s.text, tk: syllables(s.text), pause: Math.max(s.pauseSec, gap * 0.6) }))
+      .filter(s => s.tk.length);
     const totalTk = sentences.reduce((n, s) => n + s.tk.length, 0) || 1;
     const targets = guidedTargets(track, totalTk);
     const mids = guidedPickList(targets, v.scale);          // 按相对走向选档（不是绝对值）
-    const total = sentences.reduce((n, s) => n + s.tk.length * step + gap, 0) + 0.4;
+    const total = sentences.reduce((n, s) => n + s.tk.length * step + s.pause, 0) + 0.4;
     const out = new Float32Array(Math.ceil(total * sampleRate));
     let t = 0.02, k = 0;
-    for (const { text: s, tk } of sentences) {
+    for (const { text: s, tk, pause } of sentences) {
       const ask = /[？?]$/.test(s), shout = /[！!]/.test(s), sad = /(……|\.\.\.|…)$/.test(s);
       tk.forEach((w, i) => {
         const last = i === tk.length - 1;
@@ -1181,7 +1184,7 @@ const CHAT_MODELS = [
           last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0,
           hash(w));   // 口型仍按字来，保持经典听感
       });
-      t += tk.length * step + gap;
+      t += tk.length * step + pause;
     }
     for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * 2.4);
     return out;
@@ -1222,16 +1225,68 @@ const CHAT_MODELS = [
   /** 清洗成「能念的文本」：剥掉贴纸标记/代码/链接/markdown 记号，压平空白，按上限截断 */
   function speechClean(raw) {
     let t = String(raw == null ? '' : raw);
-    t = t.replace(/\[(?:stick|fish|bean)\s*:[^\]]*\]/gi, ' '); // 表情/贴纸标记不念出来
+    // v3.7：表情/贴纸标记不念，但**当作一次停顿**（用户要求：[stick:…] 也算断句）
+    t = t.replace(/\[(?:stick|fish|bean)\s*:[^\]]*\]/gi, '｜');
     t = t.replace(/```[\s\S]*?```/g, ' ');                      // 代码块
     t = t.replace(/`[^`]*`/g, ' ');
     t = t.replace(/https?:\/\/\S+/g, ' ');                      // 链接
-    t = t.replace(/[*_#>|~]/g, ' ');                            // markdown 记号
+    t = t.replace(/[*_#>~]/g, ' ');                             // markdown 记号（保留 ｜ 停顿标记）
     t = t.replace(/[（(]\s*[)）]/g, ' ');
     t = t.replace(/[ \t\r\n]+/g, ' ').trim();
+    t = t.replace(/\s*｜\s*/g, '｜');                            // 停顿标记两侧不留空格
     const max = clamp(Math.round(Number(settings.speechMaxChars) || 60), 4, 400);
-    if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？\s]+$/, '') + '……';
+    if (t.length > max) t = t.slice(0, max).replace(/[，,、；;：:。.!！?？｜\s]+$/, '') + '……';
     return t;
+  }
+
+  /** 标点 → 该停多久（秒）。断句明显与否就靠这张表 */
+  function pauseOf(p) {
+    if (!p) return 0.10;                       // 段与段之间的小气口
+    if (p.indexOf('｜') >= 0) return 0.34;      // 表情/贴纸标记 = 明显停顿
+    if (/…/.test(p)) return 0.36;               // 省略号拉长
+    if (/[。！？!?]/.test(p)) return 0.30;      // 句末
+    return 0.16;                                // 逗号/顿号/分号/冒号
+  }
+
+  /** 切段：每段带上"说完该停多久"（v3.7 断句的核心） */
+  function speechSegments(text) {
+    const s = String(text || '');
+    const out = [];
+    const re = /([^。！？!?…，,、；;：:｜\n]+)([。！？!?…]+|[，,、；;：:]+|｜)?/g;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      const body = (m[1] || '').trim();
+      const punct = m[2] || '';
+      if (!body) { if (punct) out.push({ text: '', pauseSec: pauseOf(punct) }); continue; }
+      out.push({ text: body + punct, pauseSec: pauseOf(punct) });
+    }
+    return out;
+  }
+
+  /** 经典合成 + 断句：逐段调用 vendor 的 synth，段间按标点插静音 */
+  function synthPaced(text, opts) {
+    const o = opts || {};
+    const sr = o.sampleRate || SPEECH_SR;
+    const segs = speechSegments(text).filter(x => syllables(x.text).length > 0);
+    if (!segs.length) return new Float32Array(0);
+    const parts = [];
+    let total = 0.02;
+    for (const seg of segs) {
+      let a;
+      try { a = synth(seg.text, { voice: o.voice, step: o.step, sampleRate: sr }); }
+      catch (e) { continue; }
+      if (!a || !a.length) continue;
+      parts.push({ a: a, pause: seg.pauseSec });
+      total += a.length / sr + seg.pauseSec;
+    }
+    if (!parts.length) return new Float32Array(0);
+    const out = new Float32Array(Math.ceil(total * sr));
+    let pos = Math.round(0.02 * sr);
+    for (const p of parts) {
+      if (pos + p.a.length <= out.length) out.set(p.a, pos);
+      pos += p.a.length + Math.round(p.pause * sr);
+    }
+    return out;
   }
 
   /**
@@ -1246,7 +1301,7 @@ const CHAT_MODELS = [
     const o = opts || {};
     if (!speechEnabled() && !o.force) return { ok: false, skipped: 'off' };
     const text = speechClean(raw);
-    if (!text) return { ok: false, skipped: 'empty' };
+    if (!text || !text.replace(/[｜\s]+/g, '')) return { ok: false, skipped: 'empty' };
     const ctx = speechCtx();
     if (!ctx) return { ok: false, reason: 'no-ctx' };
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 等手势 */ } }
@@ -1289,7 +1344,7 @@ const CHAT_MODELS = [
     // ② 经典合成（回退，也是"跟读关闭"时的正路）：一个字一声
     if (!samples) {
       try {
-        samples = synth(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
+        samples = synthPaced(text, { voice: settings.speechVoice || 'fish', step: clamp(Number(settings.speechStep) || 0.13, 0.06, 0.4), sampleRate: SPEECH_SR });
       } catch (e) {
         log('error', '语音合成失败: ' + e.message);
         return { ok: false, reason: 'synth' };
@@ -2533,7 +2588,8 @@ const CHAT_MODELS = [
       { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
       { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
-      { icon: 'palette', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: 'palette', label: () => 'bibo音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: 'mic', label: () => '朗读音色：' + ttsVoiceLabel(), act: () => cycleTtsVoice(), keepOpen: true },
       { icon: 'speed', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
     ] },
     { icon: 'bell', label: 'bibo音效', sub: [
@@ -2569,6 +2625,47 @@ const CHAT_MODELS = [
     }
   }
   /* v3.5 朗读三件套：菜单里点一下循环切换，当前值直接写在菜单文字上（子菜单不关，就地刷新） */
+  /* v3.7 朗读音色（= 宿主 TTS 的音色，跟 bibo 声线是两回事）
+   * 列表来自 GET /api/voice/voices（实测可用，返回 name/display/gender）；取不到就用内置兜底。 */
+  const TTS_FALLBACK_VOICES = [
+    { name: 'zh-CN-XiaoxiaoNeural', display: '晓晓（女）' },
+    { name: 'zh-CN-XiaoyiNeural', display: '晓伊（女）' },
+    { name: 'zh-CN-YunxiNeural', display: '云希（男）' },
+    { name: 'zh-CN-YunjianNeural', display: '云健（男）' },
+    { name: 'zh-CN-YunyangNeural', display: '云扬（男）' },
+  ];
+  let TTS_VOICES = { at: 0, list: [] };
+  async function fetchTtsVoices(force) {
+    if (!force && TTS_VOICES.list.length && Date.now() - TTS_VOICES.at < 600000) return TTS_VOICES.list;
+    try {
+      const r = await fetch('/api/voice/voices', { headers: { Accept: 'application/json' } });
+      if (r.ok) {
+        const j = await r.json();
+        const list = (j && j.voices ? j.voices : [])
+          .filter(v => v && v.name)
+          .map(v => ({ name: v.name, display: v.display || v.name, gender: v.gender || '' }));
+        if (list.length) { TTS_VOICES = { at: Date.now(), list: list }; return list; }
+      }
+    } catch (e) { log('info', '朗读音色列表取不到：' + e.message); }
+    return TTS_VOICES.list;
+  }
+  function ttsVoiceList() { return TTS_VOICES.list.length ? TTS_VOICES.list : TTS_FALLBACK_VOICES; }
+  function ttsVoiceLabel() {
+    const v = String(settings.ttsVoice || '');
+    if (!v) return '宿主默认';
+    const f = ttsVoiceList().find(x => x.name === v);
+    return f ? f.display : v;
+  }
+  function cycleTtsVoice() {
+    const keys = [''].concat(ttsVoiceList().map(x => x.name));
+    const i = Math.max(0, keys.indexOf(String(settings.ttsVoice || '')));
+    settings.ttsVoice = keys[(i + 1) % keys.length];
+    saveSettings(); ttsCache.clear(); trackCache.clear();
+    bubbleSay('朗读音色：' + ttsVoiceLabel(), 2600);
+    sfx('tap');
+    if (speechMode() === 'tts') speechProbe('这是' + ttsVoiceLabel() + '的声音，听着如何？');
+  }
+
   /* v3.6 朗读三档：语调引导 / 经典合成 / 普通朗读（真人声） */
   const SPEECH_MODES = [
     { id: 'guided', label: '语调引导' },
@@ -2849,9 +2946,10 @@ const CHAT_MODELS = [
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
-      body.appendChild($new('h4', null, '内置模型'));
+      const hidden = Array.isArray(settings.hiddenSkins) ? settings.hiddenSkins : [];
+      body.appendChild($new('h4', null, '内置模型（可移除，移除后可恢复）'));
       const grid = $new('div', 'pb2-model-grid');
-      const builtin = Object.keys(SPRITE_SKINS).map(id => ({
+      const allBuiltin = Object.keys(SPRITE_SKINS).map(id => ({
         id,
         name: SPRITE_SKINS[id].name,
         desc: SPRITE_SKINS[id].desc + (SPRITE_SKINS[id].credit ? ' · ' + SPRITE_SKINS[id].credit : ''),
@@ -2864,6 +2962,7 @@ const CHAT_MODELS = [
         thumb: assetUrl(IMAGE_SKINS[id].file),
         contain: true,
       })));
+      const builtin = allBuiltin.filter(m => hidden.indexOf(m.id) < 0);
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
         const th = $new('div', 'pb2-model-thumb');
@@ -2873,11 +2972,39 @@ const CHAT_MODELS = [
         const info = $new('div');
         info.appendChild($new('div', 'pb2-model-name', m.name));
         info.appendChild($new('div', 'pb2-model-desc', m.desc));
-        card.appendChild(th); card.appendChild(info);
+        // v3.7：内置模型也能移除（从列表隐藏，素材不动；随时可恢复）
+        const acts = $new('div', 'pb2-model-acts');
+        const del = $new('button', 'pb2-model-act pb2-model-del', '移除');
+        del.type = 'button';
+        del.title = '从列表移除（素材不删，可在下方「恢复已移除」找回）';
+        del.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const list = Array.isArray(settings.hiddenSkins) ? settings.hiddenSkins.slice() : [];
+          if (list.indexOf(m.id) < 0) list.push(m.id);
+          settings.hiddenSkins = list;
+          if (settings.skin === m.id) { settings.skin = 'fish'; applySkin(); refreshLayout(); }
+          saveSettings(); sfx('tap');
+          bubbleSay('已经把「' + m.name + '」从列表里移除啦（可恢复）', 2800);
+          openModelPicker();
+        });
+        acts.appendChild(del);
+        card.appendChild(th); card.appendChild(info); card.appendChild(acts);
         card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
         grid.appendChild(card);
       }
       body.appendChild(grid);
+      if (hidden.length) {
+        const restore = $new('button', null, '恢复已移除的模型（' + hidden.length + '）');
+        restore.type = 'button';
+        restore.style.marginTop = '6px';
+        restore.addEventListener('click', () => {
+          settings.hiddenSkins = [];
+          saveSettings(); sfx('ok');
+          bubbleSay('都找回来啦～', 2200);
+          openModelPicker();
+        });
+        body.appendChild(restore);
+      }
       body.appendChild($new('h4', null, '自定义模型（上传图片 · 可改名/导出/删除）'));
       const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
       const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
@@ -3047,7 +3174,7 @@ const CHAT_MODELS = [
         spOn.appendChild(op);
       });
       body.appendChild(spOn);
-      body.appendChild($new('label', null, '声音 · 声线'));
+      body.appendChild($new('label', null, '声音 · bibo音色（合成器声线，影响「语调引导 / 经典合成」）'));
       const spVoice = $new('select');
       Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
         const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
@@ -3077,12 +3204,27 @@ const CHAT_MODELS = [
         spFollow.appendChild(op);
       });
       body.appendChild(spFollow);
-      body.appendChild($new('label', null, '声音 · 跟读音色（留空＝宿主默认；如 zh-CN-XiaoxiaoNeural）'));
-      const ttsVoiceInp = $new('input'); ttsVoiceInp.type = 'text';
-      ttsVoiceInp.placeholder = '留空＝宿主默认音色';
-      ttsVoiceInp.value = String(settings.ttsVoice || '');
-      body.appendChild(ttsVoiceInp);
-      body.appendChild($new('label', null, '声音 · 跟读语速（0.5–2，1 为正常）'));
+      body.appendChild($new('label', null, '声音 · 朗读音色（宿主 TTS 的音色，影响「普通朗读」）'));
+      const ttsVoiceSel = $new('select');
+      const buildVoiceOptions = () => {
+        ttsVoiceSel.textContent = '';
+        const opt0 = $new('option', null, '宿主默认'); opt0.value = '';
+        if (!settings.ttsVoice) opt0.selected = true;
+        ttsVoiceSel.appendChild(opt0);
+        for (const v of ttsVoiceList()) {
+          const op = $new('option', null, v.display || v.name); op.value = v.name;
+          if (settings.ttsVoice === v.name) op.selected = true;
+          ttsVoiceSel.appendChild(op);
+        }
+        if (settings.ttsVoice && !ttsVoiceList().some(v => v.name === settings.ttsVoice)) {
+          const op = $new('option', null, settings.ttsVoice + '（自定义）'); op.value = settings.ttsVoice;
+          op.selected = true; ttsVoiceSel.appendChild(op);
+        }
+      };
+      buildVoiceOptions();
+      body.appendChild(ttsVoiceSel);
+      fetchTtsVoices().then(() => buildVoiceOptions());   // 拿到宿主音色表后刷新一次
+      body.appendChild($new('label', null, '声音 · 朗读语速（0.5–2，1 为正常）'));
       const ttsRateInp = $new('input'); ttsRateInp.type = 'number';
       ttsRateInp.min = '0.5'; ttsRateInp.max = '2'; ttsRateInp.step = '0.1';
       ttsRateInp.value = String(clamp(Number(settings.ttsRate) || 1, 0.5, 2));
@@ -3095,7 +3237,7 @@ const CHAT_MODELS = [
         settings.speechMaxChars = Number(spMax.value) || 60;
         settings.speechMode = spFollow.value;
         settings.speechFollow = spFollow.value !== 'classic';
-        settings.ttsVoice = ttsVoiceInp.value.trim();
+        settings.ttsVoice = ttsVoiceSel.value;
         settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
         speechApplyVolume(); saveSettings();
         ttsCache.clear(); trackCache.clear();   // 换风格/音色/语速后，缓存作废
@@ -3124,7 +3266,7 @@ const CHAT_MODELS = [
       body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceInp, ttsRateInp, sfxOnSel, sfxVol };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceSel, ttsRateInp, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -3148,7 +3290,7 @@ const CHAT_MODELS = [
           settings.speechMaxChars = Number(f.spMax.value) || 60;
           settings.speechMode = f.spFollow.value;
           settings.speechFollow = f.spFollow.value !== 'classic';
-          settings.ttsVoice = f.ttsVoiceInp.value.trim();
+          settings.ttsVoice = f.ttsVoiceSel.value;
           settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
           settings.sfxOn = f.sfxOnSel.value === '1';
           settings.sfxVolume = Number(f.sfxVol.value);
@@ -3289,6 +3431,7 @@ const CHAT_MODELS = [
       settingsRef: settings,
       openChatPanel, cycleSfxVolume, speechMode,
       cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel,
+      synthPaced, speechSegments, pauseOf, fetchTtsVoices, ttsVoiceLabel, cycleTtsVoice, ttsVoiceList,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,

@@ -550,7 +550,8 @@
       { icon: 'book', label: '常用语…', act: openPhraseBook },
       { sep: true },
       { icon: 'talk', label: () => '朗读模式：' + speechStyleLabel(), act: () => cycleSpeechStyle(), keepOpen: true },
-      { icon: 'palette', label: () => '朗读音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: 'palette', label: () => 'bibo音色：' + speechVoiceLabel(), act: () => cycleSpeechVoice(), keepOpen: true },
+      { icon: 'mic', label: () => '朗读音色：' + ttsVoiceLabel(), act: () => cycleTtsVoice(), keepOpen: true },
       { icon: 'speed', label: () => '朗读速度：' + speechSpeedLabel(), act: () => cycleSpeechSpeed(), keepOpen: true },
     ] },
     { icon: 'bell', label: 'bibo音效', sub: [
@@ -586,6 +587,47 @@
     }
   }
   /* v3.5 朗读三件套：菜单里点一下循环切换，当前值直接写在菜单文字上（子菜单不关，就地刷新） */
+  /* v3.7 朗读音色（= 宿主 TTS 的音色，跟 bibo 声线是两回事）
+   * 列表来自 GET /api/voice/voices（实测可用，返回 name/display/gender）；取不到就用内置兜底。 */
+  const TTS_FALLBACK_VOICES = [
+    { name: 'zh-CN-XiaoxiaoNeural', display: '晓晓（女）' },
+    { name: 'zh-CN-XiaoyiNeural', display: '晓伊（女）' },
+    { name: 'zh-CN-YunxiNeural', display: '云希（男）' },
+    { name: 'zh-CN-YunjianNeural', display: '云健（男）' },
+    { name: 'zh-CN-YunyangNeural', display: '云扬（男）' },
+  ];
+  let TTS_VOICES = { at: 0, list: [] };
+  async function fetchTtsVoices(force) {
+    if (!force && TTS_VOICES.list.length && Date.now() - TTS_VOICES.at < 600000) return TTS_VOICES.list;
+    try {
+      const r = await fetch('/api/voice/voices', { headers: { Accept: 'application/json' } });
+      if (r.ok) {
+        const j = await r.json();
+        const list = (j && j.voices ? j.voices : [])
+          .filter(v => v && v.name)
+          .map(v => ({ name: v.name, display: v.display || v.name, gender: v.gender || '' }));
+        if (list.length) { TTS_VOICES = { at: Date.now(), list: list }; return list; }
+      }
+    } catch (e) { log('info', '朗读音色列表取不到：' + e.message); }
+    return TTS_VOICES.list;
+  }
+  function ttsVoiceList() { return TTS_VOICES.list.length ? TTS_VOICES.list : TTS_FALLBACK_VOICES; }
+  function ttsVoiceLabel() {
+    const v = String(settings.ttsVoice || '');
+    if (!v) return '宿主默认';
+    const f = ttsVoiceList().find(x => x.name === v);
+    return f ? f.display : v;
+  }
+  function cycleTtsVoice() {
+    const keys = [''].concat(ttsVoiceList().map(x => x.name));
+    const i = Math.max(0, keys.indexOf(String(settings.ttsVoice || '')));
+    settings.ttsVoice = keys[(i + 1) % keys.length];
+    saveSettings(); ttsCache.clear(); trackCache.clear();
+    bubbleSay('朗读音色：' + ttsVoiceLabel(), 2600);
+    sfx('tap');
+    if (speechMode() === 'tts') speechProbe('这是' + ttsVoiceLabel() + '的声音，听着如何？');
+  }
+
   /* v3.6 朗读三档：语调引导 / 经典合成 / 普通朗读（真人声） */
   const SPEECH_MODES = [
     { id: 'guided', label: '语调引导' },
@@ -866,9 +908,10 @@
   /* ---- 模型选择器（BongoCat 式管理思路） ---- */
   function openModelPicker() {
     openDialog('修改桌宠模型', body => {
-      body.appendChild($new('h4', null, '内置模型'));
+      const hidden = Array.isArray(settings.hiddenSkins) ? settings.hiddenSkins : [];
+      body.appendChild($new('h4', null, '内置模型（可移除，移除后可恢复）'));
       const grid = $new('div', 'pb2-model-grid');
-      const builtin = Object.keys(SPRITE_SKINS).map(id => ({
+      const allBuiltin = Object.keys(SPRITE_SKINS).map(id => ({
         id,
         name: SPRITE_SKINS[id].name,
         desc: SPRITE_SKINS[id].desc + (SPRITE_SKINS[id].credit ? ' · ' + SPRITE_SKINS[id].credit : ''),
@@ -881,6 +924,7 @@
         thumb: assetUrl(IMAGE_SKINS[id].file),
         contain: true,
       })));
+      const builtin = allBuiltin.filter(m => hidden.indexOf(m.id) < 0);
       for (const m of builtin) {
         const card = $new('div', 'pb2-model-card' + (settings.skin === m.id ? ' pb2-selected' : ''));
         const th = $new('div', 'pb2-model-thumb');
@@ -890,11 +934,39 @@
         const info = $new('div');
         info.appendChild($new('div', 'pb2-model-name', m.name));
         info.appendChild($new('div', 'pb2-model-desc', m.desc));
-        card.appendChild(th); card.appendChild(info);
+        // v3.7：内置模型也能移除（从列表隐藏，素材不动；随时可恢复）
+        const acts = $new('div', 'pb2-model-acts');
+        const del = $new('button', 'pb2-model-act pb2-model-del', '移除');
+        del.type = 'button';
+        del.title = '从列表移除（素材不删，可在下方「恢复已移除」找回）';
+        del.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const list = Array.isArray(settings.hiddenSkins) ? settings.hiddenSkins.slice() : [];
+          if (list.indexOf(m.id) < 0) list.push(m.id);
+          settings.hiddenSkins = list;
+          if (settings.skin === m.id) { settings.skin = 'fish'; applySkin(); refreshLayout(); }
+          saveSettings(); sfx('tap');
+          bubbleSay('已经把「' + m.name + '」从列表里移除啦（可恢复）', 2800);
+          openModelPicker();
+        });
+        acts.appendChild(del);
+        card.appendChild(th); card.appendChild(info); card.appendChild(acts);
         card.addEventListener('click', () => { settings.skin = m.id; saveSettings(); applySkin(); refreshLayout(); closeDialog(); sfx('ok'); bubbleSay('变身！' + m.name + '登场～', 2600); });
         grid.appendChild(card);
       }
       body.appendChild(grid);
+      if (hidden.length) {
+        const restore = $new('button', null, '恢复已移除的模型（' + hidden.length + '）');
+        restore.type = 'button';
+        restore.style.marginTop = '6px';
+        restore.addEventListener('click', () => {
+          settings.hiddenSkins = [];
+          saveSettings(); sfx('ok');
+          bubbleSay('都找回来啦～', 2200);
+          openModelPicker();
+        });
+        body.appendChild(restore);
+      }
       body.appendChild($new('h4', null, '自定义模型（上传图片 · 可改名/导出/删除）'));
       const impBtn = $new('button', null, '导入模型包（.json）'); impBtn.type = 'button';
       const impFile = $new('input'); impFile.type = 'file'; impFile.accept = '.json,application/json'; impFile.style.display = 'none';
@@ -1064,7 +1136,7 @@
         spOn.appendChild(op);
       });
       body.appendChild(spOn);
-      body.appendChild($new('label', null, '声音 · 声线'));
+      body.appendChild($new('label', null, '声音 · bibo音色（合成器声线，影响「语调引导 / 经典合成」）'));
       const spVoice = $new('select');
       Object.keys(SPEECH_VOICE_NAMES).forEach(k => {
         const op = $new('option', null, SPEECH_VOICE_NAMES[k]); op.value = k;
@@ -1094,12 +1166,27 @@
         spFollow.appendChild(op);
       });
       body.appendChild(spFollow);
-      body.appendChild($new('label', null, '声音 · 跟读音色（留空＝宿主默认；如 zh-CN-XiaoxiaoNeural）'));
-      const ttsVoiceInp = $new('input'); ttsVoiceInp.type = 'text';
-      ttsVoiceInp.placeholder = '留空＝宿主默认音色';
-      ttsVoiceInp.value = String(settings.ttsVoice || '');
-      body.appendChild(ttsVoiceInp);
-      body.appendChild($new('label', null, '声音 · 跟读语速（0.5–2，1 为正常）'));
+      body.appendChild($new('label', null, '声音 · 朗读音色（宿主 TTS 的音色，影响「普通朗读」）'));
+      const ttsVoiceSel = $new('select');
+      const buildVoiceOptions = () => {
+        ttsVoiceSel.textContent = '';
+        const opt0 = $new('option', null, '宿主默认'); opt0.value = '';
+        if (!settings.ttsVoice) opt0.selected = true;
+        ttsVoiceSel.appendChild(opt0);
+        for (const v of ttsVoiceList()) {
+          const op = $new('option', null, v.display || v.name); op.value = v.name;
+          if (settings.ttsVoice === v.name) op.selected = true;
+          ttsVoiceSel.appendChild(op);
+        }
+        if (settings.ttsVoice && !ttsVoiceList().some(v => v.name === settings.ttsVoice)) {
+          const op = $new('option', null, settings.ttsVoice + '（自定义）'); op.value = settings.ttsVoice;
+          op.selected = true; ttsVoiceSel.appendChild(op);
+        }
+      };
+      buildVoiceOptions();
+      body.appendChild(ttsVoiceSel);
+      fetchTtsVoices().then(() => buildVoiceOptions());   // 拿到宿主音色表后刷新一次
+      body.appendChild($new('label', null, '声音 · 朗读语速（0.5–2，1 为正常）'));
       const ttsRateInp = $new('input'); ttsRateInp.type = 'number';
       ttsRateInp.min = '0.5'; ttsRateInp.max = '2'; ttsRateInp.step = '0.1';
       ttsRateInp.value = String(clamp(Number(settings.ttsRate) || 1, 0.5, 2));
@@ -1112,7 +1199,7 @@
         settings.speechMaxChars = Number(spMax.value) || 60;
         settings.speechMode = spFollow.value;
         settings.speechFollow = spFollow.value !== 'classic';
-        settings.ttsVoice = ttsVoiceInp.value.trim();
+        settings.ttsVoice = ttsVoiceSel.value;
         settings.ttsRate = clamp(Number(ttsRateInp.value) || 1, 0.5, 2);
         speechApplyVolume(); saveSettings();
         ttsCache.clear(); trackCache.clear();   // 换风格/音色/语速后，缓存作废
@@ -1141,7 +1228,7 @@
       body.appendChild(sfxProbe);
       body.appendChild($new('div', 'pb2-hint', '语音闲聊：按住「' + VI_HOTKEY_LABEL + '」说话，松开就发给我（助手窗口要在前台）；也可以点右键菜单「语音闲聊」，说完静音 2 秒自动收尾。听写用宿主「语音」组件的本地离线模型（在 设置 → 语音 里开关）。左 Alt 是助手自带的语音听写，本插件不占用。浏览器策略：没有任何用户手势时不会自动出声，点一下桌宠即可解锁。'));
       body.appendChild($new('div', 'pb2-hint', '通道提示：模型调用失败（余额不足/通道停用/断连）会即时识别并自动回落模拟模式，具体原因会显示在回复开头；通道恢复后助手聊天自动可用。积分制：1000 分 = 1 元。余额来源：① 助手额度（公司内部通道的月度剩余/总额，默认走这条，不需要填令牌）；② sk- 开头的网关 API Key（读网关账单：订阅额度 − 累计用量）；③ 本页自填额度。jxai-姓名-设备号 是公司内部通道的身份牌，只用来认人（可一键当昵称），不是网关 Key。'));
-      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceInp, ttsRateInp, sfxOnSel, sfxVol };
+      openDialog._fields = { ch, mdl, quota, py, gb, gk, gm, mon, spOn, spVoice, spVol, spStep, spMax, spFollow, ttsVoiceSel, ttsRateInp, sfxOnSel, sfxVol };
     }, [
       { label: '取消' },
       { label: '保存', primary: true, onClick: () => {
@@ -1165,7 +1252,7 @@
           settings.speechMaxChars = Number(f.spMax.value) || 60;
           settings.speechMode = f.spFollow.value;
           settings.speechFollow = f.spFollow.value !== 'classic';
-          settings.ttsVoice = f.ttsVoiceInp.value.trim();
+          settings.ttsVoice = f.ttsVoiceSel.value;
           settings.ttsRate = clamp(Number(f.ttsRateInp.value) || 1, 0.5, 2);
           settings.sfxOn = f.sfxOnSel.value === '1';
           settings.sfxVolume = Number(f.sfxVol.value);
@@ -1306,6 +1393,7 @@
       settingsRef: settings,
       openChatPanel, cycleSfxVolume, speechMode,
       cycleSpeechStyle, cycleSpeechVoice, cycleSpeechSpeed, speechStyleLabel,
+      synthPaced, speechSegments, pauseOf, fetchTtsVoices, ttsVoiceLabel, cycleTtsVoice, ttsVoiceList,
       els2: { viewport, sprite, paws, pawL, pawR, keycap },
       isValley, priceTier, buildPrompt, extractNickname,
       personaFingerprint, loadPState, needPersonaFull,
