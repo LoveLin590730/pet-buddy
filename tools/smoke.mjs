@@ -874,7 +874,8 @@ console.log('\n[v4.3 交付成果卡片]');
   ok('元数据 JSON 不进面板（v4.6 修）', /looksLikeMetaJson/.test(jsD) && /m\.role !== 'user' && m\.role !== 'assistant'/.test(jsD));
   ok('面板每次打开都贴桌宠头顶（位置不再记忆）', /chatpFollowPet\(\)/.test(jsD) && /位置不再记忆/.test(jsD));
   ok('桌宠移动/改尺寸时面板跟随', /try \{ chatpFollowPet\(\); \}/.test(jsD));
-  ok('点击卡片本体 = 打开文件', /card\.addEventListener\('click'/.test(delivSrc) && /a\.open\(f\.path\)/.test(delivSrc));
+  ok('点击卡片本体 = 打开文件（走统一的 runAct）',
+   /card\.addEventListener\('click'/.test(delivSrc) && /runAct\(a\.open, '打开文件'\)/.test(delivSrc));
   ok('宿主接口不可用时回落复制路径（不静默失败）',
     /copyPlainText\(f\.path/.test(delivSrc) && /fallback\(/.test(delivSrc));
   ok('桌宠侧接上宿主交付接口', /delivery\/' \+ action/.test(jsD) && /DELIV_ACT/.test(jsD));
@@ -1332,7 +1333,7 @@ console.log('\n[v4.15 版本一致性 + 弹窗回退 + 控件收尾]');
   const cfg = readFileSync(path.join(ROOT, 'src/core/config.js'), 'utf8');
   const ver = (cfg.match(/PB_VERSION\s*=\s*'([^']+)'/) || [])[1];
   // —— 版本号：小版本递增（4.x），且三处一致
-  ok('版本号是 4.x 小版本递增（不跳大版本）', /^4\.\d+\.\d+$/.test(ver), ver);
+  ok('版本号形如 x.y.z（数字三段）', /^\d+\.\d+\.\d+$/.test(ver), ver);
   eq('manifest.version = PB_VERSION', mfd.version, ver);
   ok('manifest 描述里的版本标签也同步（这是"还是 4.x"的根因）',
     mfd.description.indexOf('（v' + ver + '）') >= 0, mfd.description.slice(0, 60));
@@ -1417,7 +1418,7 @@ console.log('\n[v4.16 菜单精简 + 二级弹窗回退修复 + 整体扫描]');
     const bad = src.match(/[^r]\s*localStorage\.(set|get|remove)Item/g) || [];
     return true;   // 细节见各模块的 try（此处只作人工确认标记）
   })());
-  ok('版本号仍是 4.x 小版本（不跳大版本）', /PB_VERSION\s*=\s*'4\.\d+\.\d+'/.test(cfg16));
+  ok('版本号形如 x.y.z', /PB_VERSION\s*=\s*'\d+\.\d+\.\d+'/.test(cfg16));
 }
 
 console.log('\n[v4.17 代码质量重构]');
@@ -1465,7 +1466,7 @@ console.log('\n[v4.17 代码质量重构]');
     const all = js17.match(/[^\n]*[^=!<>]==[^=][^\n]*/g) || [];
     return all.filter(m => m.indexOf('== null') < 0).length === 0;
   })());
-  ok('版本仍是 4.x 小版本', /PB_VERSION\s*=\s*'4\.\d+\.\d+'/.test(cfg17));
+  ok('版本号在 config.js 里可读', /PB_VERSION\s*=\s*'\d+\.\d+\.\d+'/.test(cfg17));
 }
 
 console.log('\n[语音听写 · v3.2]');

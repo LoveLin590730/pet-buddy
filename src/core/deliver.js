@@ -129,24 +129,18 @@
       copyPlainText(f.path, null, null);
       if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
     };
-    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => {
-      if (!a.open) return fallback('打开文件');
-      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
-      catch (e) { fallback('打开文件'); }
-    });
-    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => {
-      if (!a.reveal) return fallback('定位文件');
-      try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
-      catch (e) { fallback('定位文件'); }
-    });
+    /** 调一个宿主动作（open/reveal），失败或异常都走兜底文案（v4.18：三处重复合一） */
+    const runAct = (fn, label) => {
+      if (!fn) return fallback(label);
+      try { Promise.resolve(fn(f.path)).catch(() => fallback(label)); }
+      catch (e) { fallback(label); }
+    };
+    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => runAct(a.open, '打开文件'));
+    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => runAct(a.reveal, '定位文件'));
     mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
     mid.appendChild(acts);
     card.appendChild(mid);
-    card.addEventListener('click', () => {
-      if (!a.open) return fallback('打开文件');
-      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
-      catch (e) { fallback('打开文件'); }
-    });
+    card.addEventListener('click', () => runAct(a.open, '打开文件'));
     // 异步补缩略图（失败就保持图标，不打扰）
     if (DELIV_PREVIEWABLE[f.kind] && a.preview) {
       try {

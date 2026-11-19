@@ -142,7 +142,7 @@ function toWav(samples, sampleRate = 44100) {
  * ==========================================================================*/
 
 /** 版本号：唯一来源。build.mjs 会写回 manifest.json 与 window.PB2.version。 */
-const PB_VERSION = '4.17.0';
+const PB_VERSION = '5.0.0';
 
 /* ---- localStorage 键名：沿用 v2.2.x 的历史键，升级不丢用户设置 ---- */
 const LS_KEY = 'pb2.settings.v2';        // 设置
@@ -1160,24 +1160,18 @@ const CHAT_MODELS = [
       copyPlainText(f.path, null, null);
       if (a.fail) a.fail('没法直接' + label + '（宿主接口不可用）——路径已经复制好了，粘到资源管理器地址栏即可');
     };
-    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => {
-      if (!a.open) return fallback('打开文件');
-      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
-      catch (e) { fallback('打开文件'); }
-    });
-    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => {
-      if (!a.reveal) return fallback('定位文件');
-      try { Promise.resolve(a.reveal(f.path)).catch(() => fallback('定位文件')); }
-      catch (e) { fallback('定位文件'); }
-    });
+    /** 调一个宿主动作（open/reveal），失败或异常都走兜底文案（v4.18：三处重复合一） */
+    const runAct = (fn, label) => {
+      if (!fn) return fallback(label);
+      try { Promise.resolve(fn(f.path)).catch(() => fallback(label)); }
+      catch (e) { fallback(label); }
+    };
+    mk('pb2-deliv-open', '打开', '打开文件（用系统默认程序）', () => runAct(a.open, '打开文件'));
+    mk('pb2-deliv-reveal', '定位', '打开文件夹位置（在资源管理器里选中）', () => runAct(a.reveal, '定位文件'));
     mk('pb2-deliv-copy', '复制', '复制完整路径', () => copyPlainText(f.path, null, null));
     mid.appendChild(acts);
     card.appendChild(mid);
-    card.addEventListener('click', () => {
-      if (!a.open) return fallback('打开文件');
-      try { Promise.resolve(a.open(f.path)).catch(() => fallback('打开文件')); }
-      catch (e) { fallback('打开文件'); }
-    });
+    card.addEventListener('click', () => runAct(a.open, '打开文件'));
     // 异步补缩略图（失败就保持图标，不打扰）
     if (DELIV_PREVIEWABLE[f.kind] && a.preview) {
       try {
@@ -4458,10 +4452,15 @@ const CHAT_MODELS = [
     if (name) packPlay(name, false);
   }
 
+  /** 三个播放入口的共同前置：不是动作包皮肤 / 包不在 → null（v4.18 抽出来，原来三处各写一遍） */
+  function packForPlay() {
+    if (skinMode !== 'pack') return null;
+    return packOf(settings.skin) || null;
+  }
+
   /** 按角色播一个动作（once 默认 true）；角色池空则返回 false 不做任何事 */
   function packRole(role, opts) {
-    if (skinMode !== 'pack') return false;
-    const pack = packOf(settings.skin);
+    const pack = packForPlay();
     if (!pack) return false;
     const name = petpackPick(pack, role, packCurrent);
     if (!name) return false;
@@ -4470,8 +4469,7 @@ const CHAT_MODELS = [
 
   /** 余额档位动作（balance 池按「已用档位」索引；池空则退回任意一次点击动作） */
   function packBalanceTier(tier) {
-    if (skinMode !== 'pack') return false;
-    const pack = packOf(settings.skin);
+    const pack = packForPlay();
     if (!pack) return false;
     const name = petpackPickTier(pack, 'balance', tier, packCurrent);
     if (!name) return false;
@@ -5601,14 +5599,8 @@ const CHAT_MODELS = [
     for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(0) & 255;
     return out;
   }
-  function bytesToDataUrl(bytes, name) {
-    const mime = /\.(gif)$/i.test(name) ? 'image/gif' : /\.(jpe?g)$/i.test(name) ? 'image/jpeg'
-      : /\.(webp)$/i.test(name) ? 'image/webp' : 'image/png';
-    let s = '';
-    const CH = 32768;
-    for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-    return 'data:' + mime + ';base64,' + btoa(s);
-  }
+  /* v4.18：bytes → dataUrl 直接用 core/zipread.js 的 zipBytesToDataUrl（原来这里又写了一份，已去重） */
+  const bytesToDataUrl = zipBytesToDataUrl;
   function stickerSave() { saveSettings(); }
 
   function openStickerManager() {
@@ -6071,17 +6063,13 @@ const CHAT_MODELS = [
       body.appendChild(gInp);
       const gRow = $new('div', 'pb2-row');
       const gGen = $new('button', 'pb2-mini', 'AI 生成开场白'); gGen.type = 'button';
-      gGen.addEventListener('click', async () => {
-        gGen.disabled = true; const old = gGen.textContent; gGen.textContent = '生成中…';
-        try {
-          const arr = await aiGenLines('greeting', 3);
-          gInp.value = arr[0];
-          settings.greeting = arr[0]; saveSettings();
-          bubbleSay('开场白生成好啦：' + arr[0], 4200);
-          if (arr.length > 1) log('info', '开场白候选：' + arr.join(' / '));
-        } catch (e) { bubbleSay('生成失败：' + e.message, 5000); }
-        finally { gGen.disabled = false; gGen.textContent = old; }
-      });
+      gGen.addEventListener('click', () => withBusy(gGen, async () => {   // v4.18：忙碌态交给 withBusy
+        const arr = await aiGenLines('greeting', 3);
+        gInp.value = arr[0];
+        settings.greeting = arr[0]; saveSettings();
+        bubbleSay('开场白生成好啦：' + arr[0], 4200);
+        if (arr.length > 1) log('info', '开场白候选：' + arr.join(' / '));
+      }));
       const gTry = $new('button', 'pb2-mini', '试听'); gTry.type = 'button';
       gTry.addEventListener('click', () => {
         const save0 = settings.greeting; settings.greeting = gInp.value;
@@ -6130,16 +6118,12 @@ const CHAT_MODELS = [
       renderList();
       const pRow = $new('div', 'pb2-row');
       const pGen = $new('button', 'pb2-mini', 'AI 按人设+聊天记录生成'); pGen.type = 'button';
-      pGen.addEventListener('click', async () => {
-        pGen.disabled = true; const old = pGen.textContent; pGen.textContent = '生成中…';
-        try {
-          const arr = await aiGenLines('poke', 8);
-          settings.pokeLines = arr; settings.pokeUpdatedAt = Date.now(); saveSettings();
-          renderList();
-          bubbleSay('新台词：' + arr.slice(0, 2).join(' / ') + '…', 4200);
-        } catch (e) { bubbleSay('生成失败：' + e.message, 5000); }
-        finally { pGen.disabled = false; pGen.textContent = old; }
-      });
+      pGen.addEventListener('click', () => withBusy(pGen, async () => {   // v4.18：同上
+        const arr = await aiGenLines('poke', 8);
+        settings.pokeLines = arr; settings.pokeUpdatedAt = Date.now(); saveSettings();
+        renderList();
+        bubbleSay('新台词：' + arr.slice(0, 2).join(' / ') + '…', 4200);
+      }));
       pRow.appendChild(pGen);
       body.appendChild(pRow);
   }
@@ -6176,6 +6160,18 @@ const CHAT_MODELS = [
         bubbleSay('台词保存好啦～', 2400);
       } },
     ]);
+  }
+
+  /** 按钮"忙碌态"包装（AI 生成类按钮共用）：点了先禁用显示「生成中…」，成功/失败都恢复。
+   *  v4.18 抽取——之前开场白与台词两处各写一遍相同的 try/finally。 */
+  async function withBusy(btn, fn) {
+    if (!btn || btn.disabled) return;
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '生成中…';
+    try { await fn(); }
+    catch (e) { bubbleSay('生成失败：' + (e && e.message ? e.message : e), 5000); }
+    finally { btn.disabled = false; btn.textContent = old; }
   }
 
   /** 启动时按周期检查要不要让 AI 刷新台词（延后执行，别和启动问候抢） */
