@@ -15,6 +15,16 @@ import {fileURLToPath} from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORDER = ['config.js', 'util.js', 'store.js', 'stickers.js', 'zipread.js', 'zipwrite.js', 'deliver.js', 'petpack.js', 'layers.js', 'petwalk.js', 'balance.js', 'speech.js', 'sfx.js', 'voiceinput.js', 'chat.js'];
+/* v5.3：素材在源码仓里按类放在 assets/<dir>/（见 assets.manifest.json 每组的 dir 字段；
+ * dir='.' 表示仍在插件根，如 icon.png）。安装/打包时按清单把它们**平铺**到插件根本级
+ * （宿主只服务根级文件，子目录一律 404）。自检按 dir 还原真实路径，别写死根目录。 */
+const ASSET_MF = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
+const assetRel = (f) => {
+  const g = (ASSET_MF.groups || []).find((x) => (x.files || []).indexOf(f) >= 0);
+  const dir = g && g.dir;
+  return dir && dir !== '.' ? 'assets/' + dir + '/' + f : f;
+};
+const assetPath = (f) => path.join(ROOT, assetRel(f));
 /* 与 build.mjs 同口径：vendor 先内联（去掉行首 export），core 里直接用它的函数 */
 const VENDOR = ['vendor/bibibobo.js'];
 const vendor = VENDOR.map((f) => readFileSync(path.join(ROOT, f), 'utf8')
@@ -435,7 +445,7 @@ console.log('\n[单击只弹一个气泡 + 菜单不出界 · v3.10.1]');
   const mf3 = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
   const iconGroup = mf3.groups.find((g) => g.id === 'icons');
   ok('图标组已登记（14 个）', !!iconGroup && iconGroup.files.length === 14);
-  ok('14 个图标文件都在仓库里', iconGroup.files.every((f) => existsSync(path.join(ROOT, f))));
+  ok('14 个图标文件都在仓库里（assets/' + (iconGroup.dir || '') + '/）', iconGroup.files.every((f) => existsSync(assetPath(f))));
   ok('菜单项改用自绘图标名（不再用 emoji）',
     /icon: 'chat'/.test(t) && /icon: 'speaker'/.test(t) && /icon: 'mic'/.test(t) && !/icon: '💬'/.test(t));
   ok('图标渲染走 menuIcon（带加载失败兜底）', /function menuIcon/.test(t) && /im\.onerror/.test(t));
@@ -683,11 +693,16 @@ console.log('\n[素材清单 · v3.1.0]');
 {
   const mf = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
   const listed = mf.groups.flatMap((g) => g.files);
-  const onDisk = readdirSync(ROOT).filter((f) => /\.(webp|png|webm)$/i.test(f));
-  ok('清单声明平铺布局（宿主不支持子目录）', mf.layout === 'flat', mf.layout);
+  // 磁盘上的素材：assets/ 下按类分目录（递归取文件名）+ 仓库根的（icon 组 dir='.'）
+  const onDiskAssets = readdirSync(path.join(ROOT, 'assets'), { recursive: true })
+    .map((f) => String(f).replace(/\\/g, '/'))
+    .filter((f) => /\.(webp|png|webm)$/i.test(f))
+    .map((f) => f.split('/').pop());
+  const onDisk = onDiskAssets.concat(readdirSync(ROOT).filter((f) => /\.(webp|png|webm)$/i.test(f)));
+  ok('清单声明素材按 assets/<dir>/ 归档（安装/打包时平铺到插件根）', mf.layout === 'assets', mf.layout);
   eq('清单条数 = 磁盘素材条数', listed.length, onDisk.length);
-  ok('清单里的文件都在，磁盘上的素材也都登记了',
-    listed.every((f) => existsSync(path.join(ROOT, f))) && onDisk.every((f) => listed.indexOf(f) >= 0),
+  ok('清单里的文件都在（按 dir 还原路径），磁盘上的素材也都登记了',
+    listed.every((f) => existsSync(assetPath(f))) && onDisk.every((f) => listed.indexOf(f) >= 0),
     `listed=${listed.length} disk=${onDisk.length}`);
   eq('贴纸清单与代码 ARCHIVE 表逐条一致',
     listed.filter((f) => f.indexOf('st-') === 0).sort(),
@@ -1086,13 +1101,14 @@ console.log('\n[v4.3 动作包（petpack）]');
   const g = (manP.groups || []).find(x => x.id === 'petpack-dshpack');
   ok('素材清单里有动作包组', !!g, g ? 'count=' + g.count : '缺');
   if (g) {
-    const missing = g.files.filter(f => !existsSync(path.join(ROOT, f)));
+    const missing = g.files.filter(f => !existsSync(assetPath(f)));
     eq('登记的动作素材一个不少', missing.length, 0);
-    ok('素材全部平铺在插件根目录（无子目录）', g.files.every(f => f.indexOf('/') < 0), true);
-    const total = g.files.filter(f => f.endsWith('.webm')).reduce((s, f) => s + statSync(path.join(ROOT, f)).size, 0);
+    ok('清单里只登记文件名（安装时平铺到插件根，无子目录）', g.files.every(f => f.indexOf('/') < 0), true);
+    ok('动作素材在源码仓的 assets/' + g.dir + '/ 下就位', g.files.every(f => existsSync(path.join(ROOT, 'assets', g.dir, f))), true);
+    const total = g.files.filter(f => f.endsWith('.webm')).reduce((s, f) => s + statSync(assetPath(f)).size, 0);
     ok('素材总体积 ≤ 7MB（整合后 -88% 以上）', total <= 7 * 1024 * 1024, (total / 1024 / 1024).toFixed(2) + 'MB');
     // alpha 通道是关键：VP9-alpha 带不动就会出现黑底（转码必须 libvpx-vp9 解码 + auto-alt-ref 0）
-    const firstAct = readFileSync(path.join(ROOT, g.files.find(f => f.endsWith('.webm'))));
+    const firstAct = readFileSync(assetPath(g.files.find(f => f.endsWith('.webm'))));
     ok('动作素材保留透明通道（ALPHA_MODE 标记在）', firstAct.indexOf('ALPHA_MODE') >= 0);
   }
   // 产物侧：运行时接线
@@ -1206,8 +1222,8 @@ console.log('\n[v4.8 表情包扩展与管理 + 弹窗规范]');
   const man = JSON.parse(readFileSync(path.join(ROOT, 'assets.manifest.json'), 'utf8'));
   const g = man.groups.find(x => x.id === 'sticker-dsh');
   ok('素材清单里有 sticker-dsh 组且 27 个文件', !!g && g.count === 27 && g.files.length === 27, g && g.count);
-  ok('清单里列的文件都在磁盘上（install 会校验）', g.files.every(f => existsSync(path.join(ROOT, f))));
-  const totalSt = g.files.reduce((s, f) => s + statSync(path.join(ROOT, f)).size, 0);
+  ok('清单里列的文件都在磁盘上（install 会校验）', g.files.every(f => existsSync(assetPath(f))));
+  const totalSt = g.files.reduce((s, f) => s + statSync(assetPath(f)).size, 0);
   ok('27 张表情总大小 ≤ 600KB（4.6MB 原图压到 0.42MB）', totalSt <= 600 * 1024, (totalSt / 1024).toFixed(0) + 'KB');
   // 中文名可解析（说人话就能发贴纸）
   ok('中文名别名可解析到贴纸（如 [stick:可爱]）', /'可爱': 'dsh-07'/.test(js8) && /'深度睡眠': 'dsh-21'/.test(js8));

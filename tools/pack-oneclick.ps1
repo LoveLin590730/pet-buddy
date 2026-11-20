@@ -21,7 +21,14 @@ try {
   $mf = Get-Content 'manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json
   $ver = $mf.version
   $assets = @((Get-Content 'assets.manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json).groups | ForEach-Object { $_.files })
-  foreach ($f in $assets) { if (-not (Test-Path $f)) { throw "素材清单里列的文件不存在：$f" } }
+  $assetPairs = @((Get-Content 'assets.manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json).groups | ForEach-Object {
+    $dir = $_.dir
+    $_.files | ForEach-Object {
+      $rel = if ($dir -and $dir -ne '.') { "assets/$dir/$_" } else { $_ }
+      [pscustomobject]@{ File = $_; Src = $rel }
+    }
+  })
+  foreach ($p in $assetPairs) { if (-not (Test-Path $p.Src)) { throw "素材清单里列的文件不存在：$($p.Src)" } }
 
   # ---------- 组装配送目录 ----------
   $stage = Join-Path $env:TEMP ('petbuddy-oneclick-' + [guid]::NewGuid().ToString('N'))
@@ -29,7 +36,7 @@ try {
   New-Item -ItemType Directory -Path $plug -Force | Out-Null
   Copy-Item client.js, chat.html, client.css, manifest.json, icon.png -Destination $plug
   Copy-Item README.md, CHANGELOG.md, LICENSE, LICENSE-dspet.txt, LICENSE-dshpet.txt, LICENSE-deepseekpet.txt, LICENSE-bongocat.txt, LICENSE-community-pets.txt, assets.manifest.json -Destination $plug
-  foreach ($f in $assets) { Copy-Item $f $plug -Force }
+  foreach ($p in $assetPairs) { Copy-Item $p.Src (Join-Path $plug $p.File) -Force }
   $oc = Join-Path $root 'tools\oneclick'
   Copy-Item (Join-Path $oc 'install-plugin.ps1') $stage -Force
   Copy-Item (Join-Path $oc '安装.cmd') $stage -Force

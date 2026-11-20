@@ -66,21 +66,26 @@ pet-buddy/
 │  └─ chat.template.html # 聊天窗口源码（注入 core 后 = chat.html）
 ├─ vendor/bibibobo.js    # 第三方合成核心（MIT，构建期原样内联）
 ├─ build.mjs             # 构建：vendor + core → 两份产物（标记注入，失配即报错）
-├─ assets.manifest.json  # 素材清单（60 个：图标/贴纸/皮肤/精灵图），install、pack、smoke 共用
+├─ assets.manifest.json  # 素材清单（198 个：图标/贴纸/精灵图/动作包；每组的 dir 指明它在 assets/ 下的位置）
 ├─ 一键构建并同步.cmd     # 开发机一条命令：build → smoke → install → pack → pack-oneclick
 ├─ tools/
-│  ├─ smoke.mjs          # 离线冒烟自检（不依赖宿主）：694 项断言
+│  ├─ smoke.mjs          # 离线冒烟自检（不依赖宿主）：695 项断言
 │  ├─ install.ps1        # 同步到宿主插件目录（带备份，-WithAssets 连素材）
 │  ├─ pack.ps1           # 标准发布包
 │  ├─ pack-oneclick.ps1  # 一键安装形态（zip + 单文件 .cmd）
 │  └─ oneclick/          # 安装器素材（install-plugin.ps1 / 安装.cmd / 卸载.cmd …）
-└─ 素材（必须平铺）        # feiyu-*.png / pet-*.{png,webp} / st-*.webp / ic-*.png / icon.png
+├─ assets/               # 素材按类归档（根目录清爽；安装/打包时按清单**平铺**到插件根）
+│  ├─ actions/           #   动作包：dp-001..114.webm + dp-thumb.png（115 个）
+│  ├─ stickers/          #   贴纸：st-*.webp（67 张 = 档案馆 16 + 微信 24 + 模型包 27）
+│  ├─ icons/             #   菜单图标：ic-*.png（14 个）
+│  └─ sprite/            #   官方精灵图：feiyu-spritesheet.webp
+└─ icon.png              # 插件图标（manifest 的 icon 字段与 CSS 探针指向它，必须在插件根，故留仓库根）
 ```
 
 ### 常用命令
 
 ```powershell
-node tools/smoke.mjs                             # 离线自检（694 项断言）
+node tools/smoke.mjs                             # 离线自检（695 项断言）
 node build.mjs                                   # 从源码重建产物
 node build.mjs --check                           # 产物与源码是否一致（不一致退出码 1）
 powershell -File tools\install.ps1 -WithAssets   # 同步到宿主插件目录
@@ -91,7 +96,9 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
 
 ### 两条硬规则（踩过坑，别再踩）
 
-1. **素材必须平铺在插件根目录**：宿主对 `/_plugins/<id>/` **只服务根级文件**，任何子目录一律 404。
+1. **素材进插件目录时必须平铺在根级**：宿主对 `/_plugins/<id>/` **只服务根级文件**，任何子目录一律 404。
+   源码仓里素材按类放在 `assets/<dir>/`（清单里每组的 `dir` 字段），**由 `install.ps1 -WithAssets` 与 `pack*.ps1` 按清单平铺复制到插件根**；
+   别手工把整个 `assets/` 拷进插件目录——子目录下的素材不会被服务。
 2. **图片路径走 CSS 相对路径或实测基准**：桌面宿主是用 `file://` 或注入方式加载页面的，
    JS 里拼的 `/_plugins/pet-buddy/x.png` 在 file 下会失效。启动时用 `probeAssetBase()` 拿 `icon.png`
    逐个候选试加载，**第一个真的能加载的才算数**，之后所有素材 URL 都基于它。
@@ -139,7 +146,7 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
 
 离线：
 
-- `node tools/smoke.mjs` → **694 项全绿**
+- `node tools/smoke.mjs` → **695 项全绿**
 - `node --check client.js`、`node build.mjs --check`
 
 宿主里（F5 之后）：

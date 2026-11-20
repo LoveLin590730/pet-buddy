@@ -2,8 +2,10 @@
 # pet-buddy 安装/同步脚本
 # ----------------------------------------------------------------------------
 # 把源码仓构建出的产物同步到宿主的插件目录（宿主只认这个位置，别再手改那边）。
-# 素材位置：宿主对 /_plugins/<id>/ 只服务**插件根级文件**（子目录一律 404，v3.1.0 实测），
-#           所以素材平铺在插件根目录；同一份清单 assets.manifest.json 也用于打包与自检。
+# 素材位置：源码仓里素材按类放在 assets/<dir>/（见 assets.manifest.json 每组的 dir 字段）；
+#           宿主对 /_plugins/<id>/ 只服务**插件根级文件**（子目录一律 404，v3.1.0 实测），
+#           所以同步（-WithAssets）时按清单把它们**平铺**复制到插件根本级。
+#           仓库里放 assets/ 只是让根目录清爽；同一份清单也用于打包与自检。
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File tools\install.ps1              构建 + 校验 + 同步（产物与说明）
 #   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -CheckOnly   只校验，不动文件
@@ -24,6 +26,17 @@ function Get-AssetFiles {
   $mf = Get-Content (Join-Path $root 'assets.manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
   return @($mf.groups | ForEach-Object { $_.files })
 }
+function Get-AssetSources {
+  # 每项：File = 插件根下的文件名（宿主只认根级文件），Src = 源码仓里的相对路径（assets/<dir>/<file>）
+  $mf = Get-Content (Join-Path $root 'assets.manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  return @($mf.groups | ForEach-Object {
+    $dir = $_.dir
+    $_.files | ForEach-Object {
+      $rel = if ($dir -and $dir -ne '.') { "assets/$dir/$_" } else { $_ }
+      [pscustomobject]@{ File = $_; Src = $rel }
+    }
+  })
+}
 function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 
 Push-Location $root
@@ -39,7 +52,7 @@ try {
   }
   foreach ($f in $RUNTIME) { if (-not (Test-Path $f)) { throw "缺少产物：$f" } }
   $assetFiles = Get-AssetFiles
-  foreach ($f in $assetFiles) { if (-not (Test-Path $f)) { throw "素材清单里列的文件不存在：$f" } }
+  foreach ($p in (Get-AssetSources)) { if (-not (Test-Path $p.Src)) { throw "素材清单里列的文件不存在：$($p.Src)" } }
   Say ("      素材清单 assets.manifest.json：" + $assetFiles.Count + ' 个文件齐全') Green
 
   # 2) 目标目录
@@ -75,10 +88,9 @@ try {
     if ($WithAssets) {
       # 素材按清单镜像：先复制清单里的，再清理"清单外"的旧素材（下线素材不会残留）
       $assetFiles = Get-AssetFiles
-      foreach ($a in $assetFiles) {
-        $srcf = Join-Path $root $a
-        if (-not (Test-Path $srcf)) { throw "清单里的素材不存在：$a" }
-        Copy-Item $srcf (Join-Path $Dest $a) -Force
+      foreach ($p in (Get-AssetSources)) {
+        if (-not (Test-Path $p.Src)) { throw "清单里的素材不存在：$($p.Src)" }
+        Copy-Item $p.Src (Join-Path $Dest $p.File) -Force
       }
       $stale = @()
       foreach ($pat in 'pet-*', 'st-*', 'feiyu-*') {

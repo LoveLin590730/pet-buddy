@@ -1,11 +1,12 @@
 {
   "version": "3.1.0",
-  "layout": "flat",
-  "note": "插件素材清单。为什么必须平铺：宿主对 /_plugins/<id>/ 只服务插件根目录下的文件，子目录一律 404（v3.1.0 实测：assets/x.png、assets/sprites/x.png、/./assets/x.png、assets%2Fx.png 全部 404，根级新建文件立即 200），所以素材不能放进 assets/ 之类的子目录。本清单是素材的唯一索引：tools/install.ps1 -WithAssets 与 tools/pack.ps1 按它复制，tools/smoke.mjs 校验齐全。",
+  "layout": "assets",
+  "note": "插件素材清单。素材在源码仓里按类放在 assets/<dir>/（见每组的 dir 字段；icon 组为插件根目录），运行时宿主对 /_plugins/<id>/ 只服务插件根目录下的文件（子目录一律 404，v3.1.0 实测），所以 tools/install.ps1 -WithAssets 与 tools/pack*.ps1 会按本清单把它们**平铺复制到插件根本级**；仓库里放 assets/ 只是为了让根目录清爽。本清单是素材的唯一索引：install / pack / smoke 都按它对账。",
   "groups": [
     {
       "id": "icons",
       "prefix": "ic-",
+      "dir": "icons",
       "count": 14,
       "files": [
         "ic-chat.png",
@@ -30,6 +31,7 @@
     {
       "id": "sprite",
       "prefix": "feiyu-",
+      "dir": "sprite",
       "count": 1,
       "files": [
         "feiyu-spritesheet.webp"
@@ -41,6 +43,7 @@
     {
       "id": "icon",
       "prefix": "icon",
+      "dir": ".",
       "count": 1,
       "files": [
         "icon.png"
@@ -52,6 +55,7 @@
     {
       "id": "sticker-archive",
       "prefix": "st-",
+      "dir": "stickers",
       "count": 16,
       "files": [
         "st-deepseek-bao-bi-jujue.webp",
@@ -78,6 +82,7 @@
     {
       "id": "sticker-wx",
       "prefix": "st-wx-",
+      "dir": "stickers",
       "count": 24,
       "files": [
         "st-wx-01.webp",
@@ -112,6 +117,7 @@
     {
       "id": "sticker-dsh",
       "prefix": "st-dsh-",
+      "dir": "stickers",
       "count": 27,
       "files": [
         "st-dsh-01.webp",
@@ -149,6 +155,7 @@
     {
       "id": "petpack-dshpack",
       "prefix": "dp-",
+      "dir": "actions",
       "count": 115,
       "files": [
         "dp-001.webm",
@@ -274,6 +281,7 @@
     {
       "id": "skin-note",
       "prefix": "-",
+      "dir": null,
       "count": 0,
       "files": [],
       "use": "内置皮肤已精简为「官方精灵图（feiyu-spritesheet.webp，见 sprite 组）+ 动作包（见 petpack-dshpack 组）」两类；原来的社区桌宠包 / BongoCat / 和大人 / RYANFFY 立绘素材（共 3.2MB）已按用户要求移除，图片皮肤改由用户自行上传（GIF / 动画 WebP / 静态图）。",

@@ -11,7 +11,7 @@
  *      / sleep(三段) / baifan(玩法)
  *   3) 逐个动作 webm 转码成桌宠尺寸（ffmpeg：VP9-alpha，裁掉画面两侧空白、降到 160px/12fps/crf45）
  *      —— 114 个动作从 55MB 压到约 4.4MB（-92%）
- *   4) 素材平铺到插件根目录（宿主只服务根级文件）：<prefix>-001.webm …
+ *   4) 素材写入 assets/actions/（<prefix>-001.webm …）；安装/打包时按清单平铺到插件根本级
  *   5) 生成 src/core/petpack.js 的数据段（动作清单 + 语义角色映射，标记内自动生成、勿手改）
  *   6) 更新 assets.manifest.json（新增素材组，供 install / pack / smoke 对账）
  *   7) 写导入记录（交付区与仓库各一份）：过程、参数、体积、画质、可复用说明
@@ -38,6 +38,8 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/* 动作素材归档目录：仓库里放在 assets/actions/（根目录清爽），安装/打包时按清单平铺到插件根本级 */
+const ASSET_DIR = path.join(ROOT, 'assets', 'actions');
 const log = (...a) => console.log(...a);
 
 /* core/petpack.js 的手写模板：运行时（DOM 无关的取值/挑选逻辑）+ 自动生成的数据段。
@@ -282,6 +284,7 @@ log(`      ffmpeg：${ff || '（dry-run 跳过）'}  编码：libvpx-vp9 / crf${
 
 const TMP = path.join(ROOT, '.jxai', 'tmp', 'petpack-src');
 if (!opt.dryRun) mkdirSync(TMP, { recursive: true });
+if (!opt.dryRun) mkdirSync(ASSET_DIR, { recursive: true });
 
 const actions = [];
 let totalOut = 0, totalSrc = 0, skipped = 0;
@@ -289,7 +292,7 @@ for (let i = 0; i < webms.length; i++) {
   const e = webms[i];
   const base = path.basename(e.name).replace(/\.webm$/i, '');
   const file = `${opt.prefix}-${String(i + 1).padStart(3, '0')}.webm`;
-  const dst = path.join(ROOT, file);
+  const dst = path.join(ASSET_DIR, file);
   const rec = { file, name: base, role: roleOfName[base] || '', srcKB: Math.round(e.size / 1024), outKB: 0 };
   if (opt.dryRun) { actions.push(rec); continue; }
   if (existsSync(dst) && !opt.force) {
@@ -315,9 +318,9 @@ let thumbFile = '';
 if (!opt.dryRun && actions.length) {
   const pick2 = actions.find(a => a.role === 'idle') || actions[0];
   thumbFile = `${opt.prefix}-thumb.png`;
-  const r = spawnSync(ff, ['-y', '-hide_banner', '-loglevel', 'error', '-c:v', 'libvpx-vp9', '-i', path.join(ROOT, pick2.file),
-    '-vf', 'select=eq(n\\,2)', '-frames:v', '1', path.join(ROOT, thumbFile)], { stdio: 'ignore' });
-  if (r.status !== 0 || !existsSync(path.join(ROOT, thumbFile))) { thumbFile = ''; log('  （缩略图生成失败，界面用兜底图标）'); }
+  const r = spawnSync(ff, ['-y', '-hide_banner', '-loglevel', 'error', '-c:v', 'libvpx-vp9', '-i', path.join(ASSET_DIR, pick2.file),
+    '-vf', 'select=eq(n\\,2)', '-frames:v', '1', path.join(ASSET_DIR, thumbFile)], { stdio: 'ignore' });
+  if (r.status !== 0 || !existsSync(path.join(ASSET_DIR, thumbFile))) { thumbFile = ''; log('  （缩略图生成失败，界面用兜底图标）'); }
   else log(`  缩略图：${thumbFile}（取自「${pick2.name}」）`);
 }
 const allFiles = actions.map(a => a.file).concat(thumbFile ? [thumbFile] : []);
@@ -361,6 +364,7 @@ man.groups = (man.groups || []).filter(g => g.id !== gid);
 man.groups.push({
   id: gid,
   prefix: opt.prefix + '-',
+  dir: 'actions',
   count: allFiles.length,
   files: allFiles,
   use: `桌宠动作包「${packName}」：${actions.length} 个动作视频（VP9-alpha webm），按语义角色播放` +
@@ -382,7 +386,7 @@ lines.push(`- 源包：\`${path.basename(opt.zip)}\`（${zipSizeMB.toFixed(1)} M
 lines.push(`- 导入时间：${dataObj.importedAt}`);
 lines.push(`- 转码参数：ffmpeg ${VF}，libvpx-vp9 crf${opt.crf}，VP9-alpha`);
 lines.push(`- 体积：动作素材 ${(totalSrc / 1024).toFixed(1)} MB → ${(totalOut / 1024).toFixed(2)} MB（-${(100 - totalOut / totalSrc * 100).toFixed(0)}%）；共 ${actions.length} 个动作`);
-lines.push(`- 素材文件：插件根目录 \`${opt.prefix}-001.webm\` … \`${opt.prefix}-${String(actions.length).padStart(3, '0')}.webm\`（宿主只服务根级文件，必须平铺）`);
+lines.push(`- 素材文件：\`assets/actions/${opt.prefix}-001.webm\` … \`assets/actions/${opt.prefix}-${String(actions.length).padStart(3, '0')}.webm\`（安装/打包时按清单平铺到插件根，宿主只服务根级文件）`);
 lines.push('');
 lines.push('## 语义角色映射（来自包内 assets/config.jsonc 的 animations）', '');
 for (const k of ['idle', 'turn', 'drag', 'clicks', 'balance', 'whisper', 'workStatus', 'moves', 'baifan']) {
