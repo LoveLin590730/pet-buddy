@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $RUNTIME = @('client.js', 'chat.html', 'client.css', 'manifest.json')
-$DOCS = @('icon.png', 'LICENSE-dspet.txt', 'LICENSE-deepseekpet.txt', 'LICENSE-bongocat.txt', 'LICENSE-community-pets.txt', 'README.md', 'CHANGELOG.md', 'LICENSE', 'assets.manifest.json')
+$DOCS = @('icon.png', 'LICENSE-dspet.txt', 'LICENSE-dshpet.txt', 'LICENSE-deepseekpet.txt', 'LICENSE-bongocat.txt', 'LICENSE-community-pets.txt', 'README.md', 'CHANGELOG.md', 'LICENSE', 'assets.manifest.json')
 function Get-AssetFiles {
   $mf = Get-Content (Join-Path $root 'assets.manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
   return @($mf.groups | ForEach-Object { $_.files })

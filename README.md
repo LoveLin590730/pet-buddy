@@ -96,18 +96,44 @@ powershell -File tools\pack-oneclick.ps1         # 打一键安装形态
    JS 里拼的 `/_plugins/pet-buddy/x.png` 在 file 下会失效。启动时用 `probeAssetBase()` 拿 `icon.png`
    逐个候选试加载，**第一个真的能加载的才算数**，之后所有素材 URL 都基于它。
 
-## 四、素材来源与许可
+## 四、素材来源与许可（含署名与"是否改动"）
 
-| 素材 | 来源 | 许可 |
+本仓库**代码**为 MIT（见 `LICENSE`）。**内置素材来自第三方，版权归原作者，按各自许可使用**；
+下表与仓库内 `LICENSE-*.txt` 为对应署名，转发或二次分发时请一并保留。
+
+> ⚠️ 代码是 MIT，但表中标注 **CC BY-NC-SA 4.0 / 二创** 的素材**不可商用**。
+
+| 用到的内容 | 来源（git） | 作者 / 版权 | 版本 · 取得 | 许可 | 改动 |
+|---|---|---|---|---|---|
+| `feiyu-spritesheet.webp`（8×11，192×208/格）官方精灵图 | [zhouwu97/ds-pet](https://github.com/zhouwu97/ds-pet) | © 2026 zhouwu97 | 官方 v2 精灵图 · 2026-11 | MIT（`LICENSE-dspet.txt`） | **有**：PNG → WebP q98 有损重编码（−59%） |
+| `dp-001..114.webm` + `dp-thumb.png`（114 个动作的动作包） | [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（`dsh-pet-source.zip`，经 `tools/import-petpack.mjs` 整合） | © 2026 PC2005-cloud | 官方模型包 · 2026-11 | MIT（`LICENSE-dshpet.txt`） | **有**：VP9-alpha 640×360 → 裁 62%×92% → 160px/12fps/crf45（54.12MB → 6.5MB） |
+| `st-dsh-*.webp`（27 张）模型包表情 | 同上（包内 `assets/memes`） | © 2026 PC2005-cloud | · 2026-11 | MIT（`LICENSE-dshpet.txt`） | **有**：384×384 PNG → 256px WebP q86（4.6MB → 0.42MB） |
+| `vendor/bibibobo.js`（语音合成核心） | [hakihakii/bibibobo](https://github.com/hakihakii/bibibobo) | 见该项目 LICENSE | · 2026 | MIT（原样引入） | **无** |
+| `st-deepseek-*.webp`（16 张） | 蓝色大肥鱼档案馆 | 档案馆作者 | · 2026 | CC BY-NC-SA 4.0 | — |
+| `st-wx-*.webp`（24 张） | 微信表情包 | 原表情作者 | · — | 二创，非商用 | **有**：解码 + 裁切 |
+| `ic-*.png`（14 个菜单图标） | 豆包生图（火山方舟 Seedream）生成 | 本项目自产 | · 2026-11 | 本项目自用 | **有**：按格裁切 + 白底转透明 + 缩放 96×96 |
+| 本仓库代码 | 坚祥（yzc） | © 2026 坚祥 | — | MIT（`LICENSE`） | — |
+
+署名同时显示在「修改桌宠模型」弹窗与 `assets.manifest.json` 里。
+
+### 交互设计致谢
+
+- v5.2 的**键鼠互动**（眼球跟随鼠标 / 手爪跟随 / 按键弹键帽、左右手分爪）在**交互形态上**参考了
+  [BongoCat（kuroni/bongocat-osu）](https://github.com/kuroni/bongocat-osu)（MIT）；
+  实现为本项目自研（`src/core/layers.js`），**未复制其代码或素材**。
+- 「整套导入 dsh-pet 格式模型包」（`tools/import-petpack.mjs`）受益于 PC2005-cloud/dsh-pet 的模型包结构。
+
+### 历史版本曾包含、v5.1 起已移除
+
+以下形象素材随 **v5.1「内置模型精简为两个」** 一并移除（5 个文件、3.2MB），
+对应许可文件仅作历史署名保留，**当前版本不再包含这些素材**：
+
+| 曾用的素材 | 来源 | 许可文件 |
 |---|---|---|
-| `feiyu-spritesheet.webp`（8×11，192×208/格） | zhouwu97/ds-pet 官方 v2 精灵图（v4.1 起 PNG 有损重编码 WebP q98，体积 -59%） | MIT（`LICENSE-dspet.txt`） |
-| `st-deepseek-*.webp` 等 16 张 | 蓝色大肥鱼档案馆 | CC BY-NC-SA 4.0 |
-| `st-wx-*.webp`（24 张） | 微信表情包解码裁切 | 二创，非商用 |
-| `st-dsh-*.webp`（27 张） | 大肥鱼模型包 `assets/memes`（384×384 PNG → 256px WebP q86，4.6MB→0.42MB） | MIT（`LICENSE-dspet.txt`） |
-| `ic-*.png`（14 个菜单图标） | 豆包生图（Seedream）生成后本地裁切去背 | 本项目自用 |
-| `dp-001..114.webm` + `dp-thumb.png`（动作包） | PC2005-cloud/dsh-pet 官方模型包（`dsh-pet-source.zip`，MIT）经 `tools/import-petpack.mjs` 整合：VP9-alpha 640×360 → 裁 62%×92% → 160px/12fps/crf45（54.12MB → 6.5MB） | MIT（`LICENSE-dspet.txt`） |
-| `vendor/bibibobo.js` | hakihakii/bibibobo | MIT（原样引入） |
-| 本仓库代码 | 坚祥（yzc） | MIT（`LICENSE`） |
+| `pet-whale-codex.webp` | [YunYueSama/codex-deepseek-pet](https://github.com/YunYueSama/codex-deepseek-pet) | `LICENSE-deepseekpet.txt`（大肥鱼项目署名许可 1.0） |
+| `pet-bongocat.png` / `pet-bongocat-down.png` | [kuroni/bongocat-osu](https://github.com/kuroni/bongocat-osu) | `LICENSE-bongocat.txt` |
+| `pet-hedaren.webp` | [Yukilol13/dsh-hedaren-pet](https://github.com/Yukilol13/dsh-hedaren-pet) | `LICENSE-community-pets.txt` |
+| `pet-dafeiyu-ryan.png` | [RYANFFY/deepseek-dafeiyu-pet](https://github.com/RYANFFY/deepseek-dafeiyu-pet) | `LICENSE-community-pets.txt` |
 
 ## 五、验证清单（改完过一遍）
 

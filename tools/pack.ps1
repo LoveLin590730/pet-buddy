@@ -27,7 +27,7 @@ try {
 
   # 运行必需 + 说明/许可 + 素材清单
   Copy-Item client.js, chat.html, client.css, manifest.json, icon.png -Destination $stage
-  Copy-Item README.md, CHANGELOG.md, LICENSE, LICENSE-dspet.txt, LICENSE-deepseekpet.txt, LICENSE-bongocat.txt, LICENSE-community-pets.txt, assets.manifest.json -Destination $stage -ErrorAction SilentlyContinue
+  Copy-Item README.md, CHANGELOG.md, LICENSE, LICENSE-dspet.txt, LICENSE-dshpet.txt, LICENSE-deepseekpet.txt, LICENSE-bongocat.txt, LICENSE-community-pets.txt, assets.manifest.json -Destination $stage -ErrorAction SilentlyContinue
   # 素材（按清单，平铺在插件根目录）
   foreach ($f in $assets) { Copy-Item $f $stage -Force }
   if ($WithSource) {
